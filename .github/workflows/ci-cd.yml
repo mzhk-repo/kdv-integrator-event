@@ -1,0 +1,199 @@
+name: KDV CI/CD Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kdv-ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SHELLCHECK_IMAGE: koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+  TRIVY_IMAGE: aquasec/trivy@sha256:3d1f862cb6c4fe13c1506f96f816096030d8d5ccdb2380a3069f7bf07daa86aa
+  APP_IMAGE_NAME: kdv-integrator-event
+  DEPLOY_BRANCH: main
+  DEPLOY_COMPOSE_FILE: docker-compose.yml
+
+jobs:
+  ci-checks:
+    name: ci-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Pull CI utility images
+        run: |
+          set -euo pipefail
+          docker pull "${SHELLCHECK_IMAGE}"
+          docker pull "${TRIVY_IMAGE}"
+
+      - name: Shellcheck
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find src scripts -type f -name '*.sh' 2>/dev/null | sort)
+          [ "${#files[@]}" -gt 0 ] || { echo "No shell scripts found"; exit 1; }
+          docker run --rm -v "$PWD:/work" -w /work "${SHELLCHECK_IMAGE}" \
+            -x -e SC1090,SC1091,SC2034,SC2046,SC2086,SC2155 "${files[@]}"
+
+      - name: Setup Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: '3.11'
+
+      - name: Install QA dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff pip-audit
+
+      - name: Ruff lint
+        run: |
+          set -euo pipefail
+          ruff check .
+
+      - name: Pytest
+        run: |
+          set -euo pipefail
+          pytest -q
+
+      - name: Docker build
+        run: |
+          set -euo pipefail
+          docker build -t "${APP_IMAGE_NAME}:${GITHUB_SHA}" .
+
+      - name: Compose validation
+        run: |
+          set -euo pipefail
+          cat > .env.ci <<'EOF'
+          HOST=ci.local
+          INTEGRATOR_MOUNT_PATH=/tmp
+          EOF
+
+          docker compose --env-file .env.ci -f docker-compose.yml config -q
+          docker compose --env-file .env.ci -f docker-compose.yml config > /tmp/compose.rendered.yml
+
+          grep -n "\${" /tmp/compose.rendered.yml && { echo "❌ Unresolved variables found in rendered compose"; exit 1; } || true
+          echo "✅ docker-compose.yml is valid."
+
+      - name: Dependency scan (pip-audit)
+        run: |
+          set -euo pipefail
+          pip-audit
+
+      - name: Trivy config scan (Critical gate)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/work" -w /work "${TRIVY_IMAGE}" \
+            config --skip-check-update --exit-code 1 --severity CRITICAL /work
+
+      - name: Trivy image scan (High/Critical gate)
+        run: |
+          set -euo pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "${TRIVY_IMAGE}" \
+            image --skip-check-update --exit-code 1 --severity HIGH,CRITICAL "${APP_IMAGE_NAME}:${GITHUB_SHA}"
+
+  cd-deploy:
+    name: cd-deploy
+    needs: ci-checks
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: kdv-prod-deploy
+      cancel-in-progress: false
+    env:
+      DEPLOY_FULL_REF: ${{ github.ref }}
+      DEPLOY_REF: ${{ github.ref_name }}
+      DEPLOY_PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
+      TAILSCALE_OAUTH_CLIENT_ID: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+      TAILSCALE_OAUTH_SECRET: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Validate deploy secrets
+        run: |
+          set -euo pipefail
+          [ -n "${{ secrets.SERVER_HOST }}" ] || { echo "Missing secret: SERVER_HOST"; exit 1; }
+          [ -n "${{ secrets.SERVER_USER }}" ] || { echo "Missing secret: SERVER_USER"; exit 1; }
+          [ -n "${{ secrets.SERVER_SSH_KEY }}" ] || { echo "Missing secret: SERVER_SSH_KEY"; exit 1; }
+          [ -n "${{ secrets.DEPLOY_PROJECT_DIR }}" ] || { echo "Missing secret: DEPLOY_PROJECT_DIR"; exit 1; }
+
+      - name: Validate SemVer tag for production
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "❌ Tag must follow SemVer: vMAJOR.MINOR.PATCH"
+            exit 1
+          }
+
+      - name: Connect to Tailscale
+        if: env.TAILSCALE_OAUTH_CLIENT_ID != '' && env.TAILSCALE_OAUTH_SECRET != ''
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ env.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ env.TAILSCALE_OAUTH_SECRET }}
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: DEPLOY_FULL_REF,DEPLOY_REF,DEPLOY_PROJECT_DIR,DEPLOY_BRANCH,DEPLOY_COMPOSE_FILE
+          script: |
+            set -euo pipefail
+
+            echo "Starting deployment for ${DEPLOY_REF} (${DEPLOY_FULL_REF})"
+            cd "${DEPLOY_PROJECT_DIR}"
+
+            if [ ! -f .env ]; then
+              echo "❌ ERROR: .env not found in ${DEPLOY_PROJECT_DIR}."
+              exit 1
+            fi
+
+            git fetch --prune --tags origin
+
+            case "${DEPLOY_FULL_REF}" in
+              refs/tags/*)
+                echo "Deploying tag: ${DEPLOY_REF}"
+                git checkout -f "${DEPLOY_REF}"
+                ;;
+              *)
+                echo "Deploying branch: ${DEPLOY_BRANCH}"
+                git checkout -f "${DEPLOY_BRANCH}"
+                git reset --hard "origin/${DEPLOY_BRANCH}"
+                ;;
+            esac
+
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" pull
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" up -d --remove-orphans
+
+            echo "---- docker compose ps ----"
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" ps
+
+            echo "---- docker compose logs (tail=200) ----"
+            docker compose -f "${DEPLOY_COMPOSE_FILE}" logs --tail=200 || true
+
+            echo "✅ DEPLOY OK"

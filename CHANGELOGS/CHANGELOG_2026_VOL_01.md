@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-04 — M3: DevOps release pipeline (build/test/scan)
+
+- **Context:** Потрібно реалізувати roadmap пункт `M3` і перенести структуру еталонного CI/CD пайплайна з `archive/ci-cd.yml` у поточний репозиторій.
+- **Change:** Додано GitHub Actions workflow `.github/workflows/ci-cd.yml` зі структурою `ci-checks` + `cd-deploy`; у `ci-checks` реалізовано `shellcheck`, `ruff`, `pytest`, `docker build`, `docker compose config`, `pip-audit`, `trivy config/image`; у `cd-deploy` додано SSH-деплой через `appleboy/ssh-action` (підтримка деплою з `main` або `v*` тегу), валідацію секретів і опційне підключення через Tailscale OAuth.
+- **Verification:** Перевірено валідність workflow через локальну діагностику (`get_errors` для `.github/workflows/ci-cd.yml`) і git-статус змін.
+- **Risks:** `pip-audit`/`trivy` можуть впасти на існуючих CVE; для SSH деплою потрібно налаштувати секрети `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`, `DEPLOY_PROJECT_DIR` (та опційно `TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_SECRET`) у GitHub repository settings.
+- **Rollback:** Видалити `.github/workflows/ci-cd.yml` та відкотити запис changelog (через `git revert <commit_sha>` або ручне видалення у робочій гілці).
+
 ## 2026-03-04 — Pre-prod release v0.1.0
 
 - **Context:** Потрібно зафіксувати поточний стан hardening (M1/M2 завершено) у першому pre-prod релізі з тегом `v0.1.0`.
