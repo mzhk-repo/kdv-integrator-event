@@ -14,11 +14,12 @@ class TaskManager:
     def __init__(self):
         pass
 
-    def start_task(self, func, *args):
+    def start_task(self, func, *args, **kwargs):
         """
         Запускає нову фонову задачу.
         :param func: Функція, яку треба виконати (бізнес-логіка)
         :param args: Аргументи для цієї функції (наприклад, biblionumber)
+        :param kwargs: ключові аргументи, що будуть передані у func
         :return: task_id (UUID string)
         """
         task_id = str(uuid.uuid4())
@@ -36,13 +37,13 @@ class TaskManager:
 
         # Запуск окремого потоку
         # daemon=True означає, що потік завершиться, якщо впаде основна програма
-        thread = threading.Thread(target=self._wrapper, args=(task_id, func, args))
+        thread = threading.Thread(target=self._wrapper, args=(task_id, func, args, kwargs))
         thread.daemon = True 
         thread.start()
         
         return task_id
 
-    def _wrapper(self, task_id, func, args):
+    def _wrapper(self, task_id, func, args, kwargs):
         """
         Обгортка, яка виконується всередині потоку.
         Вона керує статусами та перехоплює помилки.
@@ -54,7 +55,7 @@ class TaskManager:
             
             # ВИКОНАННЯ ОСНОВНОЇ ЛОГІКИ
             # Ми передаємо task_id першим аргументом, щоб функція могла (опціонально) оновлювати прогрес
-            result = func(task_id, *args)
+            result = func(task_id, *args, **kwargs)
             
             # Успішне завершення
             TASKS[task_id]["status"] = "success"

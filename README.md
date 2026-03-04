@@ -28,57 +28,87 @@ src/ — Основний код
 
 app.py
 
-Точка входу. Flask-сервер. Містить ендпоінти API, налаштування CORS та логіку паралельного запуску (ThreadPoolExecutor) процесів DSpace та Covers.
+Точка входу. Flask-сервер із фабрикою клієнтів `_make_clients()` (DI). Ендпоінти API, CORS.
 
 tasks.py
 
-Task Manager. Реалізує In-Memory чергу задач. Відповідає за створення фонових потоків та зберігання статусів (queued, processing, success).
+Task Manager. In-Memory чергу, підтримка kwargs (DI). Статуси: queued, processing, success/error.
+
+core.py
+
+**[НОВЕ, M2]** Оркестратор інтеграції. Fork-Join паралелізм (DSpace critical + Covers best-effort). Dependency Injection для клієнтів.
 
 koha.py
 
-Koha Client. Найскладніший модуль. Реалізує: 
-
-
-
-1. REST API (читання/оновлення MARC).
-
-
-
-2. CGI Emulation: Логін, завантаження файлів (AJAX headers spoofing), парсинг HTML (Screen Scraping) для отримання ID картинок.
+Koha Client. REST API (MARC), CGI Emulation (логін, завантаження, скрапінг).
 
 dspace.py
 
-DSpace Client. Робота з REST API DSpace 7+. Авторизація (XSRF), створення Items, завантаження Bitstreams, пошук дублікатів.
-
-covers.py
-
-Cover Service. Використовує pdf2image (poppler) для конвертації першої сторінки PDF у JPG. Контролює розміри та якість зображення.
+DSpace Client. REST API 7+, авторизація, Items, Bitstreams, дублікати.
 
 config.py
 
-Configuration. Завантажує змінні з .env. Містить перевірки наявності критичних змінних.
+Конфігурація з .env. Перевірки обов'язкових змінних.
 
 mapping.py
 
-Metadata Rules. Словник правил конвертації полів MARC -> Dublin Core (Regex для року, об'єднання авторів тощо).
+Правила MARC → Dublin Core (Regex, конвертація типів).
+
+services/ (НОВА, M2)
+
+**covers.py:**  Cover Service. pdf2image → JPG, resize, retry policy, Koha upload.  
+**files.py:**  File Service. Versioning, rename-first, Processed/Error folders.
+
+clients/ (НОВА, M2)
+
+**koha.py:**  KohaClientWrapper (для тестів).  
+**dspace.py:**  DSpaceClientWrapper (для тестів).
 
 scripts/ — Утиліти
 
-Файл
-
-Опис
-
 robot.py
 
-Скрипт для масової пакетної обробки книг (Batch Processing).
+Масова пакетна обробка (Batch Processing).
 
 nightwalker.py
 
-Аудит системи: пошук "зомбі" (файли без лінків) та синхронізація метаданих.
+Аудит: пошук "зомбі" (файли без лінків), синхронізація метаданих.
 
 debug_*.py
 
-Діагностичні скрипти для перевірки окремих вузлів (CGI логін, скрапінг).
+Діагностичні скрипти.
+
+tests/ — Unit + інтеграційні тести (НОВЕ, M2)
+
+test_core.py
+
+Тести DI: `parse_marc_details`, `run_dspace_workflow`, task_manager integration (з моками).
+
+test_services.py
+
+Тести FileService (versioning, error-move), CoverService initialization.
+
+test_clients.py, test_state_machine.py
+
+Перевірки клієнтів і state machine.
+
+manual_smoke.py
+
+Smoke‑скрипт із stub‑класами для швидкої перевірки логіки.
+
+docs/ — Документація
+
+ROADMAP.md
+
+Дорожна карта (milestones M1–M7, DoD для кожного).
+
+ARCHITECTURE.md
+
+Архітектура, workflow (Fork-Join), безпека, відмовостійкість.
+
+RUNBOOK_TESTING.md
+
+**[НОВЕ]** Покрокова інструкція щодо тестування змін через мокі. Обов'язково перед модифікацією модулів!
 
 🛠 Налаштування та Запуск
 
@@ -134,3 +164,24 @@ Response: {"status": "processing" | "success" | "error", "result": {...}}
 PUT /kdv/api/integrate/{biblionumber}
 
 Оновлює назву/авторів у DSpace на основі змін у Koha.
+
+---
+
+🧪 Запуск тестів
+
+В контейнері (рекомендувано, в ньому є всі залежності):
+
+```bash
+docker compose up -d --build
+docker exec -e PYTHONPATH=/app kdv-api pytest -q          # усі тести
+docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_core.py::test_parse_marc_rules_basic -q  # окремий тест
+```
+
+Локально (з pip + pytest):
+
+```bash
+python3 -m pip install -r requirements.txt pytest
+PYTHONPATH=$(pwd) pytest -q
+```
+
+**Щодо моків і DI при тестуванні**, дивіться **[docs/RUNBOOK_TESTING.md](docs/RUNBOOK_TESTING.md)** — там детально описано як писати тести із stub‑клієнтами.

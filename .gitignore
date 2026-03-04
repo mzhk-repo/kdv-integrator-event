@@ -9,4 +9,4 @@ archive/
 *.log
 logs/
 **/logs/
-
+AGENTS.md
