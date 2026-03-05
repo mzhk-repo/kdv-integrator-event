@@ -94,10 +94,14 @@ jobs:
       - name: Compose validation
         run: |
           set -euo pipefail
-          cat > .env.ci <<'EOF'
-          HOST=ci.local
-          INTEGRATOR_MOUNT_PATH=/tmp
-          EOF
+          cp .env.example .env.ci
+          {
+            echo "HOST=ci.local"
+            echo "INTEGRATOR_MOUNT_PATH=/tmp"
+          } >> .env.ci
+
+          # docker-compose.yml has `env_file: .env`, so CI needs a temporary file.
+          cp .env.ci .env
 
           echo "== docker compose version =="
           docker compose version

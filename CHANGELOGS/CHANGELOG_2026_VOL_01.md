@@ -1,5 +1,21 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Improvement: додано `.env.example` і підключено в CI Compose validation
+
+- **Context:** Потрібно стабільно проходити `Compose validation` в CI без залежності від локального `.env` і без зберігання секретів у репозиторії.
+- **Change:** Додано `.env.example` з безпечними mock-значеннями всіх потрібних змінних (`KDV_API_TOKEN`, `KOHA_*`, `DSPACE_*`, `INTEGRATOR_MOUNT_PATH`, `HOST`); крок `Compose validation` у `.github/workflows/ci-cd.yml` тепер будує `.env.ci` на базі `.env.example` і створює тимчасовий `.env` для `env_file` в `docker-compose.yml`.
+- **Verification:** Логіка кроку `Compose validation` оновлена так, щоб CI завжди мав валідний env-шаблон без production секретів.
+- **Risks:** Якщо з'являться нові обов'язкові env у `src/config.py`, їх треба додати в `.env.example`, інакше CI може впасти на валідації/тестах.
+- **Rollback:** Видалити `.env.example` та повернути попередню схему генерації `.env.ci` у workflow (через `git revert` або ручний відкат).
+
+## 2026-03-05 — Fix: CI `Compose validation` падав через відсутній `.env`
+
+- **Context:** Після додавання діагностики виявлено, що `docker compose config` у CI падає з `env file .../.env not found`, бо `docker-compose.yml` містить `env_file: .env`.
+- **Change:** У кроці `Compose validation` workflow `.github/workflows/ci-cd.yml` додано створення тимчасового `.env` у CI (`cp .env.ci .env`) перед запуском `docker compose config`.
+- **Verification:** За логом помилки виявлено точну причину; фікс прибирає blocker, коли в runner немає committed `.env` (що правильно з точки зору безпеки).
+- **Risks:** Мінімальні; тимчасовий `.env` використовується лише в межах CI job і не містить production секретів.
+- **Rollback:** Видалити `cp .env.ci .env` з кроку `Compose validation` або відкотити коміт.
+
 ## 2026-03-05 — Fix: додано діагностику для CI `Compose validation`
 
 - **Context:** CI падав на кроці `Compose validation`, але в логу бракувало деталей причини падіння.
