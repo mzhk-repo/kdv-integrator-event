@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Fix: Trivy `python-pkg` (vendored metadata у setuptools)
+
+- **Context:** Після оновлення `requirements.txt` Trivy все ще знаходив `jaraco.context 5.3.0` і `wheel 0.45.1`, бо ці версії були у `setuptools/_vendor` (METADATA), а не в основних runtime-пакетах.
+- **Change:** У `Dockerfile` перед інсталяцією requirements додано `pip install --no-cache-dir --upgrade pip setuptools wheel`, щоб у runtime image оновились вендорені metadata (`setuptools/_vendor`) і не залишались старі CVE-версії.
+- **Verification:** Локально підтверджено після upgrade: `setuptools 82.0.0`, у `_vendor` присутній `wheel-0.46.3.dist-info`, а `jaraco.context-5.3.0.dist-info` відсутній.
+- **Risks:** Оновлення build toolchain може змінити transitive dependency resolution; потрібен повторний прогін CI (ruff/pytest/trivy).
+- **Rollback:** Прибрати upgrade рядок з `Dockerfile` або відкотити коміт через `git revert`.
+
 ## 2026-03-05 — Security/CI: Trivy gate для невиправних CVE + оновлення Python залежностей
 
 - **Context:** Trivy image scan знаходив `HIGH` у Debian base image без доступного `Fixed Version`, через що CI блокувався навіть для невиправних upstream CVE; також були `HIGH` у Python-пакетах із доступним фіксом (`wheel`, `jaraco.context`).
