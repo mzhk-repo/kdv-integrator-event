@@ -8,7 +8,7 @@
 - **Risks:** Документ може застарівати при зміні workflow/secrets; потрібно оновлювати архітектуру синхронно з CI/deploy правками.
 - **Rollback:** Відкотити `docs/ARCHITECTURE.md` до попередньої версії або виконати `git revert` коміту.
 
-## 2026-03-05 — Docs: актуалізовано M3 у ROADMAP після успішного CI/CD
+## 2026-03-05 — Docs: актуалізовано M3 у ROADMAP після успішного CI/CD.
 
 - **Context:** Після успішного проходження пайплайна потрібно синхронізувати фактичний стан `M3` у `docs/ROADMAP.md`.
 - **Change:** У секції `M3` відмічено виконані пункти checklist (`workflow/status check`, `build`, `ruff`, `pip-audit`, `trivy`, `release rules`, `secrets`), прогрес оновлено до `90%`; відкритим залишено лише `SBOM (CycloneDX)`.
