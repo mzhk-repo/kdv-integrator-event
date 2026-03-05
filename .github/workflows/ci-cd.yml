@@ -70,6 +70,8 @@ jobs:
           ruff check .
 
       - name: Pytest
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           set -euo pipefail
           pytest -q

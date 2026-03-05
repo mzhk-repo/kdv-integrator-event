@@ -1,5 +1,21 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Fix: CI Pytest ModuleNotFoundError (`src`)
+
+- **Context:** У GitHub Actions крок `Pytest` падав на `ModuleNotFoundError: No module named 'src'` під час collection (`tests/test_core.py`, `tests/test_services.py`).
+- **Change:** У workflow `.github/workflows/ci-cd.yml` для кроку `Pytest` додано `PYTHONPATH: ${{ github.workspace }}`, щоб імпорти `from src...` працювали в CI середовищі.
+- **Verification:** Перевірено конфігурацію workflow після правки; крок `Pytest` тепер запускається з явним шляхом до кореня репозиторію.
+- **Risks:** Мінімальні; зміна стосується лише CI оточення тестового кроку і не змінює runtime-поведінку застосунку.
+- **Rollback:** Видалити `env.PYTHONPATH` з кроку `Pytest` у `.github/workflows/ci-cd.yml` або відкотити коміт із цим фіксом.
+
+## 2026-03-05 — Docs: нормалізовано формат legacy-записів changelog
+
+- **Context:** У нижній частині файлу залишилися старі записи з форматним артефактом `- ## Context:** ...`, що створювало візуальний шум.
+- **Change:** Приведено 3 legacy-блоки до єдиного формату `Context / Change / Verification / Risks / Rollback` без зміни їхнього змісту.
+- **Verification:** Перевірено структуру файлу через `nl -ba CHANGELOGS/CHANGELOG_2026_VOL_01.md`; артефактів `- ## Context` більше немає.
+- **Risks:** Мінімальний ризик лише у форматуванні markdown (семантика записів не змінювалась).
+- **Rollback:** Відкотити файл `CHANGELOGS/CHANGELOG_2026_VOL_01.md` до попередньої версії.
+
 ## 2026-03-05 — Docs: рефакторинг ROADMAP (об'єднання M3+M8, release gate, актуалізація)
 
 - **Context:** Потрібно прибрати дублювання в roadmap, оновити застарілі формулювання CI, додати явний release gate і покращити структуру документа.
@@ -48,8 +64,9 @@
 - **Risks:** Можливі непомічені регресії, бо тести/лінт/healthcheck перед тегуванням не запускалися в цьому кроці.
 - **Rollback:** `git tag -d v0.1.0`; `git push origin :refs/tags/v0.1.0`; за потреби `git revert <release_commit_sha>` для відкату змін у `main`.
 
-- ## Context:** запуск нового проекту KDV Integrator event-driven, підготовка до
-  production hardening; початкова робота над roadmap та документами.
+## Legacy записи (ранні етапи, дата не зафіксована)
+
+- **Context:** запуск нового проекту KDV Integrator event-driven, підготовка до production hardening; початкова робота над roadmap та документами.
 - **Change:** створено `ROADMAP.md` з описом міленіумів; додано
   `docs/ACCEPTANCE_CRITERIA.md` (українською) із must-have сценаріями, SLI/SLO
   та stop-ship критеріями.
@@ -57,13 +74,13 @@
 - **Risks:** немає — документація не впливає на виконання коду.
 - **Rollback:** видалити файл або повернути попередній коміт (тестовий том).
 
-- ## Context (M2):** Codebase hardening — початковий рефактор оркестратора і підготовка thin‑wrappers для клієнтів (Koha, DSpace) та скелетів тестів.
+- **Context (M2):** Codebase hardening — початковий рефактор оркестратора і підготовка thin‑wrappers для клієнтів (Koha, DSpace) та скелетів тестів.
 - **Change (M2):** додано `src/core.py` (оркестратор), `src/clients/koha.py`, `src/clients/dspace.py`, тести `tests/test_clients.py` та `tests/test_state_machine.py`.
 - **Verification:** файли створені у репозиторії; базові імпортні тести присутні; ручне тестування через UI показало коректну роботу основних ендпоінтів (`/health`, `/integrate`, `/status`).
 - **Risks:** тимчасова дублювання логіки між `src/core.py` та `src/app.py` поки не завершено повну міграцію; увага до версій залежностей при запуску тестів.
 - **Rollback:** видалити додані файли або відкотити коміт.
 
-- ## Context (M2 continued):** завершено розділення на сервіси і залежності, впроваджено DI для клієнтів у `core`, `app` і `tasks`.
+- **Context (M2 continued):** завершено розділення на сервіси і залежності, впроваджено DI для клієнтів у `core`, `app` і `tasks`.
 - **Change (M2 continued):**
   - додано `src/services/files.py` та `src/services/covers.py`;
   - фабрика клієнтів `_make_clients` у `app.py` і передачі до `process_integration_logic`;
