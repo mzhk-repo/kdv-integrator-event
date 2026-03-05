@@ -72,6 +72,16 @@ jobs:
       - name: Pytest
         env:
           PYTHONPATH: ${{ github.workspace }}
+          KDV_API_TOKEN: ci-token
+          KOHA_API_URL: http://koha.local
+          KOHA_OPAC_URL: http://koha.local
+          KOHA_API_USER: ci-user
+          KOHA_API_PASS: ci-pass
+          DSPACE_API_URL: http://dspace.local/server
+          DSPACE_UI_URL: http://dspace.local
+          DSPACE_API_USER: ci-user
+          DSPACE_API_PASS: ci-pass
+          INTEGRATOR_MOUNT_PATH: /tmp
         run: |
           set -euo pipefail
           pytest -q

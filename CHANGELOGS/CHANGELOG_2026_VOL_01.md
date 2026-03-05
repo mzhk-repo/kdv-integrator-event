@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Fix: CI Pytest падіння через обов'язкові env у `src/config.py`
+
+- **Context:** У CI крок `Pytest` падав під час collection з `ValueError: Environment variable 'KDV_API_TOKEN' is missing`, бо `src/config.py` валідовує обов'язкові env при імпорті модулів `src`.
+- **Change:** Для кроку `Pytest` у `.github/workflows/ci-cd.yml` додано CI-mock env (`KDV_API_TOKEN`, `KOHA_*`, `DSPACE_*`, `INTEGRATOR_MOUNT_PATH`) та залишено явний `PYTHONPATH`.
+- **Verification:** `docker compose exec -e PYTHONPATH=/app -e KDV_API_TOKEN=ci-token -e KOHA_API_URL=http://koha.local -e KOHA_OPAC_URL=http://koha.local -e KOHA_API_USER=ci-user -e KOHA_API_PASS=ci-pass -e DSPACE_API_URL=http://dspace.local/server -e DSPACE_UI_URL=http://dspace.local -e DSPACE_API_USER=ci-user -e DSPACE_API_PASS=ci-pass -e INTEGRATOR_MOUNT_PATH=/tmp kdv-api pytest -q` -> `9 passed`.
+- **Risks:** Мінімальні; використовуються фіктивні значення тільки в тестовому кроці CI, не зачіпає production secrets або runtime конфіг.
+- **Rollback:** Видалити додані env з кроку `Pytest` у `.github/workflows/ci-cd.yml` або відкотити коміт.
+
 ## 2026-03-05 — Fix: CI Pytest ModuleNotFoundError (`src`)
 
 - **Context:** У GitHub Actions крок `Pytest` падав на `ModuleNotFoundError: No module named 'src'` під час collection (`tests/test_core.py`, `tests/test_services.py`).
