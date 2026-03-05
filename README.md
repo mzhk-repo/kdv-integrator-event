@@ -1,4 +1,4 @@
-KDV Integrator (v6.5)
+KDV Integrator (v0.2.1)
 
 KDV Integrator — це middleware-сервіс для автоматизованої синхронізації бібліотечної системи Koha ILS та цифрового репозиторію DSpace 7/8.
 

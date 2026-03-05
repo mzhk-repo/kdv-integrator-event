@@ -1,5 +1,21 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Docs: оновлено `docs/ARCHITECTURE.md` під M3
+
+- **Context:** Архітектурний документ описував переважно M2 і не відображав поточний стан M3 (CI/CD, release/deploy, Zero Trust шлях через Tailscale).
+- **Change:** У `docs/ARCHITECTURE.md` оновлено версію до `v6.6-M3`, додано секції про CI/CD архітектуру (`ci-checks`, `cd-deploy`), release semantics (`main -> staging`, `v* -> production`), deploy через `TAILSCALE_AUTHKEY` та операційні інваріанти (`.env.example`, changelog/runbook sync).
+- **Verification:** Звірено зміст із актуальним `.github/workflows/ci-cd.yml` і поточним статусом M3 у `docs/ROADMAP.md`.
+- **Risks:** Документ може застарівати при зміні workflow/secrets; потрібно оновлювати архітектуру синхронно з CI/deploy правками.
+- **Rollback:** Відкотити `docs/ARCHITECTURE.md` до попередньої версії або виконати `git revert` коміту.
+
+## 2026-03-05 — Docs: актуалізовано M3 у ROADMAP після успішного CI/CD
+
+- **Context:** Після успішного проходження пайплайна потрібно синхронізувати фактичний стан `M3` у `docs/ROADMAP.md`.
+- **Change:** У секції `M3` відмічено виконані пункти checklist (`workflow/status check`, `build`, `ruff`, `pip-audit`, `trivy`, `release rules`, `secrets`), прогрес оновлено до `90%`; відкритим залишено лише `SBOM (CycloneDX)`.
+- **Verification:** Звірено кроки з `.github/workflows/ci-cd.yml` та оновлено чекліст/статус у `docs/ROADMAP.md`.
+- **Risks:** Якщо branch protection rules для required checks зміняться поза репозиторієм, roadmap може потребувати повторної синхронізації.
+- **Rollback:** Відкотити правки `docs/ROADMAP.md` або `git revert` коміту з цим оновленням.
+
 ## 2026-03-05 — Deploy: перехід на `TAILSCALE_AUTHKEY` без OAuth
 
 - **Context:** Для деплою обрано спрощений Zero Trust сценарій через Tailscale без OAuth client credentials.

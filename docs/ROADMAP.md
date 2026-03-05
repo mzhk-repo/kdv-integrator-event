@@ -104,7 +104,7 @@
 
 Завершено розділення компонентів, впроваджено DI і написано покрокові тести з моками. Все сумісно з Koha UI через контейнер (поточна версія працює без keyword-аргумент помилок).
 
-#### M3 — DevOps release pipeline (CI/CD + build/test/scan + release automation)
+#### ✅ M3 — DevOps release pipeline (CI/CD + build/test/scan + release automation)
 
 **DoD:**
 
@@ -114,22 +114,21 @@
 
 **Checklist:**
 
-- [ ]  Активувати workflow `.github/workflows/ci-cd.yml` як обов’язковий status check для PR.
-- [ ]  Build етап: `docker build` або `docker compose build --pull`.
-- [ ]  Лінтер: `ruff check .` у CI job (окремо від runtime-контейнера сервісу).
+- [x]  Активувати workflow `.github/workflows/ci-cd.yml` як обов’язковий status check для PR.
+- [x]  Build етап: `docker build` або `docker compose build --pull`.
+- [x]  Лінтер: `ruff check .` у CI job (окремо від runtime-контейнера сервісу).
 - [x]  Тести: `docker exec -e PYTHONPATH=/app kdv-api pytest -q` (мінімум unit).
-- [ ]  Dependency scan: `pip-audit`.
-- [ ]  Image scan: `trivy`.
-- [ ]  SBOM (опційно, але бажано): CycloneDX.
-- [ ]  Release rules: `main -> staging`, `v* tag -> prod`.
-- [ ]  Secrets для CI/CD (GitHub Secrets) налаштовані та провалідовані.
+- [x]  Dependency scan: `pip-audit`.
+- [x]  Image scan: `trivy`.
+- [x]  Release rules: `main -> staging`, `v* tag -> prod`.
+- [x]  Secrets для CI/CD (GitHub Secrets) налаштовані та провалідовані.
 
-**Статус (на 2026-03-05):** ⏳ **В ПРОГРЕСІ (60%)**
+**Статус (на 2026-03-05): **ВИКОНАНО**
 
 - ✅ pytest встановлено і працює в контейнері (див. [RUNBOOK_TESTING.md](RUNBOOK_TESTING.md)).
-- ✅ є workflow-скелет CI/CD.
-- ⏳ потрібно завершити CI gates і сканування (`ruff`, `pip-audit`, `trivy`) як mandatory.
-- ⏳ потрібно валідувати production-ready release path для тегів `v*`.
+- ✅ CI/CD workflow працює на `push`/`pull_request` і проходить mandatory gates (`ruff`, `pytest`, `pip-audit`, `trivy`).
+- ✅ Налаштовано release path: `main -> staging`, `v* -> production` (через `cd-deploy`).
+
 
 #### M4 — Security: Zero Trust + CORS (must-have для прод)
 

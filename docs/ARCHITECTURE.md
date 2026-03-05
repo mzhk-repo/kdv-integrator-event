@@ -1,6 +1,6 @@
-Архітектура та Workflow (v6.5-M2)
+Архітектура та Workflow (v0.2.1-M3)
 
-Цей документ описує логіку роботи KDV Integrator v6.5 з урахуванням M2 hardening: розділення сервісів, DI для клієнтів та тестованості.
+Цей документ описує логіку роботи KDV Integrator v0.2.1 з урахуванням M2 hardening (розділення сервісів, DI, тестованість) та M3 (CI/CD pipeline, security gates, release/deploy flow).
 
 🔄 Загальний Workflow (Fork-Join Pattern)
 
@@ -39,7 +39,7 @@ graph TD
     end
 
 
-⚡ Деталі Реалізації (M2 — Dependency Injection, Розділені Сервіси)
+⚡ Деталі Реалізації (M2/M3)
 
 ### 1. Асинхронність (Async Core) + DI
 
@@ -148,7 +148,7 @@ REST API Koha не дозволяє повноцінно працювати з �
 - **AJAX Spoofing:** Завантаження файлу на upload-file.pl з заголовком `X-Requested-With: XMLHttpRequest` (інакше Koha не віддасть JSON).
 - **Scraping:** Парсинг HTML сторінки інструментів для знаходження `imagenumber`, щоб сформувати публічне посилання.
 
-🛡 Безпека та Відмовостійкість (M2)
+🛡 Безпека та Відмовостійкість (M2/M3)
 
 **Retry Policy**
 - 3 спроби на читання PDF (з затримкою 1s між ними).
@@ -171,9 +171,41 @@ REST API Koha не дозволяє повноцінно працювати з �
 - Дивіться [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) для прикладів.
 - Непотрібно мережевих викликів, тести швидкі та ізольовані.
 
+### 8. CI/CD Архітектура (M3)
+
+Після M3 у проєкті діє workflow `.github/workflows/ci-cd.yml` з двома незалежними шарами: `ci-checks` і `cd-deploy`.
+
+**CI layer (`ci-checks`)**
+- Trigger: `pull_request`, `push` у `main`, теги `v*.*.*`, `workflow_dispatch`.
+- Gates: `ruff check .`, `pytest -q`, `pip-audit`, `trivy config`, `trivy image`.
+- Build: `docker build` + `docker compose config` валідація через `.env.example` (без secrets у репозиторії).
+- Security policy: `trivy image` виконується з `--ignore-unfixed`, тому блокуються лише виправні `HIGH/CRITICAL`.
+
+**CD layer (`cd-deploy`)**
+- Умова запуску: тільки `push` у `main` або тег `v*` і лише після успішного `ci-checks`.
+- Release semantics:
+    - `main` -> staging path
+    - `vMAJOR.MINOR.PATCH` -> production path
+- Deploy transport: `appleboy/ssh-action`.
+
+### 9. Zero Trust Deploy Path (Tailscale)
+
+Деплой працює через tailnet і не покладається на публічний доступ до сервера.
+
+- Перед SSH використовується `tailscale/github-action@v4`.
+- Авторизація: `TAILSCALE_AUTHKEY` (GitHub Secret).
+- Обов'язкові secrets для deploy: `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`, `DEPLOY_PROJECT_DIR`, `TAILSCALE_AUTHKEY`.
+- На сервері деплой виконує: `git fetch`, checkout потрібного ref, `docker compose pull`, `docker compose up -d --remove-orphans`, `ps/logs`.
+
+### 10. Ops/Docs Invariants
+
+- `.env` з секретами не комітиться; для CI використовується `.env.example` + CI mock values.
+- Release Gate синхронізований з `docs/ROADMAP.md` (M3 секція).
+- Зміни в CI/deploy мають відображатися в `CHANGELOGS/` і, за потреби, у runbooks.
+
 ---
 
-### Code Organization (M2 — чиста архітектура)
+### Code Organization (M2/M3 — чиста архітектура)
 
 ```
 src/
