@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Fix: додано діагностику для CI `Compose validation`
+
+- **Context:** CI падав на кроці `Compose validation`, але в логу бракувало деталей причини падіння.
+- **Change:** Оновлено крок `Compose validation` у `.github/workflows/ci-cd.yml`: додано друк `docker compose version`, вмісту `.env.ci`, плейсхолдерів із `docker-compose.yml`, явний capture `stderr` у `/tmp/compose.error.log`, preview rendered compose і явну перевірку на unresolved змінні.
+- **Verification:** Локально перевірено `docker compose --env-file .env.ci -f docker-compose.yml config -q` (успішно), після змін крок гарантовано друкує причину при помилці `docker compose config`.
+- **Risks:** Збільшення обсягу CI-логу (очікувано), функціональна логіка деплою не змінювалась.
+- **Rollback:** Відкотити секцію `Compose validation` у `.github/workflows/ci-cd.yml` до попередньої версії або зробити `git revert` коміту.
+
 ## 2026-03-05 — Fix: CI Pytest падіння через обов'язкові env у `src/config.py`
 
 - **Context:** У CI крок `Pytest` падав під час collection з `ValueError: Environment variable 'KDV_API_TOKEN' is missing`, бо `src/config.py` валідовує обов'язкові env при імпорті модулів `src`.

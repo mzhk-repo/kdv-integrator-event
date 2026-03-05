@@ -99,10 +99,31 @@ jobs:
           INTEGRATOR_MOUNT_PATH=/tmp
           EOF
 
-          docker compose --env-file .env.ci -f docker-compose.yml config -q
-          docker compose --env-file .env.ci -f docker-compose.yml config > /tmp/compose.rendered.yml
+          echo "== docker compose version =="
+          docker compose version
 
-          grep -n "\${" /tmp/compose.rendered.yml && { echo "❌ Unresolved variables found in rendered compose"; exit 1; } || true
+          echo "== .env.ci used in CI =="
+          cat .env.ci
+
+          echo "== placeholders in docker-compose.yml =="
+          grep -n "\${" docker-compose.yml || true
+
+          if ! docker compose --env-file .env.ci -f docker-compose.yml config > /tmp/compose.rendered.yml 2>/tmp/compose.error.log; then
+            echo "❌ docker compose config failed"
+            echo "== compose stderr =="
+            cat /tmp/compose.error.log
+            exit 1
+          fi
+
+          echo "== rendered compose preview (first 120 lines) =="
+          sed -n '1,120p' /tmp/compose.rendered.yml
+
+          if grep -n "\${" /tmp/compose.rendered.yml; then
+            echo "❌ Unresolved variables found in rendered compose"
+            exit 1
+          fi
+
+          docker compose --env-file .env.ci -f docker-compose.yml config -q
           echo "✅ docker-compose.yml is valid."
 
       - name: Dependency scan (pip-audit)
