@@ -10,6 +10,7 @@ logger = logging.getLogger("KDV-Tasks")
 # Структура: { "task_uuid": { "status": "queued", "created_at": time, ... } }
 TASKS = {}
 
+
 class TaskManager:
     def __init__(self):
         pass
@@ -23,24 +24,26 @@ class TaskManager:
         :return: task_id (UUID string)
         """
         task_id = str(uuid.uuid4())
-        
+
         # Ініціалізація стану задачі
         TASKS[task_id] = {
-            "status": "queued",          # queued -> processing -> success / error
+            "status": "queued",  # queued -> processing -> success / error
             "created_at": time.time(),
             "progress": "Task initialized",
-            "result": None,              # Тут буде результат (наприклад, handle посилання)
-            "error": None
+            "result": None,  # Тут буде результат (наприклад, handle посилання)
+            "error": None,
         }
-        
+
         logger.info(f"🚀 [Task {task_id}] Created and Queued.")
 
         # Запуск окремого потоку
         # daemon=True означає, що потік завершиться, якщо впаде основна програма
-        thread = threading.Thread(target=self._wrapper, args=(task_id, func, args, kwargs))
-        thread.daemon = True 
+        thread = threading.Thread(
+            target=self._wrapper, args=(task_id, func, args, kwargs)
+        )
+        thread.daemon = True
         thread.start()
-        
+
         return task_id
 
     def _wrapper(self, task_id, func, args, kwargs):
@@ -52,17 +55,17 @@ class TaskManager:
             logger.info(f"▶️ [Task {task_id}] Started execution...")
             TASKS[task_id]["status"] = "processing"
             TASKS[task_id]["progress"] = "Starting logic..."
-            
+
             # ВИКОНАННЯ ОСНОВНОЇ ЛОГІКИ
             # Ми передаємо task_id першим аргументом, щоб функція могла (опціонально) оновлювати прогрес
             result = func(task_id, *args, **kwargs)
-            
+
             # Успішне завершення
             TASKS[task_id]["status"] = "success"
             TASKS[task_id]["result"] = result
             TASKS[task_id]["progress"] = "Completed successfully"
             logger.info(f"✅ [Task {task_id}] Finished successfully.")
-            
+
         except Exception as e:
             # Критична помилка під час виконання
             logger.error(f"❌ [Task {task_id}] FAILED: {str(e)}")
@@ -77,11 +80,16 @@ class TaskManager:
     def cleanup_old_tasks(self, max_age_seconds=3600):
         """Очищення пам'яті від старих задач (можна викликати періодично)"""
         now = time.time()
-        to_delete = [tid for tid, data in TASKS.items() if now - data['created_at'] > max_age_seconds]
+        to_delete = [
+            tid
+            for tid, data in TASKS.items()
+            if now - data["created_at"] > max_age_seconds
+        ]
         for tid in to_delete:
             del TASKS[tid]
         if to_delete:
             logger.info(f"🧹 Cleaned up {len(to_delete)} old tasks.")
+
 
 # Створюємо єдиний екземпляр менеджера для імпорту
 task_manager = TaskManager()

@@ -31,7 +31,9 @@ class FileService:
                 break
             version += 1
             if version > 999:
-                full_path = os.path.join(target_dir, f"biblio_{biblionumber}_v999_{os.urandom(4).hex()}.pdf")
+                full_path = os.path.join(
+                    target_dir, f"biblio_{biblionumber}_v999_{os.urandom(4).hex()}.pdf"
+                )
                 break
 
         logger.info(f"📂 [Files] Moving {original_full_path} -> {full_path}")

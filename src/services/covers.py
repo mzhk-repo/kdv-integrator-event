@@ -1,19 +1,19 @@
-import os
 import time
 import logging
-import io
 from pathlib import Path
 from PIL import Image
 
 # Спробуємо імпортувати pdf2image, якщо бібліотека встановлена
 try:
     from pdf2image import convert_from_path
+
     PDF2IMAGE_AVAILABLE = True
 except ImportError:
     PDF2IMAGE_AVAILABLE = False
 
 # Налаштування логування
 logger = logging.getLogger(__name__)
+
 
 class CoverService:
     """
@@ -22,13 +22,13 @@ class CoverService:
     """
 
     # --- COVER POLICY CONSTANTS ---
-    TARGET_WIDTH = 600      # Цільова ширина
-    MAX_WIDTH = 800         # Жорсткий ліміт
-    JPEG_QUALITY = 80       # Якість стиснення
-    DEFAULT_DPI = 150       # Роздільна здатність для Poppler
-    GENERATION_TIMEOUT = 15 # Секунд на генерацію (Time Limit)
-    MAX_RETRIES = 2         # Спроби читання PDF
-    RETRY_DELAY = 1         # Секунд між спробами
+    TARGET_WIDTH = 600  # Цільова ширина
+    MAX_WIDTH = 800  # Жорсткий ліміт
+    JPEG_QUALITY = 80  # Якість стиснення
+    DEFAULT_DPI = 150  # Роздільна здатність для Poppler
+    GENERATION_TIMEOUT = 15  # Секунд на генерацію (Time Limit)
+    MAX_RETRIES = 2  # Спроби читання PDF
+    RETRY_DELAY = 1  # Секунд між спробами
 
     def __init__(self, koha_client=None):
         """
@@ -36,7 +36,9 @@ class CoverService:
         """
         self.koha = koha_client
         if not PDF2IMAGE_AVAILABLE:
-            logger.warning("⚠️ pdf2image not installed. Cover generation will be disabled.")
+            logger.warning(
+                "⚠️ pdf2image not installed. Cover generation will be disabled."
+            )
 
     def process_book(self, biblionumber: str, pdf_path: str, output_base_dir: str):
         """
@@ -50,7 +52,9 @@ class CoverService:
 
         # 1. Strict Mode: Перевірка наявності (щоб не перезаписати ручну роботу)
         if self.koha and self._check_if_cover_exists(biblionumber):
-            logger.info(f"⏭️ [Cover] Skipped for #{biblionumber}: Cover already exists in Koha.")
+            logger.info(
+                f"⏭️ [Cover] Skipped for #{biblionumber}: Cover already exists in Koha."
+            )
             return {"status": "skipped", "reason": "exists_in_koha"}
 
         # 2. Генерація файлу
@@ -64,14 +68,18 @@ class CoverService:
         # 3. Завантаження в Koha
         if self.koha:
             upload_success = self._upload_to_koha(biblionumber, cover_path)
-            
+
             if upload_success:
                 logger.info(f"✅ [Cover] Successfully uploaded to Koha #{biblionumber}")
                 return {"status": "success", "file": cover_path}
             else:
                 logger.warning(f"⚠️ [Cover] Upload returned False for #{biblionumber}")
-                return {"status": "warning", "reason": "upload_failed", "file": cover_path}
-        
+                return {
+                    "status": "warning",
+                    "reason": "upload_failed",
+                    "file": cover_path,
+                }
+
         return {"status": "generated_only", "file": cover_path}
 
     def _generate_image(self, biblionumber, pdf_path, output_base_dir):
@@ -82,7 +90,7 @@ class CoverService:
         # Створюємо папку для обкладинок
         save_dir = Path(output_base_dir) / "covers"
         save_dir.mkdir(parents=True, exist_ok=True)
-        
+
         filename = f"cover_{biblionumber}_v01.jpg"
         full_path = save_dir / filename
 
@@ -98,31 +106,37 @@ class CoverService:
                     first_page=1,
                     last_page=1,
                     dpi=self.DEFAULT_DPI,
-                    fmt='jpeg',
-                    timeout=self.GENERATION_TIMEOUT # Poppler timeout guard
+                    fmt="jpeg",
+                    timeout=self.GENERATION_TIMEOUT,  # Poppler timeout guard
                 )
                 if images:
                     pil_image = images[0]
                     break
             except Exception as e:
                 last_error = e
-                logger.warning(f"⚠️ [Cover] Attempt {attempt+1}/{self.MAX_RETRIES} failed: {e}")
+                logger.warning(
+                    f"⚠️ [Cover] Attempt {attempt + 1}/{self.MAX_RETRIES} failed: {e}"
+                )
                 time.sleep(self.RETRY_DELAY)
 
         if not pil_image:
-            raise Exception(f"Could not extract first page after {self.MAX_RETRIES} retries. Error: {last_error}")
+            raise Exception(
+                f"Could not extract first page after {self.MAX_RETRIES} retries. Error: {last_error}"
+            )
 
         # --- PROCESSING (Resize) ---
         # Якщо ширина більше ліміту - зменшуємо
         if pil_image.width > self.TARGET_WIDTH:
-            w_percent = (self.TARGET_WIDTH / float(pil_image.width))
+            w_percent = self.TARGET_WIDTH / float(pil_image.width)
             h_size = int((float(pil_image.height) * float(w_percent)))
             # Використовуємо LANCZOS для якісного зменшення
-            pil_image = pil_image.resize((self.TARGET_WIDTH, h_size), Image.Resampling.LANCZOS)
-        
+            pil_image = pil_image.resize(
+                (self.TARGET_WIDTH, h_size), Image.Resampling.LANCZOS
+            )
+
         # --- SAVING ---
         pil_image.save(full_path, "JPEG", quality=self.JPEG_QUALITY, optimize=True)
-        
+
         return str(full_path)
 
     def _check_if_cover_exists(self, biblionumber):

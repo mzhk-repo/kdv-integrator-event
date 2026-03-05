@@ -4,16 +4,16 @@
 
 **Вимоги перед тестуванням**
 - Файли проекту оновлені у робочій копії репо.
-- `.env` має містити обов'язкові змінні (особливо `KDV_API_TOKEN`) — перевірте [README.md](README.md).
+- `.env` має містити обов'язкові змінні (особливо `KDV_API_TOKEN`) — перевірте [README.md](../README.md).
 - Рекомендується запускати тести всередині контейнера `kdv-api` (щоб підхопити ті ж залежності, що у production compose).
 
 **Короткий огляд файлів (корисні посилання)**
-- Код ядра: [src/core.py](src/core.py)
-- Менеджер задач: [src/tasks.py](src/tasks.py)
-- Клієнти‑обгортки: [src/clients/koha.py](src/clients/koha.py), [src/clients/dspace.py](src/clients/dspace.py)
-- Сервіси: [src/services/files.py](src/services/files.py), [src/services/covers.py](src/services/covers.py)
-- Тести: [tests/test_core.py](tests/test_core.py), [tests/test_services.py](tests/test_services.py)
-- Активний changelog: [CHANGELOGS/CHANGELOG_2026_VOL_01.md](CHANGELOGS/CHANGELOG_2026_VOL_01.md)
+- Код ядра: [src/core.py](../src/core.py)
+- Менеджер задач: [src/tasks.py](../src/tasks.py)
+- Клієнти‑обгортки: [src/clients/koha.py](../src/clients/koha.py), [src/clients/dspace.py](../src/clients/dspace.py)
+- Сервіси: [src/services/files.py](../src/services/files.py), [src/services/covers.py](../src/services/covers.py)
+- Тести: [tests/test_core.py](../tests/test_core.py), [tests/test_services.py](../tests/test_services.py)
+- Активний changelog: [CHANGELOGS/CHANGELOG_2026_VOL_01.md](../CHANGELOGS/CHANGELOG_2026_VOL_01.md)
 
 **1) Запуск середовища (контейнер)**
 
@@ -26,7 +26,10 @@ docker compose up -d --build
 Потім виконувати команди всередині контейнера, щоб гарантувати сумісність залежностей:
 
 ```bash
-# інтерактивний запуск тестів у контейнері
+# healthcheck після старту контейнера
+./scripts/healthcheck.sh
+
+# запуск усіх тестів у контейнері
 docker exec -e PYTHONPATH=/app kdv-api pytest -q
 
 # або окремий тест
@@ -45,7 +48,6 @@ docker compose up -d --build
 
 ```bash
 python3 -m pip install -r requirements.txt
-python3 -m pip install pytest
 PYTHONPATH=$(pwd) pytest -q
 ```
 
@@ -137,7 +139,7 @@ def test_http_flow(monkeypatch):
 - Писати невеликі, атомарні тести (одне твердження — одна логіка).
 - Використовувати DI для підміни зовнішніх залежностей замість мережевих викликів.
 - Додавати changelog запис під час мерджу змін.
-- Переконатися, що `docker compose up -d --build` виконується у CI перед тестовим прогоном образу.
+- Переконатися, що `docker compose up -d --build` і `./scripts/healthcheck.sh` виконуються перед тестовим прогоном образу.
 
 ---
 

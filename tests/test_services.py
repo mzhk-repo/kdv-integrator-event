@@ -1,6 +1,4 @@
 import os
-import tempfile
-import shutil
 from src.services.files import FileService
 from src.services.covers import CoverService
 
@@ -43,4 +41,4 @@ def test_files_move_to_error(tmp_path):
 def test_cover_service_initialization():
     # just ensure it can be constructed without Koha
     cs = CoverService()
-    assert hasattr(cs, 'process_book')
+    assert hasattr(cs, "process_book")

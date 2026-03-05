@@ -14,23 +14,29 @@ logger = logging.getLogger("KDV-Core")
 
 app = Flask(__name__)
 
+
 @app.after_request
 def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-KDV-TOKEN, Authorization'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type, X-KDV-TOKEN, Authorization"
+    )
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     return response
+
 
 @app.before_request
 def check_security():
-    if request.path.endswith('/health') or request.method == 'OPTIONS':
+    if request.path.endswith("/health") or request.method == "OPTIONS":
         return
-    if request.headers.get('X-KDV-TOKEN') != KDV_API_TOKEN:
+    if request.headers.get("X-KDV-TOKEN") != KDV_API_TOKEN:
         abort(401, description="Invalid Token")
 
-@app.route('/kdv/api/health', methods=['GET'])
+
+@app.route("/kdv/api/health", methods=["GET"])
 def healthcheck():
     return jsonify({"status": "ok", "mode": "v6.5-parallel-covers"})
+
 
 def _make_clients():
     """Return a fresh pair of Koha/DSpace clients (wrappers) for glue code.
@@ -40,7 +46,7 @@ def _make_clients():
     return KohaClientWrapper(), DSpaceClientWrapper()
 
 
-@app.route('/kdv/api/integrate/<int:biblionumber>', methods=['POST'])
+@app.route("/kdv/api/integrate/<int:biblionumber>", methods=["POST"])
 def archive_record_async(biblionumber):
     try:
         koha_client, dspace_client = _make_clients()
@@ -48,41 +54,47 @@ def archive_record_async(biblionumber):
             process_integration_logic,
             biblionumber,
             koha_client=koha_client,
-            dspace_client=dspace_client
+            dspace_client=dspace_client,
         )
         return jsonify({"status": "accepted", "task_id": task_id}), 202
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/kdv/api/status/<task_id>', methods=['GET'])
+
+@app.route("/kdv/api/status/<task_id>", methods=["GET"])
 def get_task_status(task_id):
     info = task_manager.get_status(task_id)
     return jsonify(info) if info else (jsonify({"status": "not_found"}), 404)
 
-@app.route('/kdv/api/integrate/<int:biblionumber>', methods=['PUT'])
+
+@app.route("/kdv/api/integrate/<int:biblionumber>", methods=["PUT"])
 def update_record(biblionumber):
     koha, dspace = _make_clients()
     try:
         raw_xml = koha._get_biblio_xml(biblionumber)
         md = parse_marc_details(raw_xml)
-        md['koha.biblionumber'] = str(biblionumber)
-        
-        meta = koha.get_biblio_metadata(biblionumber)
-        item_uuid = meta.get('dspace_uuid') if meta else None
+        md["koha.biblionumber"] = str(biblionumber)
 
-        if not item_uuid and md.get('handle'):
-            item_uuid = dspace.find_item_uuid_by_handle(md['handle'])
+        meta = koha.get_biblio_metadata(biblionumber)
+        item_uuid = meta.get("dspace_uuid") if meta else None
+
+        if not item_uuid and md.get("handle"):
+            item_uuid = dspace.find_item_uuid_by_handle(md["handle"])
 
         if not item_uuid:
             existing = dspace.find_item_by_biblionumber(biblionumber)
             if existing:
-                item_uuid = existing['uuid']
+                item_uuid = existing["uuid"]
 
         if not item_uuid:
             return jsonify({"status": "error", "message": "Item not found"}), 404
 
         success = dspace.update_metadata(item_uuid, md)
-        return jsonify({"status": "success"}) if success else (jsonify({"status": "error"}), 500)
+        return (
+            jsonify({"status": "success"})
+            if success
+            else (jsonify({"status": "error"}), 500)
+        )
 
     except Exception as e:
         logger.error(f"UPDATE ERROR: {e}")

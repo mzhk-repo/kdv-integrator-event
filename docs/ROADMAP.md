@@ -2,6 +2,13 @@
 
 Підготувати KDV Integrator (event-driven, async) до стабільної експлуатації в production з мінімально необхідними DevSecOps практиками, прозорими критеріями готовності та керованим релізом.
 
+### 2. Поточний стан (на 2026-03-05)
+
+- ✅ `M0`, `M1`, `M2` завершені (критерії приймання, коректність event-driven flow, DI/SOLID hardening).
+- ⏳ У фокусі `M3`: довести CI/CD до стабільного автоматичного gate (build/lint/tests/scan/release).
+- ⏳ `M4`, `M5`, `M6`, `M7`, `M8` у прогресі.
+- ⚠️ Основні ризики: неповне security hardening (Cloudflare Access/CORS), відсутність `ready` endpoint, неповні contract тести Koha/DSpace.
+
 ### 3. Принципи (коротко)
 
 #### DevOps
@@ -40,7 +47,7 @@
     - `GET /status/{task_id}` повертає коректний стан і стійко працює.
     - Механізм fork/join: DSpace імпорт повинен бути critical-path, покриття обкладинки — best‑effort.
     - Файлова гігієна: кожне оброблене/необроблене ім’я файлу перейменовується (rename‑first), існують папки `Processed`/`Error`.
-    - Operації batch-робота й нічного «nightwalker» на завантажених файлаx.
+    - Операції batch-робота й нічного «nightwalker» на завантажених файлах.
 - Визначені та записані критерії «stop‑ship» — категорії дефектів, які неодмінно блокують випуск.
 
 **Що треба зробити (checklist):**
@@ -97,27 +104,32 @@
 
 Завершено розділення компонентів, впроваджено DI і написано покрокові тести з моками. Все сумісно з Koha UI через контейнер (поточна версія працює без keyword-аргумент помилок).
 
-#### M3 — DevOps release pipeline (build/test/scan)
+#### M3 — DevOps release pipeline (CI/CD + build/test/scan + release automation)
 
 **DoD:**
 
-- Є CI, який: лінтить, тестить, сканує залежності, сканує docker image.
-- Є версіонування й правила релізу (tags), відтворюваний артефакт.
+- Є CI для `push`/`pull_request`, який: збирає, лінтить, тестить, сканує залежності та Docker image.
+- Є release automation для тегів `v*` (публікація артефакту/релізні кроки) і зрозумілі правила `main -> staging`, `v* -> prod`.
+- Є відтворюваний артефакт і release notes.
 
 **Checklist:**
 
-- [ ]  Лінтер/форматер: `ruff` (мінімум). / Docker image вже містить основні інструменти.
-- [x]  Тести: `pytest` (мінімум unit). / Встановлено в контейнері, дивіться `docker exec kdv-api pytest`.
+- [ ]  Активувати workflow `.github/workflows/ci-cd.yml` як обов’язковий status check для PR.
+- [ ]  Build етап: `docker build` або `docker compose build --pull`.
+- [ ]  Лінтер: `ruff check .` у CI job (окремо від runtime-контейнера сервісу).
+- [x]  Тести: `docker exec -e PYTHONPATH=/app kdv-api pytest -q` (мінімум unit).
 - [ ]  Dependency scan: `pip-audit`.
 - [ ]  Image scan: `trivy`.
 - [ ]  SBOM (опційно, але бажано): CycloneDX.
 - [ ]  Release rules: `main -> staging`, `v* tag -> prod`.
+- [ ]  Secrets для CI/CD (GitHub Secrets) налаштовані та провалідовані.
 
-**Статус (на 2026-03-04):** ⏳ **В ПРОГРЕСІ (50%)**
+**Статус (на 2026-03-05):** ⏳ **В ПРОГРЕСІ (60%)**
 
-- ✅ pytest встановлено і працює в контейнері (див. [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md)).
-- ⏳ потрібно налаштувати CI (GitHub Actions / GitLab CI).
-- ⏳ потрібно додати лінтер та сканування залежностей.
+- ✅ pytest встановлено і працює в контейнері (див. [RUNBOOK_TESTING.md](RUNBOOK_TESTING.md)).
+- ✅ є workflow-скелет CI/CD.
+- ⏳ потрібно завершити CI gates і сканування (`ruff`, `pip-audit`, `trivy`) як mandatory.
+- ⏳ потрібно валідувати production-ready release path для тегів `v*`.
 
 #### M4 — Security: Zero Trust + CORS (must-have для прод)
 
@@ -139,13 +151,13 @@
 
 **DoD:**
 
-- Є health/ready endpoints.
+- Є liveness/readiness endpoints.
 - Є структуровані логи й мінімальні метрики.
 - Є runbooks.
 
 **Checklist:**
 
-- [x]  `GET /health` (liveness). — реалізовано в `src/app.py`.
+- [x]  `GET /kdv/api/health` (liveness). — реалізовано в `src/app.py`.
 - [ ]  `GET /ready` (readiness): mount готовий, конфіги валідні.
 - [x]  Структуровані логи з полями: `task_id`, `biblionumber`. — у `core.py` та `tasks.py`.
 - [x]  Runbooks: [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) (тестування змін). / Для ops потрібні ще "Cloudflare 524", "drive not mounted" тощо.
@@ -161,7 +173,7 @@
 **DoD:**
 
 - Є unit тести для mapping/files/state.
-- Є інтеграційный прогін у docker compose.
+- Є інтеграційний прогін у docker compose.
 - Є контрактні перевірки для Koha CGI та DSpace PID/patch.
 
 **Checklist:**
@@ -193,28 +205,7 @@
 - [ ]  Вікно спостереження 24–48 год.
 - [ ]  Rollback: повернення до попереднього image digest/tag.
 
-#### M8 — CI & Automation
-
-**DoD:**
-
-- Після коміту/пул‑реквесту CI автоматично виконує build, лінт, тести та сканування.
-- Після створення тегу `v*` збірка артефакту публікується у реєстр.
-
-**Checklist:**
-
-- [ ]  GitHub Actions / GitLab CI job:
-  1. `docker compose build --pull` або `docker build`.
-  2. запустити `ruff check .` (linter).
-  3. запустити `docker exec -e PYTHONPATH=/app <container> pytest -q`.
-  4. виконати `pip-audit` для dependency scan.
-  5. виконати `trivy image --exit-code 1` для image scan.
-  6. (опційно) згенерувати SBOM CycloneDX.
-  7. при тегуванні: пуш image до registry + опублікувати release notes.
-- [ ]  Конфігурація секретів для CI (env vars, токени небезпечні). 
-
-**Status:** ⏳ в плані (сkeleton job готовий, очікує інтеграції у репозиторій).
-
-#### M9 — Post‑prod analytics & Scale‑out
+#### M8 — Post‑prod analytics & Scale‑out
 
 **DoD:**
 
@@ -226,6 +217,18 @@
 - [ ]  Метрики p95, success rate, черга задач (prometheus? simple log parsing).
 - [ ]  Документація “як додати новий worker/збільшити threads”.
 - [ ]  Rate-limit параметри для batch-роботи (щоб Koha/DSpace не перевантажувалися).
+
+### 5. Release Gate (must pass перед тегом `v*`)
+
+Мінімальний gate перед production release:
+
+- [ ]  `docker compose up -d --build`
+- [ ]  `./scripts/healthcheck.sh`
+- [ ]  `docker compose logs --tail=200` (без критичних помилок сервісу)
+- [ ]  `docker exec -e PYTHONPATH=/app kdv-api pytest -q`
+- [ ]  `ruff check .` (якщо лінтер увімкнено в репозиторії)
+- [ ]  Оновлено активний том `CHANGELOGS/` за шаблоном `Context/Change/Verification/Risks/Rollback`
+- [ ]  Якщо зміни торкаються security/ops/network: оновлено `ARCHITECTURE.md` та відповідні runbook-и
 
 ---
 

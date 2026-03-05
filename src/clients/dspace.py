@@ -2,14 +2,18 @@ class DSpaceClientWrapper:
     """Thin wrapper around the existing DSpaceClient for DI and testing.
     Uses lazy import so tests can run without network/dependency requirements.
     """
+
     def __init__(self):
         try:
             from ..dspace import DSpaceClient as _DSpaceClient
+
             self._client = _DSpaceClient()
         except Exception:
+
             class _Stub:
                 def __getattr__(self, name):
                     raise RuntimeError("DSpaceClient not available in this environment")
+
             self._client = _Stub()
 
     def __getattr__(self, name):
