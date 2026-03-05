@@ -4,10 +4,9 @@
 
 ### 2. Поточний стан (на 2026-03-05)
 
-- ✅ `M0`, `M1`, `M2` завершені (критерії приймання, коректність event-driven flow, DI/SOLID hardening).
-- ⏳ У фокусі `M3`: довести CI/CD до стабільного автоматичного gate (build/lint/tests/scan/release).
-- ⏳ `M4`, `M5`, `M6`, `M7`, `M8` у прогресі.
-- ⚠️ Основні ризики: неповне security hardening (Cloudflare Access/CORS), перехідний dual-auth режим, неповні contract тести Koha/DSpace.
+- ✅ `M0`, `M1`, `M2`, `M3`, `M4` завершені.
+- ⏳ `M5`, `M6`, `M7`, `M8` у прогресі.
+- ⚠️ Основні ризики: неповні contract тести Koha/DSpace, відсутність production ops runbook, не завершений release/canary процес.
 
 ### 3. Принципи (коротко)
 
@@ -130,7 +129,7 @@
 - ✅ Налаштовано release path: `main -> staging`, `v* -> production` (через `cd-deploy`).
 
 
-#### M4 — Security: Zero Trust + CORS (must-have для прод)
+#### ✅ M4 — Security: Zero Trust + CORS (must-have для прод)
 
 **DoD:**
 
@@ -144,14 +143,14 @@
 - [x]  Перейти на Cloudflare Access headers (`Cf-Access-Jwt-Assertion`) або інший trusted-header механізм. — додано `dual/cf-only` режими в `src/app.py`.
 - [x]  Залишити `X-KDV-TOKEN` тільки для server-to-server (robot/nightwalker), якщо потрібно. — реалізовано через перехідний `dual` режим.
 - [x]  Налаштувати Strict CORS: `Access-Control-Allow-Origin` = домен Koha (не `*`). — через `KDV_CORS_ALLOWLIST` (fallback `KOHA_OPAC_URL`).
-- [ ]  Переконатися, що `OPTIONS` (preflight) проходить через edge (CF Access) без поломок.
+- [x]  Переконатися, що `OPTIONS` (preflight) проходить через edge (CF Access) без поломок.
 
-**Статус (на 2026-03-05):** ⏳ **В ПРОГРЕСІ (80%)**
+**Статус (на 2026-03-05):** ✅ **ЗАВЕРШЕНО (100%)**
 
 - ✅ Прибрано hardcoded токен із Koha JS.
 - ✅ Додано поетапну auth-модель `legacy -> dual -> cf-only`.
 - ✅ CORS переведено на strict allowlist із env.
-- ⏳ Потрібна перевірка preflight через реальний CF edge.
+- ✅ Підтверджено preflight і browser-flow через реальний Cloudflare edge.
 
 #### M5 — Observability + Ops readiness (мінімум)
 

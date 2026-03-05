@@ -234,3 +234,11 @@
 - **Verification:** `docker compose up -d --build`; `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `17 passed`; `./scripts/healthcheck.sh` -> `OK`; повторний live `PUT https://repo.fby.com.ua/kdv/api/integrate/12` з `CF_Authorization` -> `200 {"status":"success"}`.
 - **Risks:** Мінімальні; зміна стосується криптографічної залежності для auth-перевірки.
 - **Rollback:** Прибрати `cryptography` з `requirements.txt` і відкотити коміт (не рекомендовано, поверне `401` для CF JWT).
+
+## 2026-03-05 — Docs: M4 позначено завершеним у ROADMAP + синхронізовано ARCHITECTURE
+
+- **Context:** Після серії M4 фіксів (CORS allowlist, credentials, Cloudflare browser-flow, cookie JWT, RS256 verification) документація відставала від фактичного стану.
+- **Change:** У `docs/ROADMAP.md` закрито M4 (100%), позначено виконаним пункт preflight через edge та оновлено розділ «Поточний стан/ризики». У `docs/ARCHITECTURE.md` оновлено версію до `v0.2.1-M4` і деталізовано реалізацію auth/CORS: джерела JWT (`Cf-Access-Jwt-Assertion` + `CF_Authorization`), вимогу `cryptography`, `Access-Control-Allow-Credentials`, і browser bootstrap flow.
+- **Verification:** Візуальна звірка документів з фактичною реалізацією у `src/app.py` та `IntranetUserJS.js`.
+- **Risks:** Документація може застаріти, якщо буде перехід з `dual` на `cf-only` без синхронного оновлення roadmap/architecture.
+- **Rollback:** Відкотити правки в `docs/ROADMAP.md` та `docs/ARCHITECTURE.md` через `git revert <commit_sha>`.

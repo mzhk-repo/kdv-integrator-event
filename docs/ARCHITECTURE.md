@@ -1,6 +1,6 @@
-Архітектура та Workflow (v0.2.1-M3)
+Архітектура та Workflow (v0.2.1-M4)
 
-Цей документ описує логіку роботи KDV Integrator v0.2.1 з урахуванням M2 hardening (розділення сервісів, DI, тестованість) та M3 (CI/CD pipeline, security gates, release/deploy flow).
+Цей документ описує логіку роботи KDV Integrator v0.2.1 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow) та M4 (Zero Trust + CORS).
 
 🔄 Загальний Workflow (Fork-Join Pattern)
 
@@ -197,23 +197,36 @@ REST API Koha не дозволяє повноцінно працювати з �
 - Обов'язкові secrets для deploy: `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`, `DEPLOY_PROJECT_DIR`, `TAILSCALE_AUTHKEY`.
 - На сервері деплой виконує: `git fetch`, checkout потрібного ref, `docker compose pull`, `docker compose up -d --remove-orphans`, `ps/logs`.
 
-### 10. API Security Path (M4 transition)
+### 10. API Security Path (M4 implemented)
 
-У M4 використовується керований перехідний режим авторизації:
+Після M4 в API використовується керований режим авторизації:
 
 - `KDV_AUTH_MODE=legacy`: тільки `X-KDV-TOKEN` (поточна сумісність).
-- `KDV_AUTH_MODE=dual`: приймається або `X-KDV-TOKEN`, або валідний `Cf-Access-Jwt-Assertion`.
+- `KDV_AUTH_MODE=dual`: приймається або `X-KDV-TOKEN`, або валідний Cloudflare Access JWT.
 - `KDV_AUTH_MODE=cf-only`: тільки Cloudflare Access JWT.
 
-Cloudflare Access JWT перевіряється через JWK endpoint:
+Cloudflare Access JWT приймається з двох джерел:
+
+- Header: `Cf-Access-Jwt-Assertion`.
+- Cookie: `CF_Authorization` (browser flow через Cloudflare Access).
+
+Валідація JWT виконується через JWK endpoint:
 
 - `https://<CF_ACCESS_TEAM_DOMAIN>/cdn-cgi/access/certs`
 - обов'язкові claims: `aud=CF_ACCESS_AUD`, `iss=https://<CF_ACCESS_TEAM_DOMAIN>`.
+- вимога runtime: `PyJWT` + `cryptography` для перевірки `RS256`.
 
 CORS працює в strict режимі через allowlist:
 
 - `KDV_CORS_ALLOWLIST` (comma-separated origins),
 - fallback: `KOHA_OPAC_URL`.
+- `Access-Control-Allow-Credentials: true` для дозволених origin (щоб браузер передавав CF cookies).
+
+Koha JS для browser-flow:
+
+- Використовує `xhrFields.withCredentials=true` для `POST/PUT/GET status`.
+- Перед критичними діями робить pre-check сесії через `GET /kdv/api/health`.
+- Якщо сесії немає, відкриває захищений endpoint `repo.../kdv/api/health`, після чого Cloudflare сам формує валідний login redirect (`kid/meta`).
 
 Це дозволяє прибирати токен із Koha JS без різкого відключення server-to-server сценаріїв.
 
