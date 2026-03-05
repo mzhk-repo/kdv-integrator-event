@@ -31,6 +31,13 @@ def setup_logging():
 # --- КОНФІГУРАЦІЯ ---
 
 KDV_API_TOKEN = get_env("KDV_API_TOKEN")
+KDV_AUTH_MODE = get_env("KDV_AUTH_MODE", required=False, default="legacy").lower()
+
+KDV_CORS_ALLOWLIST = get_env("KDV_CORS_ALLOWLIST", required=False, default="")
+
+# Cloudflare Access (optional in dual/cf-only mode)
+CF_ACCESS_TEAM_DOMAIN = get_env("CF_ACCESS_TEAM_DOMAIN", required=False, default="")
+CF_ACCESS_AUD = get_env("CF_ACCESS_AUD", required=False, default="")
 
 KOHA_API_URL = get_env("KOHA_API_URL").rstrip("/")
 KOHA_OPAC_URL = get_env("KOHA_OPAC_URL").rstrip("/")

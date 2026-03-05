@@ -7,7 +7,7 @@
 - ✅ `M0`, `M1`, `M2` завершені (критерії приймання, коректність event-driven flow, DI/SOLID hardening).
 - ⏳ У фокусі `M3`: довести CI/CD до стабільного автоматичного gate (build/lint/tests/scan/release).
 - ⏳ `M4`, `M5`, `M6`, `M7`, `M8` у прогресі.
-- ⚠️ Основні ризики: неповне security hardening (Cloudflare Access/CORS), відсутність `ready` endpoint, неповні contract тести Koha/DSpace.
+- ⚠️ Основні ризики: неповне security hardening (Cloudflare Access/CORS), перехідний dual-auth режим, неповні contract тести Koha/DSpace.
 
 ### 3. Принципи (коротко)
 
@@ -140,11 +140,18 @@
 
 **Checklist:**
 
-- [ ]  Прибрати `X-KDV-TOKEN` з Koha `IntranetUserJS`.
-- [ ]  Перейти на Cloudflare Access headers (`Cf-Access-Jwt-Assertion`) або інший trusted-header механізм.
-- [ ]  Залишити `X-KDV-TOKEN` тільки для server-to-server (robot/nightwalker), якщо потрібно.
-- [ ]  Налаштувати Strict CORS: `Access-Control-Allow-Origin` = домен Koha (не `*`).
+- [x]  Прибрати `X-KDV-TOKEN` з Koha `IntranetUserJS`.
+- [x]  Перейти на Cloudflare Access headers (`Cf-Access-Jwt-Assertion`) або інший trusted-header механізм. — додано `dual/cf-only` режими в `src/app.py`.
+- [x]  Залишити `X-KDV-TOKEN` тільки для server-to-server (robot/nightwalker), якщо потрібно. — реалізовано через перехідний `dual` режим.
+- [x]  Налаштувати Strict CORS: `Access-Control-Allow-Origin` = домен Koha (не `*`). — через `KDV_CORS_ALLOWLIST` (fallback `KOHA_OPAC_URL`).
 - [ ]  Переконатися, що `OPTIONS` (preflight) проходить через edge (CF Access) без поломок.
+
+**Статус (на 2026-03-05):** ⏳ **В ПРОГРЕСІ (80%)**
+
+- ✅ Прибрано hardcoded токен із Koha JS.
+- ✅ Додано поетапну auth-модель `legacy -> dual -> cf-only`.
+- ✅ CORS переведено на strict allowlist із env.
+- ⏳ Потрібна перевірка preflight через реальний CF edge.
 
 #### M5 — Observability + Ops readiness (мінімум)
 
@@ -157,13 +164,14 @@
 **Checklist:**
 
 - [x]  `GET /kdv/api/health` (liveness). — реалізовано в `src/app.py`.
-- [ ]  `GET /ready` (readiness): mount готовий, конфіги валідні.
+- [x]  `GET /ready` (readiness): mount готовий, конфіги валідні. — реалізовано в `src/app.py`.
 - [x]  Структуровані логи з полями: `task_id`, `biblionumber`. — у `core.py` та `tasks.py`.
 - [x]  Runbooks: [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) (тестування змін). / Для ops потрібні ще "Cloudflare 524", "drive not mounted" тощо.
 
-**Статус (на 2026-03-04):** ⏳ **В ПРОГРЕСІ (60%)**
+**Статус (на 2026-03-05):** ⏳ **В ПРОГРЕСІ (75%)**
 
 - ✅ Health endpoint + структуровані логи.
+- ✅ Readiness endpoint (`/kdv/api/ready`) з перевіркою mount path.
 - ✅ Runbook щодо тестування (для розробників).
 - ⏳ потрібен ops runbook для production.
 

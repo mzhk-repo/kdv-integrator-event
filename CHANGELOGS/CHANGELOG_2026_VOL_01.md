@@ -162,3 +162,75 @@
 - **Verification (M2 continued):** усі юніт‑тести проходять у середовищі контейнера; smoke‑скрипт демонструє коректну поведінку; ручний прогін API не виявив збоїв.
 - **Risks (M2 continued):** необхідно оновити CI, щоб автоматично виконувати тести; залишається ризик дрібних регресій при роботі з файлами.
 - **Rollback (M2 continued):** відкотити вищевказані зміни або повернутися до попереднього коміту/тега.
+
+## 2026-03-05 — M5: додано `GET /kdv/api/ready` + API тести
+
+- **Context:** У roadmap для M5 залишався незакритий пункт readiness endpoint; існував лише liveness (`/kdv/api/health`), що не дає сигналу про готовність mount path до роботи.
+- **Change:** У `src/app.py` додано `GET /kdv/api/ready`, який перевіряє `INTEGRATOR_MOUNT_PATH` на існування та права `read/write`; endpoint повертає `200` зі статусом `ready` або `503` зі статусом `not_ready` і деталями перевірки. Оновлено `check_security()`, щоб probes на `/health` та `/ready` проходили без токена. Додано `tests/test_app.py` (перевірки `/health`, `/ready` для `200` та `503`). У `docs/ROADMAP.md` позначено readiness як виконаний пункт M5.
+- **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `12 passed`; `docker run --rm -v "$PWD:/work" -w /work ghcr.io/astral-sh/ruff:0.13.0 check .` -> `All checks passed!`; `./scripts/healthcheck.sh` -> `OK`; `docker compose logs --tail=200` -> критичних помилок не виявлено.
+- **Risks:** Readiness поки перевіряє лише mount-доступність локально і не включає активні перевірки Koha/DSpace; для production може знадобитись розширений readiness профіль.
+- **Rollback:** Відкотити зміни у `src/app.py`, `tests/test_app.py`, `docs/ROADMAP.md` через `git revert <commit_sha>` або ручно прибрати додані блоки.
+
+## 2026-03-05 — M4: старт Zero Trust transition (CORS allowlist + dual auth)
+
+- **Context:** Потрібно почати M4 без різкого ламання поточного потоку: прибрати секрет із клієнтського JS, перейти на allowlist CORS з env, і дати перехідний режим авторизації до повного Cloudflare Access.
+- **Change:** У `src/app.py` реалізовано env-керовані режими auth: `legacy`, `dual`, `cf-only`; додано перевірку `Cf-Access-Jwt-Assertion` (JWK через `https://<team>/cdn-cgi/access/certs`, перевірка `aud/iss`) для `dual/cf-only`; CORS переведено на strict allowlist (`KDV_CORS_ALLOWLIST`, fallback `KOHA_OPAC_URL`) без `*`. У `IntranetUserJS.js` прибрано хардкод `X-KDV-TOKEN`; лишено безпечний перехідний fallback через `window.KDV_TOKEN`. Додано env-поля в `src/config.py` та `.env.example`, додано тести безпеки у `tests/test_app.py`, оновлено `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `README.md`.
+- **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q`; `docker run --rm -v "$PWD:/work" -w /work ghcr.io/astral-sh/ruff:0.13.0 check .`; `./scripts/healthcheck.sh`; `docker compose logs --tail=200`.
+- **Risks:** Для `dual/cf-only` потрібні коректні `CF_ACCESS_TEAM_DOMAIN` і `CF_ACCESS_AUD`; без них Cloudflare JWT не пройде валідацію. Якщо origin Koha не додано в `KDV_CORS_ALLOWLIST`, браузерний виклик буде заблоковано CORS.
+- **Rollback:** Повернути `KDV_AUTH_MODE=legacy`; відкотити зміни у `src/app.py` та `IntranetUserJS.js` (через `git revert`) і тимчасово повернути старий механізм токена в JS тільки в ізольованому середовищі.
+
+## 2026-03-05 — Tests: стабілізовано flaky polling у `test_task_manager_integration`
+
+- **Context:** Після M4 прогонів періодично падав тест `tests/test_core.py::test_task_manager_integration` через race condition: цикл завершувався на проміжному стані `queued`.
+- **Change:** У тесті змінено умову зупинки polling-циклу: тепер очікуються лише terminal стани (`success` або `error`), а не будь-який стан відмінний від `processing`.
+- **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `16 passed`; `docker run --rm -v "$PWD:/work" -w /work ghcr.io/astral-sh/ruff:0.13.0 check .` -> `All checks passed!`.
+- **Risks:** Мінімальні; змінено тільки тест, runtime-поведінка сервісу не зачеплена.
+- **Rollback:** Відкотити правку у `tests/test_core.py` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M4 fix: CORS credentials для Cloudflare Access browser flow
+
+- **Context:** Preflight (`OPTIONS`) проходив, але браузерний виклик із Koha міг падати на фактичному `POST/PUT`, бо cross-origin XHR не відправляв cookies Cloudflare Access.
+- **Change:** У `IntranetUserJS.js` для всіх API викликів додано `xhrFields: { withCredentials: true }`; у `src/app.py` додано `Access-Control-Allow-Credentials: true` для allowlist-origin.
+- **Verification:** Після `docker compose up -d --build` preflight повертає: `Access-Control-Allow-Origin: https://library.fby.com.ua` + `Access-Control-Allow-Credentials: true`; `pytest -q` -> `16 passed`; `./scripts/healthcheck.sh` -> `OK`.
+- **Risks:** Потрібно, щоб браузер мав валідну Cloudflare Access сесію для `repo.fby.com.ua`; без неї edge продовжить редиректити на login.
+- **Rollback:** Відкотити зміни у `IntranetUserJS.js` та `src/app.py` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M4 fix: JS pre-check Access session + login fallback
+
+- **Context:** У браузері з'являвся `403` на `filipchuk.cloudflareaccess.com/cdn-cgi/access/login/...` під час CORS-потоку, коли CF Access сесія була відсутня/прострочена.
+- **Change:** У `IntranetUserJS.js` додано `ensureAccessSession()` (перевірка `GET /kdv/api/health` з `withCredentials`) перед `POST/PUT`; якщо перевірка не проходить, показується інструкція і відкривається Cloudflare login URL в новій вкладці.
+- **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `16 passed`; `./scripts/healthcheck.sh` -> `OK`.
+- **Risks:** Якщо CF Access policy не дозволяє потрібний браузерний flow або блокує сесію, користувач після логіну все ще може отримувати edge deny і потребуватиме корекції policy на стороні Cloudflare.
+- **Rollback:** Відкотити правки `IntranetUserJS.js` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M4 fix: правильний Cloudflare login host у Koha JS
+
+- **Context:** Після додавання login fallback браузер відкривав `https://repo.fby.com.ua/cdn-cgi/access/login/...`, що давало `Unable to find your Access application!`.
+- **Change:** У `IntranetUserJS.js` login URL переведено на team-domain (`filipchuk.cloudflareaccess.com`) з динамічним app-host із `KDV_API_URL`.
+- **Verification:** Візуальна перевірка сформованого URL: `https://filipchuk.cloudflareaccess.com/cdn-cgi/access/login/repo.fby.com.ua?...`.
+- **Risks:** Якщо app у Cloudflare Access налаштований на інший hostname, login все одно буде відхилятись; потрібна звірка домену application policy.
+- **Rollback:** Відкотити правку `IntranetUserJS.js` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M4 fix: Access bootstrap через захищений ресурс замість статичного login URL
+
+- **Context:** Навіть із team-domain URL сторінка могла показувати `Unable to find your Access application!`, бо ручний login URL не завжди валідний без параметрів, згенерованих edge (`kid/meta`).
+- **Change:** У `IntranetUserJS.js` fallback змінено: відкривається `https://repo.fby.com.ua/kdv/api/health` (захищений ресурс), щоб Cloudflare сам сформував коректний redirect URL на login. Додатково `buildHeaders()` винесено в глобальну область файлу (щоб polling не ловив scope-помилку), а при невдалій сесійній перевірці кнопка в UI розблоковується.
+- **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `16 passed`; `./scripts/healthcheck.sh` -> `OK`; live-check `GET https://repo.fby.com.ua/kdv/api/health` -> `302` з `location` на `filipchuk.cloudflareaccess.com/...` і наявними `kid` + `meta`.
+- **Risks:** Якщо в самій Access application policy немає дозволу для потрібного користувача/методу, після логіну edge усе одно може відхилити запит.
+- **Rollback:** Відкотити зміни у `IntranetUserJS.js` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M4 fix: приймати CF JWT з cookie `CF_Authorization`
+
+- **Context:** Після успішного Cloudflare login браузер надсилав `CF_Authorization` cookie, але API у `dual` режимі перевіряв лише `X-KDV-TOKEN` або header `Cf-Access-Jwt-Assertion`, що давало `401 Unauthorized` на `PUT /kdv/api/integrate/{id}`.
+- **Change:** У `src/app.py` розширено `_is_authorized()`: для Cloudflare гілки JWT береться як із `Cf-Access-Jwt-Assertion`, так і з cookie `CF_Authorization`; обидва варіанти проходять ту саму валідацію `aud/iss/signature`.
+- **Verification:** `docker compose up -d --build`; `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `17 passed`; `./scripts/healthcheck.sh` -> `OK`; додано тест `test_dual_auth_accepts_cloudflare_cookie` у `tests/test_app.py`.
+- **Risks:** Невалідний або прострочений `CF_Authorization` токен і надалі коректно відхиляється (`401`).
+- **Rollback:** Відкотити правки `src/app.py` та `tests/test_app.py` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M4 fix: `401` через відсутність `cryptography` для RS256
+
+- **Context:** Попри наявний `CF_Authorization` cookie API продовжував віддавати `401`; у логах: `Cloudflare Access JWT rejected: RS256 requires 'cryptography' to be installed`.
+- **Change:** Додано `cryptography>=44.0.0` у `requirements.txt` для коректної валідації RS256-підпису JWT через PyJWT.
+- **Verification:** `docker compose up -d --build`; `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `17 passed`; `./scripts/healthcheck.sh` -> `OK`; повторний live `PUT https://repo.fby.com.ua/kdv/api/integrate/12` з `CF_Authorization` -> `200 {"status":"success"}`.
+- **Risks:** Мінімальні; зміна стосується криптографічної залежності для auth-перевірки.
+- **Rollback:** Прибрати `cryptography` з `requirements.txt` і відкотити коміт (не рекомендовано, поверне `401` для CF JWT).

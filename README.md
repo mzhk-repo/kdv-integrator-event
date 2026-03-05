@@ -130,6 +130,10 @@ DSPACE_API_PASS=secret
 
 # INTEGRATOR CONFIG
 KDV_API_TOKEN=your-secure-token
+KDV_AUTH_MODE=legacy
+KDV_CORS_ALLOWLIST=https://biblio.univ.edu
+CF_ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com   # optional for dual/cf-only
+CF_ACCESS_AUD=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx     # optional for dual/cf-only
 INTEGRATOR_MOUNT_PATH=/mnt/drive
 FOLDER_PROCESSED=Processed
 FOLDER_ERROR=Error
@@ -164,6 +168,13 @@ Response: {"status": "processing" | "success" | "error", "result": {...}}
 PUT /kdv/api/integrate/{biblionumber}
 
 Оновлює назву/авторів у DSpace на основі змін у Koha.
+
+### M4 security transition (коротко)
+
+- У `legacy` режимі API працює як раніше (`X-KDV-TOKEN`).
+- У `dual` режимі API приймає або `X-KDV-TOKEN`, або `Cf-Access-Jwt-Assertion`.
+- У `cf-only` режимі API приймає лише Cloudflare Access JWT.
+- Клієнтський `IntranetUserJS.js` більше не містить хардкод-токен; для тимчасового fallback його можна передавати через `window.KDV_TOKEN` у захищеному шаблоні Koha.
 
 ---
 

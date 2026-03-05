@@ -197,7 +197,27 @@ REST API Koha не дозволяє повноцінно працювати з �
 - Обов'язкові secrets для deploy: `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`, `DEPLOY_PROJECT_DIR`, `TAILSCALE_AUTHKEY`.
 - На сервері деплой виконує: `git fetch`, checkout потрібного ref, `docker compose pull`, `docker compose up -d --remove-orphans`, `ps/logs`.
 
-### 10. Ops/Docs Invariants
+### 10. API Security Path (M4 transition)
+
+У M4 використовується керований перехідний режим авторизації:
+
+- `KDV_AUTH_MODE=legacy`: тільки `X-KDV-TOKEN` (поточна сумісність).
+- `KDV_AUTH_MODE=dual`: приймається або `X-KDV-TOKEN`, або валідний `Cf-Access-Jwt-Assertion`.
+- `KDV_AUTH_MODE=cf-only`: тільки Cloudflare Access JWT.
+
+Cloudflare Access JWT перевіряється через JWK endpoint:
+
+- `https://<CF_ACCESS_TEAM_DOMAIN>/cdn-cgi/access/certs`
+- обов'язкові claims: `aud=CF_ACCESS_AUD`, `iss=https://<CF_ACCESS_TEAM_DOMAIN>`.
+
+CORS працює в strict режимі через allowlist:
+
+- `KDV_CORS_ALLOWLIST` (comma-separated origins),
+- fallback: `KOHA_OPAC_URL`.
+
+Це дозволяє прибирати токен із Koha JS без різкого відключення server-to-server сценаріїв.
+
+### 11. Ops/Docs Invariants
 
 - `.env` з секретами не комітиться; для CI використовується `.env.example` + CI mock values.
 - Release Gate синхронізований з `docs/ROADMAP.md` (M3 секція).
