@@ -145,7 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "${TRIVY_IMAGE}" \
-            image --skip-check-update --exit-code 1 --severity HIGH,CRITICAL "${APP_IMAGE_NAME}:${GITHUB_SHA}"
+            image --skip-check-update --ignore-unfixed --exit-code 1 --severity HIGH,CRITICAL "${APP_IMAGE_NAME}:${GITHUB_SHA}"
 
   cd-deploy:
     name: cd-deploy

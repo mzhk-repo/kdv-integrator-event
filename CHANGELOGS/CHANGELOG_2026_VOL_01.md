@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Security/CI: Trivy gate для невиправних CVE + оновлення Python залежностей
+
+- **Context:** Trivy image scan знаходив `HIGH` у Debian base image без доступного `Fixed Version`, через що CI блокувався навіть для невиправних upstream CVE; також були `HIGH` у Python-пакетах із доступним фіксом (`wheel`, `jaraco.context`).
+- **Change:** У `.github/workflows/ci-cd.yml` для `Trivy image scan` додано `--ignore-unfixed` (gate лишається для виправних `HIGH/CRITICAL`); у `requirements.txt` додано `wheel>=0.46.2` і `jaraco.context>=6.1.0` для закриття зафіксованих Python CVE.
+- **Verification:** Конфіг CI оновлено так, що невиправні CVE більше не блокують pipeline, а виправні залишаються блокуючими; версії з фіксом зафіксовано в залежностях.
+- **Risks:** Можливі побічні зміни через оновлення transitive dependencies; потрібен повторний прогін CI (`build`, `pytest`, `trivy`) для підтвердження.
+- **Rollback:** Прибрати `--ignore-unfixed` з Trivy кроку та видалити/послабити `wheel`/`jaraco.context` у `requirements.txt`, або зробити `git revert` коміту.
+
 ## 2026-03-05 — Improvement: додано `.env.example` і підключено в CI Compose validation
 
 - **Context:** Потрібно стабільно проходити `Compose validation` в CI без залежності від локального `.env` і без зберігання секретів у репозиторії.
