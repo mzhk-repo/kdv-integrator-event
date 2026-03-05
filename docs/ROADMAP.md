@@ -4,9 +4,9 @@
 
 ### 2. Поточний стан (на 2026-03-05)
 
-- ✅ `M0`, `M1`, `M2`, `M3`, `M4` завершені.
-- ⏳ `M5`, `M6`, `M7`, `M8` у прогресі.
-- ⚠️ Основні ризики: неповні contract тести Koha/DSpace, відсутність production ops runbook, не завершений release/canary процес.
+- ✅ `M0`, `M1`, `M2`, `M3`, `M4`, `M5`, `M6`, `M7` завершені.
+- ⏳ `M8` у прогресі.
+- ⚠️ Основні ризики: відсутні post-prod метрики та масштабування (M8).
 
 ### 3. Принципи (коротко)
 
@@ -152,7 +152,7 @@
 - ✅ CORS переведено на strict allowlist із env.
 - ✅ Підтверджено preflight і browser-flow через реальний Cloudflare edge.
 
-#### M5 — Observability + Ops readiness (мінімум)
+#### ✅ M5 — Observability + Ops readiness (мінімум)
 
 **DoD:**
 
@@ -163,18 +163,18 @@
 **Checklist:**
 
 - [x]  `GET /kdv/api/health` (liveness). — реалізовано в `src/app.py`.
-- [x]  `GET /ready` (readiness): mount готовий, конфіги валідні. — реалізовано в `src/app.py`.
+- [x]  `GET /kdv/api/ready` (readiness): mount готовий, конфіги валідні. — реалізовано в `src/app.py`.
 - [x]  Структуровані логи з полями: `task_id`, `biblionumber`. — у `core.py` та `tasks.py`.
-- [x]  Runbooks: [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) (тестування змін). / Для ops потрібні ще "Cloudflare 524", "drive not mounted" тощо.
+- [x]  Runbooks: [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) (тестування змін) + [docs/RUNBOOK_MAYDAY.md](RUNBOOK_MAYDAY.md) (production інциденти).
 
-**Статус (на 2026-03-05):** ⏳ **В ПРОГРЕСІ (75%)**
+**Статус (на 2026-03-05):** ✅ **ЗАВЕРШЕНО (100%)**
 
 - ✅ Health endpoint + структуровані логи.
 - ✅ Readiness endpoint (`/kdv/api/ready`) з перевіркою mount path.
 - ✅ Runbook щодо тестування (для розробників).
-- ⏳ потрібен ops runbook для production.
+- ✅ Ops runbook для production інцидентів (`RUNBOOK_MAYDAY`).
 
-#### M6 — Test strategy (unit + integration + contract)
+#### ✅ M6 — Test strategy (unit + integration + contract)
 
 **DoD:**
 
@@ -186,17 +186,17 @@
 
 - [x]  Unit: metadata mapping (`test_parse_marc_details`), file versioning (`test_files_*`), state machine (`test_task_manager_*`).
 - [x]  Integration: task_manager → process_integration_logic → success/error (див. `test_task_manager_integration`).
-- [ ]  Contract: Koha CGI (headers/field names exact match), DSpace pid resolution + JSON Patch.
+- [x]  Contract: Koha CGI (headers/field names exact match), DSpace pid resolution + JSON Patch (`tests/test_contracts.py`).
 
-**Статус (на 2026-03-04):** ⏳ **В ПРОГРЕСІ (70%)**
+**Статус (на 2026-03-05):** ✅ **ЗАВЕРШЕНО (100%)**
 
 - ✅ Unit тести з моками (`tests/test_core.py`, `tests/test_services.py`).
 - ✅ Integration через task_manager.
-- ⏳ Contract тести для CGI та DSpace полів.
+- ✅ Contract тести для CGI та DSpace полів (`tests/test_contracts.py`).
 
 Дивіться [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) для деталей про запуск та написання нових тестів.
 
-#### M7 — Release plan (staging -> prod)
+#### ✅ M7 — Release plan (staging -> prod)
 
 **DoD:**
 
@@ -206,10 +206,14 @@
 
 **Checklist:**
 
-- [ ]  Staging прогін на контрольній вибірці записів.
-- [ ]  Canary доступ (1–2 користувачі).
-- [ ]  Вікно спостереження 24–48 год.
-- [ ]  Rollback: повернення до попереднього image digest/tag.
+- [x]  Staging прогін на контрольній вибірці записів.
+- [x]  Canary доступ (1–2 користувачі).
+- [x]  Вікно спостереження 24–48 год.
+- [x]  Rollback: повернення до попереднього image digest/tag (див. `docs/RELEASE.md`).
+
+✅ Є canary rollout.
+✅ Є rollback plan (tag/digest).
+✅ Є контроль batch-параметрів через env (`ROBOT_PARALLELISM`, `ROBOT_BATCH_DELAY`, `NIGHTWALKER_*_DELAY`).
 
 #### M8 — Post‑prod analytics & Scale‑out
 

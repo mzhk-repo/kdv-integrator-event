@@ -1,4 +1,4 @@
-KDV Integrator (v0.2.1)
+KDV Integrator (v0.3.0)
 
 KDV Integrator — це middleware-сервіс для автоматизованої синхронізації бібліотечної системи Koha ILS та цифрового репозиторію DSpace 7/8.
 
@@ -68,11 +68,11 @@ scripts/ — Утиліти
 
 robot.py
 
-Масова пакетна обробка (Batch Processing).
+Масова пакетна обробка (Batch Processing), включно з env-контролями `ROBOT_PARALLELISM` та `ROBOT_BATCH_DELAY`.
 
 nightwalker.py
 
-Аудит: пошук "зомбі" (файли без лінків), синхронізація метаданих.
+Аудит: пошук "зомбі" (файли без лінків), синхронізація метаданих; швидкість сканування керується через `NIGHTWALKER_*_DELAY`.
 
 debug_*.py
 
@@ -92,6 +92,10 @@ test_clients.py, test_state_machine.py
 
 Перевірки клієнтів і state machine.
 
+test_contracts.py
+
+Contract-тести (M6): Koha CGI field/header contract + DSpace `/pid/find` і JSON Patch.
+
 manual_smoke.py
 
 Smoke‑скрипт із stub‑класами для швидкої перевірки логіки.
@@ -100,7 +104,7 @@ docs/ — Документація
 
 ROADMAP.md
 
-Дорожна карта (milestones M1–M7, DoD для кожного).
+Дорожна карта (milestones M0–M8, DoD для кожного).
 
 ARCHITECTURE.md
 
@@ -109,6 +113,22 @@ ARCHITECTURE.md
 RUNBOOK_TESTING.md
 
 **[НОВЕ]** Покрокова інструкція щодо тестування змін через мокі. Обов'язково перед модифікацією модулів!
+
+RUNBOOK_MAYDAY.md
+
+Операційний runbook для production-інцидентів (M5): Cloudflare/Koha/DSpace/mount, відновлення і rollback.
+
+RUNBOOK_NIGHTWALKER.md
+
+**[НОВЕ, M7]** Інструкція по синхронізації каталогу: пошук "зомбі", перевірка лінків, оновлення метаданих.
+
+RUNBOOK_ROBOT.md
+
+**[НОВЕ, M7]** Інструкція по масовій архівації книг: підготовка списку, запуск, налаштування паралелізму.
+
+RELEASE.md
+
+План релізу `staging -> prod`, canary flow і rollback до попереднього tag/digest.
 
 🛠 Налаштування та Запуск
 
@@ -137,6 +157,14 @@ CF_ACCESS_AUD=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx     # optional for dual/cf-on
 INTEGRATOR_MOUNT_PATH=/mnt/drive
 FOLDER_PROCESSED=Processed
 FOLDER_ERROR=Error
+
+# BATCH CONTROLS (M7)
+ROBOT_PARALLELISM=1
+ROBOT_BATCH_DELAY=5
+ROBOT_POLL_INTERVAL=3
+ROBOT_MAX_WAIT=900
+NIGHTWALKER_AUTO_DELAY=0.05
+NIGHTWALKER_RANGE_DELAY=0.10
 
 
 2. Запуск через Docker
@@ -185,6 +213,7 @@ PUT /kdv/api/integrate/{biblionumber}
 ```bash
 docker compose up -d --build
 docker exec -e PYTHONPATH=/app kdv-api pytest -q          # усі тести
+docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_contracts.py -q  # тільки contract-тести
 docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_core.py::test_parse_marc_rules_basic -q  # окремий тест
 ```
 

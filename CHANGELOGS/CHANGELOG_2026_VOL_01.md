@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Config: синхронізовано структуру `.env` та `.env.example`
+
+- **Context:** Потрібно було вирівняти шаблон `.env.example` під фактичний `.env`, зберігши всі існуючі коментарі у `.env`.
+- **Change:** Додано відсутню змінну `DSPACE_SUBMISSION_SECTION` у `.env`; `.env.example` переформатовано в узгоджені секції та синхронізовано по ключах з `.env` (додано `TZ`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, узгоджено порядок і структуру).
+- **Verification:** Порівняння ключів через `comm` (розбіжностей немає); `docker compose --env-file .env.example -f docker-compose.yml config -q` проходить.
+- **Risks:** Низькі; зміни стосуються структури/env-шаблону, але при додаванні нових env у коді потрібно синхронно оновлювати обидва файли.
+- **Rollback:** Відкотити `.env` та `.env.example` до попередньої версії через `git restore` або `git revert`.
+
 ## 2026-03-05 — Docs: оновлено `docs/ARCHITECTURE.md` під M3
 
 - **Context:** Архітектурний документ описував переважно M2 і не відображав поточний стан M3 (CI/CD, release/deploy, Zero Trust шлях через Tailscale).
@@ -242,3 +250,35 @@
 - **Verification:** Візуальна звірка документів з фактичною реалізацією у `src/app.py` та `IntranetUserJS.js`.
 - **Risks:** Документація може застаріти, якщо буде перехід з `dual` на `cf-only` без синхронного оновлення roadmap/architecture.
 - **Rollback:** Відкотити правки в `docs/ROADMAP.md` та `docs/ARCHITECTURE.md` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M5: додано ops runbook `RUNBOOK_MAYDAY` і закрито milestone
+
+- **Context:** У M5 був незакритий пункт про production runbook; існував лише `RUNBOOK_TESTING`, який покривав розробницьке тестування, але не відновлення після інцидентів.
+- **Change:** Створено `docs/RUNBOOK_MAYDAY.md` з широким покриттям інцидентів (API down, readiness/mount, Cloudflare 524, 401/403 Access, CORS, stuck tasks, Koha/DSpace збої, деградація 5xx, rollback); синхронізовано `docs/ROADMAP.md` для M5: виправлено endpoint до `GET /kdv/api/ready`, додано посилання на `RUNBOOK_MAYDAY`, статус M5 змінено на `100%`.
+- **Verification:** Візуальна перевірка документації (`docs/RUNBOOK_MAYDAY.md`, секція M5 у `docs/ROADMAP.md`), формат і посилання узгоджені з поточною структурою `docs/`.
+- **Risks:** Runbook потребує періодичного оновлення при зміні Cloudflare policy, compose-конфігів або process flow; без синхронізації можливий docs drift.
+- **Rollback:** Видалити `docs/RUNBOOK_MAYDAY.md` і відкотити правки в `docs/ROADMAP.md` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M6: додано contract тести для Koha CGI та DSpace pid/patch
+
+- **Context:** У M6 залишався незакритий пункт contract-рівня: перевірки точних полів/headers для Koha CGI та контракту DSpace (`/pid/find`, JSON Patch metadata).
+- **Change:** Додано `tests/test_contracts.py` із перевірками: DSpace `find_item_uuid_by_handle` (endpoint `/pid/find` + params), `update_metadata` (формування `application/json-patch+json` і patch operations), Koha `_step1_upload_temp` (`X-Requested-With`, `CSRF-TOKEN`, field `file`), `_step2_process_attach` (payload `cud-process`), `_ensure_cgi_login` (field names `login_userid`, `login_password`, `csrf_token`, `koha_login_context`). У `docs/ROADMAP.md` M6 позначено завершеним (`100%`) і синхронізовано верхній статус milestone.
+- **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `22 passed`; `./scripts/healthcheck.sh` -> `OK`; `docker compose logs --tail=200` без критичних помилок.
+- **Risks:** Contract тести виконані на моках HTTP-рівня; при істотних змінах upstream Koha/DSpace контракту може знадобитися додати інтеграційний staging smoke.
+- **Rollback:** Видалити `tests/test_contracts.py` і відкотити зміни в `docs/ROADMAP.md` через `git revert <commit_sha>`.
+
+## 2026-03-05 — Docs: оновлено `RUNBOOK_TESTING` під завершений M6
+
+- **Context:** Після завершення M6 (`tests/test_contracts.py`) runbook тестування залишався в термінах "моки + unit" і не покривав contract-рівень.
+- **Change:** Оновлено `docs/RUNBOOK_TESTING.md`: назву/мету приведено до `unit + integration + contract`, додано посилання на `tests/test_contracts.py` і `docs/RUNBOOK_MAYDAY.md`, додано команду запуску лише contract-тестів, описано контрактні перевірки Koha/DSpace, додано очікуваний baseline повного прогону (`22 passed`) і troubleshooting для env-залежних Koha credentials.
+- **Verification:** Візуальна перевірка `docs/RUNBOOK_TESTING.md` на узгодженість із поточним M6 у `docs/ROADMAP.md` і наявними тестами в `tests/test_contracts.py`.
+- **Risks:** Baseline кількість тестів (`22 passed`) зміниться після нових тестів; цей рядок потрібно оновлювати, щоб уникати docs drift.
+- **Rollback:** Відкотити правки `docs/RUNBOOK_TESTING.md` через `git revert <commit_sha>`.
+
+## 2026-03-05 — M7: release/rollback план + batch controls (parallelism/rate-limit)
+
+- **Context:** Для M7 залишався незакритий rollback пункт у roadmap; також потрібно було мати явне керування паралельністю та rate limiting для batch-процесів.
+- **Change:** У `scripts/robot.py` додано env-контролі `ROBOT_PARALLELISM`, `ROBOT_BATCH_DELAY`, `ROBOT_POLL_INTERVAL`, `ROBOT_MAX_WAIT` і підтримку керованого parallel batch через `ThreadPoolExecutor` (за замовчуванням `parallelism=1`, поведінка сумісна назад). У `scripts/nightwalker.py` додано throttle-параметри `NIGHTWALKER_AUTO_DELAY`, `NIGHTWALKER_RANGE_DELAY`. Оновлено `.env.example`, `README.md`, `docs/RELEASE.md` (canary flow + практичний rollback через tag/digest), `docs/RUNBOOK_MAYDAY.md` і `docs/ROADMAP.md` (M7 позначено завершеним, rollback checked).
+- **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `22 passed`; `./scripts/healthcheck.sh` -> `OK`; `docker compose logs --tail=200` без критичних помилок.
+- **Risks:** При підвищенні `ROBOT_PARALLELISM` без достатнього `ROBOT_BATCH_DELAY` можливе перевантаження Koha/DSpace; рекомендований безпечний старт `ROBOT_PARALLELISM=1` з поступовим збільшенням.
+- **Rollback:** Відкотити зміни в `scripts/robot.py`, `scripts/nightwalker.py`, `.env.example`, `README.md`, `docs/RELEASE.md`, `docs/RUNBOOK_MAYDAY.md`, `docs/ROADMAP.md` через `git revert <commit_sha>`.

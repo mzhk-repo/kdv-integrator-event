@@ -1,6 +1,6 @@
-Архітектура та Workflow (v0.2.1-M4)
+Архітектура та Workflow (v0.3.0-M7)
 
-Цей документ описує логіку роботи KDV Integrator v0.2.1 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow) та M4 (Zero Trust + CORS).
+Цей документ описує логіку роботи KDV Integrator v0.3.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests) та M7 (release canary + rollback + batch controls).
 
 🔄 Загальний Workflow (Fork-Join Pattern)
 
@@ -39,7 +39,7 @@ graph TD
     end
 
 
-⚡ Деталі Реалізації (M2/M3)
+⚡ Деталі Реалізації (M2-M7)
 
 ### 1. Асинхронність (Async Core) + DI
 
@@ -236,6 +236,32 @@ Koha JS для browser-flow:
 - Release Gate синхронізований з `docs/ROADMAP.md` (M3 секція).
 - Зміни в CI/deploy мають відображатися в `CHANGELOGS/` і, за потреби, у runbooks.
 
+### 12. Ops readiness (M5)
+
+- Публічні probes:
+    - `GET /kdv/api/health` (liveness)
+    - `GET /kdv/api/ready` (readiness, перевірка mount path)
+- Runbooks:
+    - `docs/RUNBOOK_TESTING.md` (dev/testing flow)
+    - `docs/RUNBOOK_MAYDAY.md` (production incidents + recovery)
+
+### 13. Test strategy (M6)
+
+- Unit + integration тести працюють у контейнері через `pytest -q`.
+- Contract рівень зафіксований у `tests/test_contracts.py`:
+    - Koha CGI: exact field/header names для login/upload/attach.
+    - DSpace: `/pid/find` params і JSON Patch contract для metadata update.
+
+### 14. Release and rollback (M7)
+
+- Canary flow і release discipline описані в `docs/RELEASE.md`.
+- Rollback підтримує два сценарії:
+    - повернення на попередній стабільний git tag (`vMAJOR.MINOR.PATCH`),
+    - повернення на попередній image digest (якщо deploy працює з registry image).
+- Batch rate limiting / parallelism контрольовані env-параметрами:
+    - `ROBOT_PARALLELISM`, `ROBOT_BATCH_DELAY`, `ROBOT_POLL_INTERVAL`, `ROBOT_MAX_WAIT`
+    - `NIGHTWALKER_AUTO_DELAY`, `NIGHTWALKER_RANGE_DELAY`
+
 ---
 
 ### Code Organization (M2/M3 — чиста архітектура)
@@ -262,7 +288,7 @@ src/
 - **DIP (Dependency Inversion):** core.py отримує залежності через параметри, не створює їх сам.
 - **Testability:** Всім функціям можна передати стільки клієнтів, скільки потрібно для моків.
 
-### Запуск Тестів (M2)
+### Запуск Тестів (M6)
 
 Дивіться [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) для всіх команд.
 
@@ -272,4 +298,4 @@ docker compose up -d --build
 docker exec -e PYTHONPATH=/app kdv-api pytest -q
 ```
 
-Усі 9 тестів повинні пройти (unit + integration + DI-проверки).
+Станом на 2026-03-05: очікувано `22 passed` (unit + integration + contract).

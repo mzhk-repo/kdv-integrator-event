@@ -1,6 +1,6 @@
-# Runbook: Тестування змін (моки + unit)
+# Runbook: Тестування змін (unit + integration + contract)
 
-Мета: простими кроками показати, як безпечно змінювати модулі, додавати мок‑класи і запускати юніт/інтеграційні тести локально у контейнері або хості.
+Мета: простими кроками показати, як безпечно змінювати модулі, додавати мок‑класи і запускати unit/integration/contract тести локально у контейнері або хості.
 
 **Вимоги перед тестуванням**
 - Файли проекту оновлені у робочій копії репо.
@@ -12,7 +12,8 @@
 - Менеджер задач: [src/tasks.py](../src/tasks.py)
 - Клієнти‑обгортки: [src/clients/koha.py](../src/clients/koha.py), [src/clients/dspace.py](../src/clients/dspace.py)
 - Сервіси: [src/services/files.py](../src/services/files.py), [src/services/covers.py](../src/services/covers.py)
-- Тести: [tests/test_core.py](../tests/test_core.py), [tests/test_services.py](../tests/test_services.py)
+- Тести: [tests/test_core.py](../tests/test_core.py), [tests/test_services.py](../tests/test_services.py), [tests/test_contracts.py](../tests/test_contracts.py)
+- Ops runbook (інциденти): [docs/RUNBOOK_MAYDAY.md](RUNBOOK_MAYDAY.md)
 - Активний changelog: [CHANGELOGS/CHANGELOG_2026_VOL_01.md](../CHANGELOGS/CHANGELOG_2026_VOL_01.md)
 
 **1) Запуск середовища (контейнер)**
@@ -31,6 +32,9 @@ docker compose up -d --build
 
 # запуск усіх тестів у контейнері
 docker exec -e PYTHONPATH=/app kdv-api pytest -q
+
+# запуск тільки contract-тестів (M6)
+docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_contracts.py -q
 
 # або окремий тест
 docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_core.py::test_parse_marc_rules_basic -q
@@ -85,6 +89,17 @@ assert 'handle' in res
 
 - Запускайте задачу через `task_manager.start_task(...)` і чекайте на зміну статусу з `processing` на `success/error` з таймаутом (наприклад, 2s). Приклад у `tests/test_core.py`.
 
+**4.1) Contract-тестування (M6) — що саме перевіряємо**
+
+- `tests/test_contracts.py` перевіряє HTTP-контракти без реальних мережевих викликів (через monkeypatch/mocks).
+- DSpace контракт:
+    - `GET /pid/find` з правильними query params.
+    - `PATCH /core/items/{item_uuid}` із `Content-Type: application/json-patch+json` і коректним JSON Patch body.
+- Koha CGI контракт:
+    - `_step1_upload_temp`: заголовки `X-Requested-With`, `CSRF-TOKEN`, `Referer`, і multipart field `file`.
+    - `_step2_process_attach`: payload поля (`op=cud-process`, `uploadedfileid`, `csrf_token`, `replace`).
+    - `_ensure_cgi_login`: ключові назви полів (`login_userid`, `login_password`, `koha_login_context`, `csrf_token`).
+
 **5) Інтеграційні перевірки API**
 
 Щоб симулювати виклик з Koha UI, виконайте запит у контейнері (використовуючи правильний `KDV_API_TOKEN`):
@@ -118,6 +133,9 @@ def test_http_flow(monkeypatch):
 - Запустіть `pytest` в контейнері або локально.
 - Для швидкого локального дебагу використовуйте `tests/manual_smoke.py`.
 
+Поточний орієнтир для повного прогону в контейнері:
+- `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> очікувано `22 passed` (станом на 2026-03-05).
+
 **8) Оновлення CHANGELOG після суттєвих змін**
 
 Кожна суттєва зміна має записуватися у активний том у `CHANGELOGS/`. Використовуйте шаблон:
@@ -134,6 +152,7 @@ def test_http_flow(monkeypatch):
 - `run_dspace_workflow() got an unexpected keyword argument 'koha_client'` — означає, що контейнер працює зі старою версією коду. Рішення: `docker compose up -d --build`.
 - `Invalid Token` від API — перевірити `KDV_API_TOKEN` у `.env` та середовищі контейнера.
 - Проблеми з PDF/Poppler — переконатися, що `poppler-utils` встановлені у образі (включено в Dockerfile) і що файл існує на підмонтованому шляху `INTEGRATOR_MOUNT_PATH`.
+- Падає `tests/test_contracts.py::test_koha_cgi_login_contract_payload_field_names` через `login_userid`/`login_password` — тест має порівнюватися з фактичними значеннями `KOHA_USER`/`KOHA_PASS` з runtime env, а не з hardcoded рядками.
 
 **10) Best practices**
 - Писати невеликі, атомарні тести (одне твердження — одна логіка).

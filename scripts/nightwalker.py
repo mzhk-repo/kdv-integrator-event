@@ -40,6 +40,21 @@ logger = logging.getLogger("NightWalker")
 MAX_CONSECUTIVE_ERRORS = 201
 
 
+def _env_float(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(float(raw), 0.0)
+    except Exception:
+        logger.warning(f"⚠️ Invalid {name}='{raw}', fallback={default}")
+        return default
+
+
+AUTO_SCAN_DELAY = _env_float("NIGHTWALKER_AUTO_DELAY", 0.05)
+RANGE_SCAN_DELAY = _env_float("NIGHTWALKER_RANGE_DELAY", 0.10)
+
+
 def parse_date(date_str):
     """Парсинг ISO рядка (для DSpace)"""
     if not date_str:
@@ -138,6 +153,7 @@ def run_auto_mode():
     logger.info(
         f"ℹ️  Will stop after {MAX_CONSECUTIVE_ERRORS} consecutive empty records."
     )
+    logger.info(f"ℹ️  Auto scan delay: {AUTO_SCAN_DELAY}s")
     logger.info("=" * 40)
 
     bib_id = 1
@@ -164,7 +180,7 @@ def run_auto_mode():
             break
 
         bib_id += 1
-        time.sleep(0.05)  # Дуже коротка пауза для швидкості
+        time.sleep(AUTO_SCAN_DELAY)
 
     logger.info("=" * 40)
     logger.info("🏁 WALKER FINISHED.")
@@ -173,11 +189,12 @@ def run_auto_mode():
 def run_range_mode(start_id, end_id):
     logger.info("=" * 40)
     logger.info(f"🌙 NIGHT WALKER STARTED (Range: {start_id}-{end_id})")
+    logger.info(f"ℹ️  Range scan delay: {RANGE_SCAN_DELAY}s")
     logger.info("=" * 40)
 
     for bib_id in range(start_id, end_id + 1):
         audit_record(bib_id)
-        time.sleep(0.1)
+        time.sleep(RANGE_SCAN_DELAY)
 
     logger.info("=" * 40)
     logger.info("🏁 WALKER FINISHED.")

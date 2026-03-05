@@ -6,6 +6,7 @@ import time
 import logging
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from .config import KDV_API_TOKEN
 
 
@@ -25,8 +26,38 @@ logger = logging.getLogger("Robot")
 
 API_BASE = "http://localhost:5000/kdv/api"
 HEADERS = {"X-KDV-TOKEN": KDV_API_TOKEN}
-POLL_INTERVAL = 3  # секунди перерви між опитуванням статусу
-BATCH_DELAY = 5  # секунди перерви між книгами (щоб не "покласти" DSpace)
+
+
+def _env_int(name, default, minimum=1):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+        return max(value, minimum)
+    except Exception:
+        logger.warning(f"⚠️ Invalid {name}='{raw}', fallback={default}")
+        return default
+
+
+def _env_float(name, default, minimum=0.0):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+        return max(value, minimum)
+    except Exception:
+        logger.warning(f"⚠️ Invalid {name}='{raw}', fallback={default}")
+        return default
+
+
+POLL_INTERVAL = _env_float("ROBOT_POLL_INTERVAL", 3.0, minimum=0.1)
+BATCH_DELAY = _env_float(
+    "ROBOT_BATCH_DELAY", 5.0, minimum=0.0
+)  # throttle між стартами задач
+MAX_WAIT = _env_int("ROBOT_MAX_WAIT", 900, minimum=30)
+ROBOT_PARALLELISM = _env_int("ROBOT_PARALLELISM", 1, minimum=1)
 
 
 def parse_candidates(filename):
@@ -130,7 +161,7 @@ def process_single_biblio(biblionumber):
 
     # 2. Очікування (Polling)
     waited = 0
-    max_wait = 900  # 15 хвилин максимум (для дуже великих файлів)
+    max_wait = MAX_WAIT  # configurable timeout
 
     while waited < max_wait:
         time.sleep(POLL_INTERVAL)
@@ -188,6 +219,9 @@ def run_batch(filename="candidates.txt"):
     logger.info("=" * 40)
     logger.info(f"📋 BATCH STARTED. Candidates: {len(ids)}")
     logger.info(f"   List: {', '.join(ids[:10])} ...")  # Показати перші 10
+    logger.info(
+        f"   Controls: parallelism={ROBOT_PARALLELISM}, batch_delay={BATCH_DELAY}s, poll_interval={POLL_INTERVAL}s, max_wait={MAX_WAIT}s"
+    )
     logger.info("=" * 40)
 
     stats = {
@@ -200,17 +234,36 @@ def run_batch(filename="candidates.txt"):
         "ERROR_CONN": 0,
     }
 
-    for i, bib_id in enumerate(ids):
-        logger.info(f"--- Item {i + 1}/{len(ids)} ---")
-        result = process_single_biblio(bib_id)
+    if ROBOT_PARALLELISM <= 1:
+        for i, bib_id in enumerate(ids):
+            logger.info(f"--- Item {i + 1}/{len(ids)} ---")
+            result = process_single_biblio(bib_id)
 
-        # Спрощення статистики для звіту
-        key = result if result in stats else "FAILED"
-        stats[key] = stats.get(key, 0) + 1
+            key = result if result in stats else "FAILED"
+            stats[key] = stats.get(key, 0) + 1
 
-        # Пауза між книгами, щоб DSpace встиг "видихнути" (індексація Solr)
-        if i < len(ids) - 1:
-            time.sleep(BATCH_DELAY)
+            if i < len(ids) - 1:
+                time.sleep(BATCH_DELAY)
+    else:
+        with ThreadPoolExecutor(max_workers=ROBOT_PARALLELISM) as executor:
+            futures = {}
+            for i, bib_id in enumerate(ids):
+                logger.info(f"--- Queue item {i + 1}/{len(ids)} ---")
+                fut = executor.submit(process_single_biblio, bib_id)
+                futures[fut] = bib_id
+                if i < len(ids) - 1:
+                    time.sleep(BATCH_DELAY)
+
+            for fut in as_completed(futures):
+                bib_id = futures[fut]
+                try:
+                    result = fut.result()
+                except Exception as e:
+                    logger.error(f"❌ #{bib_id} Worker crashed: {e}")
+                    result = "FAILED"
+
+                key = result if result in stats else "FAILED"
+                stats[key] = stats.get(key, 0) + 1
 
     logger.info("=" * 40)
     logger.info("🏁 BATCH COMPLETED.")
