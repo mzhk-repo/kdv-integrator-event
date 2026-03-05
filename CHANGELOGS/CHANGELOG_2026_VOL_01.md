@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-05 — Deploy: перехід на `TAILSCALE_AUTHKEY` без OAuth
+
+- **Context:** Для деплою обрано спрощений Zero Trust сценарій через Tailscale без OAuth client credentials.
+- **Change:** У `.github/workflows/ci-cd.yml` крок `Connect to Tailscale` переведено на `authkey`; у `Validate deploy secrets` додано обов'язкову перевірку `TAILSCALE_AUTHKEY`; змінні `TAILSCALE_OAUTH_CLIENT_ID/TAILSCALE_OAUTH_SECRET` прибрано з `cd-deploy` env.
+- **Verification:** Workflow-конфігурація оновлена так, що `cd-deploy` використовує тільки `TAILSCALE_AUTHKEY` для підключення перед SSH деплоєм.
+- **Risks:** Потрібно, щоб `TAILSCALE_AUTHKEY` був валідний і мав потрібні ACL/доступ до вузла деплою; якщо ключ протермінований, деплой зупиниться на кроці Tailscale.
+- **Rollback:** Повернути OAuth-поля в `Connect to Tailscale` та видалити перевірку `TAILSCALE_AUTHKEY` у `Validate deploy secrets`.
+
 ## 2026-03-05 — Fix: Trivy `python-pkg` (vendored metadata у setuptools)
 
 - **Context:** Після оновлення `requirements.txt` Trivy все ще знаходив `jaraco.context 5.3.0` і `wheel 0.45.1`, бо ці версії були у `setuptools/_vendor` (METADATA), а не в основних runtime-пакетах.

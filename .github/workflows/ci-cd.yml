@@ -160,8 +160,7 @@ jobs:
       DEPLOY_FULL_REF: ${{ github.ref }}
       DEPLOY_REF: ${{ github.ref_name }}
       DEPLOY_PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
-      TAILSCALE_OAUTH_CLIENT_ID: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
-      TAILSCALE_OAUTH_SECRET: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
     steps:
       - *checkout_step
 
@@ -172,6 +171,7 @@ jobs:
           [ -n "${{ secrets.SERVER_USER }}" ] || { echo "Missing secret: SERVER_USER"; exit 1; }
           [ -n "${{ secrets.SERVER_SSH_KEY }}" ] || { echo "Missing secret: SERVER_SSH_KEY"; exit 1; }
           [ -n "${{ secrets.DEPLOY_PROJECT_DIR }}" ] || { echo "Missing secret: DEPLOY_PROJECT_DIR"; exit 1; }
+          [ -n "${{ secrets.TAILSCALE_AUTHKEY }}" ] || { echo "Missing secret: TAILSCALE_AUTHKEY"; exit 1; }
 
       - name: Validate SemVer tag for production
         if: startsWith(github.ref, 'refs/tags/v')
@@ -183,11 +183,9 @@ jobs:
           }
 
       - name: Connect to Tailscale
-        if: env.TAILSCALE_OAUTH_CLIENT_ID != '' && env.TAILSCALE_OAUTH_SECRET != ''
         uses: tailscale/github-action@v4
         with:
-          oauth-client-id: ${{ env.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ env.TAILSCALE_OAUTH_SECRET }}
+          authkey: ${{ env.TAILSCALE_AUTHKEY }}
 
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.2.5
