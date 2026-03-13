@@ -1,4 +1,4 @@
-Архітектура та Workflow (v0.3.0-M7)
+Архітектура та Workflow (v0.3.0-M7 + 2026-03-13 hotfix)
 
 Цей документ описує логіку роботи KDV Integrator v0.3.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests) та M7 (release canary + rollback + batch controls).
 
@@ -227,6 +227,12 @@ Koha JS для browser-flow:
 - Використовує `xhrFields.withCredentials=true` для `POST/PUT/GET status`.
 - Перед критичними діями робить pre-check сесії через `GET /kdv/api/health`.
 - Якщо сесії немає, відкриває захищений endpoint `repo.../kdv/api/health`, після чого Cloudflare сам формує валідний login redirect (`kid/meta`).
+
+Оновлення після доменної міграції на `repo.pinokew.buzz`:
+
+- API має базовий route `GET /kdv/api` (service index), щоб базовий URL не повертав "порожній" 404.
+- Readiness доступний у двох сумісних alias: `GET /kdv/api/ready` і `GET /kdv/api/readiness`.
+- `IntranetUserJS.js` використовує `detectArchivedRecord()` для перемикання кнопки `Archive` -> `Update`: перевіряє не тільки домен, а й DSpace шаблони `/handle/`, `/items/` та fallback по тексту details-блоку (включно з 856).
 
 Це дозволяє прибирати токен із Koha JS без різкого відключення server-to-server сценаріїв.
 

@@ -20,19 +20,19 @@ services:
       - ${INTEGRATOR_MOUNT_PATH}:/mnt/drive:rslave
       
     networks:
-      - dspacenet
+      - proxy-net
 
     labels:
       - "traefik.enable=true"
       # Хост залишив твій
-      - "traefik.http.routers.kdv-api.rule=Host(`${HOST}`) && PathPrefix(`/kdv/api`)"
+      - "traefik.http.routers.kdv-api.rule=Host(`${HOST}`) && PathPrefix(`${PATH_PREFIX}`)"
       - "traefik.http.routers.kdv-api.priority=100"
       - "traefik.http.routers.kdv-api.entrypoints=web"
       
       # 🟢 3. Порт змінено на 5000 (стандарт Flask/Gunicorn)
       - "traefik.http.services.kdv-api.loadbalancer.server.port=5000"
       
-      - "traefik.docker.network=dspacenet"
+      - "traefik.docker.network=proxy-net"
       
       # 🔴 4. StripPrefix ЗАКОМЕНТОВАНО (Видалено)
       # Чому: Наш Flask app (src/app.py) вже очікує повний шлях '/kdv/api/...'
@@ -44,5 +44,5 @@ services:
       # - "traefik.http.routers.kdv-api.middlewares=kdv-api-strip"
 
 networks:
-  dspacenet:
+  proxy-net:
     external: true

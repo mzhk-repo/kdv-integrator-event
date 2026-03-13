@@ -1,5 +1,13 @@
 # CHANGELOG 2026 VOL 01
 
+## 2026-03-13 — Hotfix: домен `pinokew.buzz`, API base-route та детекція 856u в Koha JS
+
+- **Context:** Після міграції на новий домен (`repo.pinokew.buzz`) користувачі бачили `404` на базовому `https://repo.pinokew.buzz/kdv/api`, а в Koha кнопка залишалась `Archive`, навіть коли в записі вже був `856$u`.
+- **Change:** У `src/app.py` додано `GET /kdv/api` (service index), додано alias `GET /kdv/api/readiness` поряд із `GET /kdv/api/ready`, і оновлено security bypass для probes/base-route. У `IntranetUserJS.js` замінено вузьку перевірку "архівовано" (тільки за доменом) на `detectArchivedRecord()`, яка розпізнає DSpace-лінки через `/handle/`, `/items/`, а також fallback-аналіз тексту details-блоку (включно з 856).
+- **Verification:** `docker compose exec -T kdv-api python ...` показує `200` для `/kdv/api`, `/kdv/api/health`, `/kdv/api/readiness`; `curl -i https://repo.pinokew.buzz/kdv/api/health` повертає `302` на Cloudflare Access login (очікувано без активної сесії); для `biblionumber=12` підтверджено окремий data issue (`File not found on disk`) через застарілий шлях у `956$u`.
+- **Risks:** Якщо в Koha-картці є нестандартний HTML-рендер 856, можлива потреба додатково розширити селектори `detectArchivedRecord()`.
+- **Rollback:** Відкотити правки у `src/app.py` та `IntranetUserJS.js` через `git revert <commit_sha>`.
+
 ## 2026-03-05 — Config: синхронізовано структуру `.env` та `.env.example`
 
 - **Context:** Потрібно було вирівняти шаблон `.env.example` під фактичний `.env`, зберігши всі існуючі коментарі у `.env`.

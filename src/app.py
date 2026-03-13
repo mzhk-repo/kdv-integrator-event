@@ -131,10 +131,25 @@ def add_cors_headers(response):
 
 @app.before_request
 def check_security():
-    if request.path.endswith(("/health", "/ready")) or request.method == "OPTIONS":
+    if request.path in {"/kdv/api"} or request.path.endswith(("/health", "/ready", "/readiness")) or request.method == "OPTIONS":
         return
     if not _is_authorized():
         abort(401, description="Unauthorized")
+
+
+@app.route("/kdv/api", methods=["GET"])
+def api_index():
+    return jsonify(
+        {
+            "service": "kdv-integrator",
+            "status": "ok",
+            "endpoints": {
+                "health": "/kdv/api/health",
+                "ready": "/kdv/api/ready",
+                "readiness": "/kdv/api/readiness",
+            },
+        }
+    )
 
 
 @app.route("/kdv/api/health", methods=["GET"])
@@ -143,6 +158,7 @@ def healthcheck():
 
 
 @app.route("/kdv/api/ready", methods=["GET"])
+@app.route("/kdv/api/readiness", methods=["GET"])
 def readinesscheck():
     mount_exists = os.path.isdir(INTEGRATOR_MOUNT_PATH)
     mount_rw = os.access(INTEGRATOR_MOUNT_PATH, os.R_OK | os.W_OK) if mount_exists else False
