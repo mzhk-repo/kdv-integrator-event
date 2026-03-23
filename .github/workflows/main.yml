@@ -1,0 +1,68 @@
+name: App Pipeline
+
+on:
+  push:
+    branches: [ dev, main ]
+    paths-ignore:
+      - '**/*.md'
+      - '.env.example'
+      - '.gitignore'
+      - 'archive/**'
+  pull_request:
+    branches: [ dev, main ]
+    paths-ignore:
+      - '**/*.md'
+      - '.env.example'
+      - '.gitignore'
+      - 'archive/**'
+  release:
+    types: [ published ]
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+
+jobs:
+  deploy-dev:
+    if: |
+      (github.event_name == 'pull_request' && github.base_ref == 'dev') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+    uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
+    with:
+      environment_name: development
+      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+      use_ansible: false
+      build_and_push_docker: true
+      docker_image_name: kdv-integrator-event
+      orchestration_script_path: 'scripts/healthcheck.sh'
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SSH_HOST_KEY_PUB: ${{ secrets.SSH_HOST_KEY_PUB }}
+      DEPLOY_PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
+
+  deploy-prod:
+    if: |
+      (github.event_name == 'pull_request' && github.base_ref == 'main') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v'))
+    uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
+    with:
+      environment_name: production
+      deploy: ${{ github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v') }}
+      use_ansible: false
+      build_and_push_docker: true
+      docker_image_name: kdv-integrator-event
+      orchestration_script_path: 'scripts/healthcheck.sh'
+    secrets:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SSH_HOST_KEY_PUB: ${{ secrets.SSH_HOST_KEY_PUB }}
+      DEPLOY_PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
