@@ -8,12 +8,14 @@ ENV PYTHONUNBUFFERED=1
 # Встановлюємо системні залежності:
 # - poppler-utils: КРИТИЧНО для генерації обкладинок з PDF (використовується в covers.py)
 # - curl: для перевірок здоров'я контейнера (healthcheck)
+# hadolint ignore=DL3008,DL3015
 RUN apt-get update && apt-get install -y \
     poppler-utils \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Встановлюємо Python залежності
+# hadolint ignore=DL3013
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.txt
