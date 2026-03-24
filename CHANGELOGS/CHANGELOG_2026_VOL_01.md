@@ -298,3 +298,11 @@
 - **Verification:** `docker compose config --quiet`; `./scripts/healthcheck.sh` -> `OK`; `docker compose logs --tail=120` (критичних помилок не виявлено); `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `22 passed`.
 - **Risks:** Потрібно тримати `KDV_IMAGE_VERSION` у `.env` синхронним із опублікованими тегами в GHCR; інакше можливий pull неіснуючого тегу або запуск неочікуваної версії. Для rollback через digest треба використовувати `KDV_IMAGE` (повний reference), а не тільки `KDV_IMAGE_VERSION`.
 - **Rollback:** Відкотити правки у `docker-compose.yml`, `.env.example`, `.github/workflows/main.yml` і документації через `git revert <commit_sha>`; тимчасово повернутися до попередньої конфігурації compose.
+
+## 2026-03-24 — CI fix: порожній `docker_image_name` у reusable workflow
+
+- **Context:** GitHub Actions падав на buildx із `invalid tag "ghcr.io/mzhk-repo/:<sha>"`, що означало порожню назву образу.
+- **Change:** У `.github/workflows/main.yml` виправлено передачу input у reusable workflow: замість невалідного `${{ inputs.docker_image_name }}` (цей caller не має `workflow_call.inputs`) встановлено явне `docker_image_name: kdv-integrator-event` для `deploy-dev` і `deploy-prod`.
+- **Verification:** Перевірено файл workflow — `docker_image_name` присутній у двох jobs; `inputs.docker_image_name` більше не використовується.
+- **Risks:** Якщо назву образу змінять у репозиторії/registry, треба оновити значення в обох jobs, інакше пуш піде в неправильний repo path.
+- **Rollback:** Відкотити правки у `.github/workflows/main.yml` через `git revert <commit_sha>`.
