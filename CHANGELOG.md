@@ -6,7 +6,7 @@
 
 1. [CHANGELOG_2026_VOL_01.md](CHANGELOGS/CHANGELOG_2026_VOL_01.md)
    - Статус: active
-   - Рядків: 25
+   - Рядків: 300
    - Контекст: початковий том для KDV Integrator; створено roadmap та документацію
 
 ## Політика ротації

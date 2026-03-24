@@ -290,3 +290,11 @@
 - **Verification:** `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `22 passed`; `./scripts/healthcheck.sh` -> `OK`; `docker compose logs --tail=200` без критичних помилок.
 - **Risks:** При підвищенні `ROBOT_PARALLELISM` без достатнього `ROBOT_BATCH_DELAY` можливе перевантаження Koha/DSpace; рекомендований безпечний старт `ROBOT_PARALLELISM=1` з поступовим збільшенням.
 - **Rollback:** Відкотити зміни в `scripts/robot.py`, `scripts/nightwalker.py`, `.env.example`, `README.md`, `docs/RELEASE.md`, `docs/RUNBOOK_MAYDAY.md`, `docs/ROADMAP.md` через `git revert <commit_sha>`.
+
+## 2026-03-24 — Deploy: compose переведено на GHCR image + версія через env
+
+- **Context:** Потрібно прибрати локальну збірку образу в `docker-compose.yml` і перейти на deployment з GHCR, де версія образу керується через env і узгоджується з CI/CD workflow.
+- **Change:** У `docker-compose.yml` сервіс `kdv-api` переведено з `build: .` на `image` (`ghcr`) з env-керуванням (`KDV_IMAGE_VERSION`, опційно `KDV_IMAGE` для повного tag/digest override), додано `pull_policy: always`, прибрано bind-mount `.:/app`. У `.env.example` додано `KDV_IMAGE_REPOSITORY`, `KDV_IMAGE_VERSION`, приклад `KDV_IMAGE`. У `.github/workflows/main.yml` імʼя образу уніфіковано через `env.DOCKER_IMAGE_NAME` і залишено синхронний push-потік для тегів `v*`. Оновлено супутню документацію: `README.md`, `docs/ARCHITECTURE.md`, `docs/RELEASE.md`, `docs/ROADMAP.md`, `docs/RUNBOOK_TESTING.md`, `docs/RUNBOOK_MAYDAY.md`.
+- **Verification:** `docker compose config --quiet`; `./scripts/healthcheck.sh` -> `OK`; `docker compose logs --tail=120` (критичних помилок не виявлено); `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> `22 passed`.
+- **Risks:** Потрібно тримати `KDV_IMAGE_VERSION` у `.env` синхронним із опублікованими тегами в GHCR; інакше можливий pull неіснуючого тегу або запуск неочікуваної версії. Для rollback через digest треба використовувати `KDV_IMAGE` (повний reference), а не тільки `KDV_IMAGE_VERSION`.
+- **Rollback:** Відкотити правки у `docker-compose.yml`, `.env.example`, `.github/workflows/main.yml` і документації через `git revert <commit_sha>`; тимчасово повернутися до попередньої конфігурації compose.

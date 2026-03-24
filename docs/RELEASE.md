@@ -26,7 +26,7 @@
 Перед створенням production релізу:
 
 - [ ]  `git status` чистий.
-- [ ]  `docker compose up -d --build` пройшов успішно.
+- [ ]  `docker compose pull && docker compose up -d` пройшов успішно.
 - [ ]  `./scripts/healthcheck.sh` пройшов.
 - [ ]  Перевірені логи: `docker compose logs --tail=200`.
 - [ ]  Тести пройшли (якщо налаштовані): `pytest -q`.
@@ -100,7 +100,7 @@ git push origin vX.Y.Z
 
 **Ключова ідея:** rollback має бути привʼязаний до попереднього стабільного **tag/digest**.
 
-У поточному deploy path (`git checkout ref` + `docker compose up`) базовий rollback виконується через git tag; якщо використовується registry image, зафіксуйте digest/tag у compose/env і відкочуйтесь на нього.
+У поточному deploy path (GHCR image + `KDV_IMAGE_VERSION` у `.env`) rollback виконується через перемикання версії image tag/digest у env і повторний `pull + up`.
 
 - [ ]  Знайди попередній стабільний тег (наприклад, `vX.Y.(Z-1)`).
 - [ ]  Переконайся, що артефакт доступний (image/tag/digest).
@@ -108,12 +108,12 @@ git push origin vX.Y.Z
 - [ ]  Перевір `./scripts/healthcheck.sh` і логи.
 - [ ]  Зафіксуй інцидент і rollback в changelog.
 
-Приклад rollback через git tag (поточний режим):
+Приклад rollback через попередній релізний tag образу:
 
 ```bash
-git fetch --tags --prune origin
-git checkout -f vX.Y.Z
-docker compose up -d --build --remove-orphans
+export KDV_IMAGE_VERSION=vX.Y.Z
+docker compose pull
+docker compose up -d --remove-orphans
 ./scripts/healthcheck.sh
 docker compose logs --tail=200
 ```
@@ -121,7 +121,7 @@ docker compose logs --tail=200
 Приклад rollback через image digest (якщо compose працює з image):
 
 ```bash
-# приклад: export KDV_IMAGE=ghcr.io/org/kdv-api@sha256:...
+# приклад: export KDV_IMAGE=ghcr.io/pinokew/kdv-integrator-event@sha256:...
 docker compose pull
 docker compose up -d --remove-orphans
 ./scripts/healthcheck.sh

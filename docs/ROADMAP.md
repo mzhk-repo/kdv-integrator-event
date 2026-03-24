@@ -232,7 +232,7 @@
 
 Мінімальний gate перед production release:
 
-- [ ]  `docker compose up -d --build`
+- [ ]  `docker compose pull && docker compose up -d`
 - [ ]  `./scripts/healthcheck.sh`
 - [ ]  `docker compose logs --tail=200` (без критичних помилок сервісу)
 - [ ]  `docker exec -e PYTHONPATH=/app kdv-api pytest -q`

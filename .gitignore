@@ -15,7 +15,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-AGENTS.md
-hello-world.md
-
-NOTES.md
+docs/AGENTS.md
+docs/NOTES.md
+docs/hello-world.md

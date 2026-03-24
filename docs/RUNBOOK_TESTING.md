@@ -21,7 +21,8 @@
 Запускаємо контейнер з усіма залежностями (poppler/pdf2image і т.д.):
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Потім виконувати команди всередині контейнера, щоб гарантувати сумісність залежностей:
@@ -40,10 +41,11 @@ docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_contracts.py -q
 docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_core.py::test_parse_marc_rules_basic -q
 ```
 
-Якщо контейнер уже запущений, але ви змінили код — перезапустіть/перебудуйте образ:
+Якщо контейнер уже запущений, але ви змінили `KDV_IMAGE_VERSION`/`KDV_IMAGE` у `.env` — оновіть образ і перезапустіть:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 **2) Тестування локально без контейнера (опціонально)**
@@ -111,7 +113,7 @@ docker exec kdv-api env | grep KDV_API_TOKEN
 docker exec kdv-api curl -X POST http://localhost:5000/kdv/api/integrate/12 -H "X-KDV-TOKEN:<token>"
 ```
 
-Переконайтесь, що контейнер містить актуальний код (зробіть `docker compose up -d --build` після змін).
+Переконайтесь, що контейнер працює на актуальній версії image (`docker compose pull && docker compose up -d` після змін env версії).
 
 **6) Локальні мок‑інтеграції для `app`**
 
@@ -149,7 +151,7 @@ def test_http_flow(monkeypatch):
 Файл активного тому: `CHANGELOGS/CHANGELOG_2026_VOL_01.md`.
 
 **9) Типові помилки та як їх вирішувати**
-- `run_dspace_workflow() got an unexpected keyword argument 'koha_client'` — означає, що контейнер працює зі старою версією коду. Рішення: `docker compose up -d --build`.
+- `run_dspace_workflow() got an unexpected keyword argument 'koha_client'` — означає, що контейнер працює зі старою версією image. Рішення: оновити `KDV_IMAGE_VERSION` (або `KDV_IMAGE`) і виконати `docker compose pull && docker compose up -d`.
 - `Invalid Token` від API — перевірити `KDV_API_TOKEN` у `.env` та середовищі контейнера.
 - Проблеми з PDF/Poppler — переконатися, що `poppler-utils` встановлені у образі (включено в Dockerfile) і що файл існує на підмонтованому шляху `INTEGRATOR_MOUNT_PATH`.
 - Падає `tests/test_contracts.py::test_koha_cgi_login_contract_payload_field_names` через `login_userid`/`login_password` — тест має порівнюватися з фактичними значеннями `KOHA_USER`/`KOHA_PASS` з runtime env, а не з hardcoded рядками.
@@ -158,7 +160,7 @@ def test_http_flow(monkeypatch):
 - Писати невеликі, атомарні тести (одне твердження — одна логіка).
 - Використовувати DI для підміни зовнішніх залежностей замість мережевих викликів.
 - Додавати changelog запис під час мерджу змін.
-- Переконатися, що `docker compose up -d --build` і `./scripts/healthcheck.sh` виконуються перед тестовим прогоном образу.
+- Переконатися, що `docker compose pull && docker compose up -d` і `./scripts/healthcheck.sh` виконуються перед тестовим прогоном образу.
 
 ---
 

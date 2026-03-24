@@ -28,7 +28,8 @@ docker compose logs --tail=200
 5. Якщо після діагностики сервіс явно в битому стані, зробити відновлення:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 ## 2) Базова діагностика (що дивимось завжди)
@@ -48,7 +49,7 @@ docker compose up -d --build
 
 Дії:
 1. Подивитись причину в логах: `docker compose logs --tail=200`.
-2. Перезапустити/перебудувати: `docker compose up -d --build`.
+2. Перезапустити на актуальному образі: `docker compose pull && docker compose up -d`.
 3. Повторити healthcheck.
 
 Якщо не допомогло:
@@ -65,7 +66,7 @@ docker compose up -d --build
 1. Перевірити, що диск/шлях дійсно змонтований на хості.
 2. Перевірити значення `INTEGRATOR_MOUNT_PATH` у runtime env.
 3. Перевірити права доступу для користувача контейнера.
-4. Після виправлення перезапустити `docker compose up -d --build`.
+4. Після виправлення перезапустити `docker compose pull && docker compose up -d`.
 
 ### 3.3 Cloudflare 524 / великі таймаути з браузера
 
@@ -159,7 +160,8 @@ docker compose up -d --build
 3. Запустити:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ./scripts/healthcheck.sh
 docker compose logs --tail=200
 ```
@@ -189,7 +191,8 @@ docker compose logs --tail=200
 ```bash
 git status
 docker compose ps
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ./scripts/healthcheck.sh
 docker compose logs --tail=200
 pytest -q

@@ -3,6 +3,7 @@ name: App Pipeline
 on:
   push:
     branches: [ dev, main ]
+    tags: [ 'v*.*.*' ]
     paths-ignore:
       - '**/*.md'
       - '.env.example'
@@ -23,6 +24,9 @@ permissions:
   packages: write
   pull-requests: read
 
+env:
+  DOCKER_IMAGE_NAME: kdv-integrator-event
+
 jobs:
   deploy-dev:
     if: |
@@ -34,7 +38,7 @@ jobs:
       deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
       use_ansible: false
       build_and_push_docker: true
-      docker_image_name: kdv-integrator-event
+      docker_image_name: ${{ inputs.docker_image_name }}
       orchestration_script_path: 'scripts/healthcheck.sh'
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -49,6 +53,7 @@ jobs:
     if: |
       (github.event_name == 'pull_request' && github.base_ref == 'main') ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v'))
     uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
     with:
@@ -56,7 +61,8 @@ jobs:
       deploy: ${{ github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v') }}
       use_ansible: false
       build_and_push_docker: true
-      docker_image_name: kdv-integrator-event
+      push_docker_image: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      docker_image_name: ${{ inputs.docker_image_name }}
       orchestration_script_path: 'scripts/healthcheck.sh'
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}

@@ -173,20 +173,21 @@ REST API Koha не дозволяє повноцінно працювати з �
 
 ### 8. CI/CD Архітектура (M3)
 
-Після M3 у проєкті діє workflow `.github/workflows/ci-cd.yml` з двома незалежними шарами: `ci-checks` і `cd-deploy`.
+Після M3 у проєкті діє workflow `.github/workflows/main.yml`, який викликає reusable pipeline `shared-ci-cd.yml` з двома шарами: `ci-checks` і `cd-deploy`.
 
 **CI layer (`ci-checks`)**
-- Trigger: `pull_request`, `push` у `main`, теги `v*.*.*`, `workflow_dispatch`.
+- Trigger: `pull_request`, `push` у `dev/main`, теги `v*.*.*`, `release`.
 - Gates: `ruff check .`, `pytest -q`, `pip-audit`, `trivy config`, `trivy image`.
-- Build: `docker build` + `docker compose config` валідація через `.env.example` (без secrets у репозиторії).
+- Build/Publish: збірка і push у GHCR (`ghcr.io/<owner>/kdv-integrator-event`) з тегами `dev/main`, `v*.*.*`, `sha-*`, `latest` (для релізних тегів).
+- Compose validation: `docker compose config` через `.env.example` (без secrets у репозиторії).
 - Security policy: `trivy image` виконується з `--ignore-unfixed`, тому блокуються лише виправні `HIGH/CRITICAL`.
 
 **CD layer (`cd-deploy`)**
-- Умова запуску: тільки `push` у `main` або тег `v*` і лише після успішного `ci-checks`.
+- Умова запуску: тільки події, де в caller передано `deploy=true` (у цьому репозиторії: auto deploy для `dev` push, production deploy для `release` з тегом `v*`).
 - Release semantics:
-    - `main` -> staging path
-    - `vMAJOR.MINOR.PATCH` -> production path
-- Deploy transport: `appleboy/ssh-action`.
+    - `dev` -> development path (tag `dev`)
+    - `vMAJOR.MINOR.PATCH` -> production path (semver tag)
+- Deploy transport: SSH over Tailscale.
 
 ### 9. Zero Trust Deploy Path (Tailscale)
 
@@ -196,6 +197,7 @@ REST API Koha не дозволяє повноцінно працювати з �
 - Авторизація: `TAILSCALE_AUTHKEY` (GitHub Secret).
 - Обов'язкові secrets для deploy: `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`, `DEPLOY_PROJECT_DIR`, `TAILSCALE_AUTHKEY`.
 - На сервері деплой виконує: `git fetch`, checkout потрібного ref, `docker compose pull`, `docker compose up -d --remove-orphans`, `ps/logs`.
+- Сервіс у `docker-compose.yml` запускається з GHCR image; версія керується через env (`KDV_IMAGE_VERSION`, опційно `KDV_IMAGE` для повного override).
 
 ### 10. API Security Path (M4 implemented)
 
@@ -300,7 +302,8 @@ src/
 
 Коротко:
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker exec -e PYTHONPATH=/app kdv-api pytest -q
 ```
 

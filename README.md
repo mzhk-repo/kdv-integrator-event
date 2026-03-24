@@ -250,6 +250,11 @@ kdv-integrator-event/
 
 Усі ENV-змінні задокументовані у `.env.example`. Секрети (паролі Koha/DSpace, API-токен) зберігаються лише в `.env` на сервері — **ніколи не комітьте `.env`**.
 
+Образ сервісу запускається з GHCR через env:
+- `KDV_IMAGE_REPOSITORY` (наприклад, `ghcr.io/pinokew/kdv-integrator-event`)
+- `KDV_IMAGE_VERSION` (наприклад, `dev`, `main`, `v1.2.3`, `latest`, `sha-...`)
+- опційно `KDV_IMAGE` (повний image reference), якщо треба явно зафіксувати digest/tag одним значенням
+
 ---
 
 ## 🔒 Безпека
@@ -301,8 +306,9 @@ Internet → Cloudflare Access (JWT) → Tailscale VPN → KDV Integrator → Ko
 cp .env.example .env
 # Заповніть: KOHA_*, DSPACE_*, KDV_API_TOKEN, INTEGRATOR_MOUNT_PATH
 
-# 2. Запуск сервісу
-docker compose up -d --build
+# 2. Завантаження потрібного образу з GHCR і запуск сервісу
+docker compose pull
+docker compose up -d
 
 # 3. Перевірка
 curl http://localhost:5000/kdv/api/health
@@ -371,12 +377,15 @@ Push / PR → ruff (lint) → pytest (22 tests) → pip-audit → trivy (docker 
 ### Rollback
 
 ```bash
-# Через тег
-git checkout v0.2.1
-docker compose up -d --build
+# Через версію образу в env
+export KDV_IMAGE_VERSION=v0.2.1
+docker compose pull
+docker compose up -d --remove-orphans
 
-# Через digest (якщо реєстр недоступний)
-docker run --name kdv-api sha256:<prev-digest>
+# Через digest
+export KDV_IMAGE=ghcr.io/pinokew/kdv-integrator-event@sha256:<prev-digest>
+docker compose pull
+docker compose up -d --remove-orphans
 ```
 
 ---
