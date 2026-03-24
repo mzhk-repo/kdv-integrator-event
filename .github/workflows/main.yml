@@ -3,7 +3,6 @@ name: App Pipeline
 on:
   push:
     branches: [ dev, main ]
-    tags: [ 'v*.*.*' ]
     paths-ignore:
       - '**/*.md'
       - '.env.example'
@@ -50,7 +49,6 @@ jobs:
     if: |
       (github.event_name == 'pull_request' && github.base_ref == 'main') ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v'))
     uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
     with:
@@ -58,7 +56,7 @@ jobs:
       deploy: ${{ github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v') }}
       use_ansible: false
       build_and_push_docker: true
-      push_docker_image: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      push_docker_image: ${{ github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v') }}
       docker_image_name: kdv-integrator-event
       orchestration_script_path: 'scripts/healthcheck.sh'
     secrets:
