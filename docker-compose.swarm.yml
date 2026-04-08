@@ -1,0 +1,10 @@
+services:
+  kdv-api:
+    container_name: !reset null
+    restart: !reset null
+    pull_policy: !reset null
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.app_zone == manager

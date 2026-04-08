@@ -32,7 +32,7 @@ services:
       # 🟢 3. Порт змінено на 5000 (стандарт Flask/Gunicorn)
       - "traefik.http.services.kdv-api.loadbalancer.server.port=5000"
       
-      - "traefik.docker.network=proxy-net"
+      - "traefik.docker.network=${EXTERNAL_NETWORK}"
       
       # 🔴 4. StripPrefix ЗАКОМЕНТОВАНО (Видалено)
       # Чому: Наш Flask app (src/app.py) вже очікує повний шлях '/kdv/api/...'
@@ -46,3 +46,4 @@ services:
 networks:
   proxy-net:
     external: true
+    name: ${EXTERNAL_NETWORK}
