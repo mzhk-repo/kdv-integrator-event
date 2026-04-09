@@ -3,8 +3,86 @@ services:
     container_name: !reset null
     restart: !reset null
     pull_policy: !reset null
+    env_file: !reset
+      - .env.public
+    environment:
+      TZ: ${TZ:-Europe/Kyiv}
+      INTEGRATOR_MOUNT_PATH: /mnt/drive
+      KDV_AUTH_MODE: ${KDV_AUTH_MODE}
+      KDV_CORS_ALLOWLIST: ${KDV_CORS_ALLOWLIST}
+      KOHA_API_URL: ${KOHA_API_URL}
+      KOHA_OPAC_URL: ${KOHA_OPAC_URL}
+      DSPACE_API_URL: ${DSPACE_API_URL}
+      DSPACE_UI_URL: ${DSPACE_UI_URL}
+      DSPACE_SUBMISSION_SECTION: ${DSPACE_SUBMISSION_SECTION}
+      FOLDER_PROCESSED: ${FOLDER_PROCESSED}
+      FOLDER_ERROR: ${FOLDER_ERROR}
+      ROBOT_PARALLELISM: ${ROBOT_PARALLELISM}
+      ROBOT_BATCH_DELAY: ${ROBOT_BATCH_DELAY}
+      ROBOT_POLL_INTERVAL: ${ROBOT_POLL_INTERVAL}
+      ROBOT_MAX_WAIT: ${ROBOT_MAX_WAIT}
+      NIGHTWALKER_AUTO_DELAY: ${NIGHTWALKER_AUTO_DELAY}
+      NIGHTWALKER_RANGE_DELAY: ${NIGHTWALKER_RANGE_DELAY}
+    entrypoint:
+      - /app/scripts/entrypoint.sh
+    command:
+      - /app/src/wait_for_drive.sh
+      - gunicorn
+      - -w
+      - "1"
+      - --threads
+      - "4"
+      - -b
+      - 0.0.0.0:5000
+      - src.app:app
+    secrets:
+      - KDV_API_TOKEN
+      - CF_ACCESS_CLIENT_ID
+      - CF_ACCESS_CLIENT_SECRET
+      - KOHA_API_USER
+      - KOHA_API_PASS
+      - DSPACE_API_USER
+      - DSPACE_API_PASS
+      - CF_ACCESS_TEAM_DOMAIN
+      - CF_ACCESS_AUD
     deploy:
       replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+        window: 2m
       placement:
         constraints:
           - node.labels.app_zone == manager
+    volumes:
+      - /opt/kdv-integrator/kdv-integrator-event/scripts/entrypoint.sh:/app/scripts/entrypoint.sh:ro
+
+secrets:
+  KDV_API_TOKEN:
+    external: true
+    name: kdv_api_token
+  CF_ACCESS_CLIENT_ID:
+    external: true
+    name: cf_access_client_id
+  CF_ACCESS_CLIENT_SECRET:
+    external: true
+    name: cf_access_client_secret
+  KOHA_API_USER:
+    external: true
+    name: koha_api_user
+  KOHA_API_PASS:
+    external: true
+    name: koha_api_pass
+  DSPACE_API_USER:
+    external: true
+    name: dspace_api_user
+  DSPACE_API_PASS:
+    external: true
+    name: dspace_api_pass
+  CF_ACCESS_TEAM_DOMAIN:
+    external: true
+    name: cf_access_team_domain
+  CF_ACCESS_AUD:
+    external: true
+    name: cf_access_aud
