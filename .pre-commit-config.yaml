@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: validate-sops-encrypted-files
+        name: Validate SOPS encrypted files
+        entry: python3 scripts/validate_sops_encrypted.py
+        language: system
+        files: ^env\.(dev|prod)\.enc$

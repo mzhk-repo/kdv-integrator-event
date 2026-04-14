@@ -3,28 +3,18 @@ services:
     container_name: !reset null
     restart: !reset null
     pull_policy: !reset null
-    env_file: !reset
-      - .env.public
-    environment:
-      TZ: ${TZ:-Europe/Kyiv}
-      INTEGRATOR_MOUNT_PATH: /mnt/drive
-      KDV_AUTH_MODE: ${KDV_AUTH_MODE}
-      KDV_CORS_ALLOWLIST: ${KDV_CORS_ALLOWLIST}
-      KOHA_API_URL: ${KOHA_API_URL}
-      KOHA_OPAC_URL: ${KOHA_OPAC_URL}
-      DSPACE_API_URL: ${DSPACE_API_URL}
-      DSPACE_UI_URL: ${DSPACE_UI_URL}
-      DSPACE_SUBMISSION_SECTION: ${DSPACE_SUBMISSION_SECTION}
-      FOLDER_PROCESSED: ${FOLDER_PROCESSED}
-      FOLDER_ERROR: ${FOLDER_ERROR}
-      ROBOT_PARALLELISM: ${ROBOT_PARALLELISM}
-      ROBOT_BATCH_DELAY: ${ROBOT_BATCH_DELAY}
-      ROBOT_POLL_INTERVAL: ${ROBOT_POLL_INTERVAL}
-      ROBOT_MAX_WAIT: ${ROBOT_MAX_WAIT}
-      NIGHTWALKER_AUTO_DELAY: ${NIGHTWALKER_AUTO_DELAY}
-      NIGHTWALKER_RANGE_DELAY: ${NIGHTWALKER_RANGE_DELAY}
     entrypoint:
-      - /app/scripts/entrypoint.sh
+      - /bin/sh
+      - -ec
+      - |
+        set -a
+        . /run/secrets/app_env_payload
+        set +a
+        export INTEGRATOR_MOUNT_PATH=/mnt/drive
+        exec /app/scripts/entrypoint.sh "$$@"
+      - --
+    env_file: !reset []
+    environment: []
     command:
       - /app/src/wait_for_drive.sh
       - gunicorn
@@ -36,15 +26,8 @@ services:
       - 0.0.0.0:5000
       - src.app:app
     secrets:
-      - KDV_API_TOKEN
-      - CF_ACCESS_CLIENT_ID
-      - CF_ACCESS_CLIENT_SECRET
-      - KOHA_API_USER
-      - KOHA_API_PASS
-      - DSPACE_API_USER
-      - DSPACE_API_PASS
-      - CF_ACCESS_TEAM_DOMAIN
-      - CF_ACCESS_AUD
+      - source: app_env_payload
+        target: app_env_payload
     deploy:
       replicas: 1
       restart_policy:
@@ -59,30 +42,6 @@ services:
       - ${ENTRYPOINT_SCRYPT_PATH}:/app/scripts/entrypoint.sh:ro
 
 secrets:
-  KDV_API_TOKEN:
+  app_env_payload:
     external: true
-    name: kdv_api_token
-  CF_ACCESS_CLIENT_ID:
-    external: true
-    name: cf_access_client_id
-  CF_ACCESS_CLIENT_SECRET:
-    external: true
-    name: cf_access_client_secret
-  KOHA_API_USER:
-    external: true
-    name: koha_api_user
-  KOHA_API_PASS:
-    external: true
-    name: koha_api_pass
-  DSPACE_API_USER:
-    external: true
-    name: dspace_api_user
-  DSPACE_API_PASS:
-    external: true
-    name: dspace_api_pass
-  CF_ACCESS_TEAM_DOMAIN:
-    external: true
-    name: cf_access_team_domain
-  CF_ACCESS_AUD:
-    external: true
-    name: cf_access_aud
+    name: ${KDV_APP_ENV_PAYLOAD_SECRET_NAME:-kdv_app_env_payload_dev_v1}

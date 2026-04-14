@@ -1,5 +1,6 @@
 # Ігнорувати файл з паролями
 .env
+*.decrypted~env.*.enc
 Koha-intranet.js
 candidates.txt
 IntranetUserJS.js
