@@ -1,3 +1,11 @@
+## 2026-04-24 — Healthcheck env resolution for Swarm orchestrator
+
+- **Context:** Під час ручного запуску `deploy-orchestrator-swarm.sh` з `ORCHESTRATOR_ENV_FILE` pre-deploy `healthcheck.sh` викликав `docker compose ps` без env-файлу, через що Compose логував warning-и для `INTEGRATOR_MOUNT_PATH`, `HOST`, `PATH_PREFIX`, `EXTERNAL_NETWORK` і падав на порожньому bind mount spec.
+- **Change:** `scripts/healthcheck.sh` тепер резолвить env-контекст у тому самому порядку, що й orchestrator/config bootstrap: `ORCHESTRATOR_ENV_FILE` -> `SERVER_ENV`/`ENVIRONMENT_NAME` -> `env.dev|prod` -> `env.dev|prod.enc` через `sops` -> `.env`. Усі `docker compose ps` виклики запускаються з `--env-file`, якщо файл знайдено. Оновлено `docs/scripts_runbook.md` для ручного запуску з `ENVIRONMENT_NAME=development`.
+- **Verification:** `bash -n scripts/healthcheck.sh`; запуск `ORCHESTRATOR_ENV_FILE=<decrypted env.dev.enc> bash scripts/healthcheck.sh` повернув first-deploy `INFO` без Compose warning-ів; запуск `ENVIRONMENT_NAME=development bash scripts/healthcheck.sh` також пройшов без warning-ів.
+- **Risks:** Якщо `env.*.enc` треба розшифрувати автоматично, на хості має бути доступний `sops` і відповідний ключ. У штатному orchestration flow ризик мінімальний, бо вже передається готовий `ORCHESTRATOR_ENV_FILE`.
+- **Rollback:** Відкотити зміни `scripts/healthcheck.sh`, `docs/scripts_runbook.md` і цей запис через `git revert <commit_sha>` або вручну повернути попередній прямий виклик `docker compose ps`.
+
 ## 2026-04-09 — Docker Secrets migration: Крок 1 (розділення змінних)
 
 - **Context:** Розпочато інкрементальну міграцію на Docker Swarm secrets; потрібно відокремити non-secret конфіг від чутливих даних без змін бізнес-логіки застосунку.
@@ -54,3 +62,35 @@
 - **Verification:** Перевірено, що документ не містить прив'язок до конкретного репозиторію/шляху і придатний як шаблон для інших проєктів.
 - **Risks:** Для конкретного проєкту все одно треба підставити власні імена сервісів, secret names, шляхи та stack name.
 - **Rollback:** Відкотити зміни `docs/DOCKER-SECRETS.md` через `git revert <commit_sha>`.
+
+## 2026-04-23 — Scripts refactoring: активовано pre-deploy healthcheck в Swarm orchestrator
+
+- **Context:** У roadmap (`docs/scrypts_refactoring.md`) була неактуальна примітка для цього репозиторію: `deploy-orchestrator-swarm.sh` уже підключений у CI, але `healthcheck.sh` не запускався в оркестраторі перед рендерингом Swarm manifest.
+- **Change:** Оновлено `scripts/deploy-orchestrator-swarm.sh`: додано `run_validation_scripts()` з запуском `scripts/healthcheck.sh` у pre-deploy фазі (перед `docker compose config`), оновлено warning для fallback на `.env` за узгодженим формулюванням, додано sanitize `published: "80"` → `published: 80` у deploy-manifest. Виправлено таблицю категоризації в `docs/scrypts_refactoring.md` для `healthcheck.sh` (1а) і `deploy-orchestrator-swarm.sh` (active CI orchestration).
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; `rg -n "run_validation_scripts|Fallback на локальний \\.env|published:" scripts/deploy-orchestrator-swarm.sh`; `rg -n "/opt/kdv-integrator/kdv-integrator-event|healthcheck\\.sh|deploy-orchestrator-swarm\\.sh" docs/scrypts_refactoring.md`.
+- **Risks:** `healthcheck.sh` залежить від стану локального контейнера/compose-контексту; на першому деплої скрипт штатно пропускає перевірку, але в нестандартному runtime-контексті може зупинити deploy.
+- **Rollback:** `git revert <commit_sha>` для цього набору правок або вручну прибрати `run_validation_scripts()` з оркестратора, відкотити warning/sanitize-блок і повернути попередні рядки в `docs/scrypts_refactoring.md`.
+
+## 2026-04-23 — Scripts refactoring: Крок 3 (Категорія 1б) для kdv-integrator-event
+
+- **Context:** Для Кроку 3 потрібно зафіксувати послідовність `1а -> 1б -> docker compose config -> docker stack deploy`. У цьому репозиторії фактичних скриптів Категорії 1б у `scripts/` наразі немає.
+- **Change:** У `scripts/deploy-orchestrator-swarm.sh` додано явну фазу `run_deploy_adjacent_scripts()` (no-op з інформаційним логом) і інтегровано її після `run_validation_scripts()`. Таким чином порядок виконання в оркестраторі тепер явно відповідає контракту Кроку 3.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; `rg -n "run_validation_scripts|run_deploy_adjacent_scripts|Rendering Swarm manifest" scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** До появи реальних 1б-скриптів цей етап лише логує пропуск; якщо додавати нові deploy-adjacent скрипти в майбутньому, потрібно підключити їх саме у `run_deploy_adjacent_scripts()`.
+- **Rollback:** Відкотити зміни файлу `scripts/deploy-orchestrator-swarm.sh` через `git revert <commit_sha>` або вручну видалити `run_deploy_adjacent_scripts()` і її виклик.
+
+## 2026-04-23 — Config bootstrap: підтримка `SERVER_ENV`/`ORCHESTRATOR_ENV_FILE` + pre-deploy валідація
+
+- **Context:** Потрібно, щоб `src/config.py` працював із dev/prod контекстом (`SERVER_ENV`, `ORCHESTRATOR_ENV_FILE`, `env.dev.enc/env.prod.enc`) та мав ідемпотентний механізм завантаження ENV.
+- **Change:** У `src/config.py` додано ідемпотентний bootstrap (`bootstrap_environment()`) з пріоритетом джерел: `ORCHESTRATOR_ENV_FILE` -> `SERVER_ENV` (`env.dev`/`env.prod`) -> `env.dev.enc`/`env.prod.enc` (best-effort decrypt через `sops` + `SOPS_AGE_KEY_FILE`) -> `.env`. Для тимчасово розшифрованого файлу додано `atexit` cleanup. У `scripts/deploy-orchestrator-swarm.sh` додано pre-deploy перевірку `run_python_config_validation()` (`import src.config`) як частину фази 1а.
+- **Verification:** `python3 -m py_compile src/config.py`; `bash -n scripts/deploy-orchestrator-swarm.sh`; `KDV_API_TOKEN=x KOHA_API_URL=http://koha.local KOHA_OPAC_URL=http://opac.local KOHA_API_USER=u KOHA_API_PASS=p DSPACE_API_URL=http://dspace.local DSPACE_UI_URL=http://dspace-ui.local DSPACE_API_USER=u DSPACE_API_PASS=p ORCHESTRATOR_ENV_FILE=/tmp/nonexistent SERVER_ENV=dev python3 -c "import src.config; print('ok')"` -> `ok`.
+- **Risks:** Якщо для `SERVER_ENV` існує лише `env.<env>.enc`, але на хості немає `sops` або AGE ключа, `config.py` тихо не завантажить цей файл і перейде до наступного fallback (`.env`/`os.environ`); тому для CI/Swarm критично передавати валідний `ORCHESTRATOR_ENV_FILE`.
+- **Rollback:** Відкотити коміт через `git revert <commit_sha>` або вручну прибрати bootstrap-блок із `src/config.py` і функцію `run_python_config_validation()` із оркестратора.
+
+## 2026-04-23 — Redeploy + scripts runbook
+
+- **Context:** Потрібно було виконати ручний редеплой через `scripts/deploy-orchestrator-swarm.sh`; після успіху — створити `docs/scripts_runbook.md`.
+- **Change:** Виконано редеплой у режимі `swarm` з `ORCHESTRATOR_ENV_FILE`, розшифрованим з `env.dev.enc` у форматі dotenv (`--input-type dotenv --output-type dotenv`). Додано новий документ `docs/scripts_runbook.md` з бізнес-логікою та командами ручного запуску для всіх скриптів у `scripts/`.
+- **Verification:** Логи редеплою завершились рядком `Swarm deploy completed`; `docker stack deploy` оновив сервіс `kdv_integrator_event_kdv-api`. Файл `docs/scripts_runbook.md` створено.
+- **Risks:** При спробі деплою з fallback на локальний `.env` можливий провал `docker compose config` через відсутність частини swarm-змінних; для операційного запуску використовувати розшифрований `env.dev.enc`/`env.prod.enc`.
+- **Rollback:** Відкотити запис та runbook через `git revert <commit_sha>` або вручну видалити `docs/scripts_runbook.md`.

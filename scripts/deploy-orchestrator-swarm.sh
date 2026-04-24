@@ -22,6 +22,49 @@ detect_compose_file() {
   fi
 }
 
+run_validation_scripts() {
+  local healthcheck_script
+  healthcheck_script="${SCRIPT_DIR}/healthcheck.sh"
+
+  if [[ ! -f "${healthcheck_script}" ]]; then
+    log "ERROR: validation script not found: ${healthcheck_script}"
+    exit 1
+  fi
+
+  if [[ ! -x "${healthcheck_script}" ]]; then
+    log "Running validation script via bash: ${healthcheck_script}"
+    bash "${healthcheck_script}"
+    return 0
+  fi
+
+  log "Running validation script: ${healthcheck_script}"
+  "${healthcheck_script}"
+
+  run_python_config_validation
+}
+
+run_python_config_validation() {
+  local python_bin server_env_for_check
+
+  if command -v python3 >/dev/null 2>&1; then
+    python_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    python_bin="python"
+  else
+    log "WARNING: python interpreter not found; skipping src.config validation"
+    return 0
+  fi
+
+  server_env_for_check="${SERVER_ENV:-${ENVIRONMENT_NAME:-}}"
+  log "Running Python config validation: import src.config (SERVER_ENV=${server_env_for_check:-unset})"
+  ORCHESTRATOR_ENV_FILE="${ENV_FILE}" SERVER_ENV="${server_env_for_check}" \
+    "${python_bin}" -c "import src.config"
+}
+
+run_deploy_adjacent_scripts() {
+  log "No deploy-adjacent scripts configured for this repository; skipping Category 1b phase"
+}
+
 run_ansible_secrets_if_configured() {
   local infra_repo_path environment inventory_env inventory_path playbook_path
 
@@ -97,7 +140,7 @@ deploy_swarm() {
   if [[ ! -f "${ENV_FILE}" ]]; then
     if [[ -f ".env" ]]; then
       ENV_FILE=".env"
-      log "Env file ${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted} not found; fallback to .env"
+      log "WARNING: env.*.enc не знайдено або ORCHESTRATOR_ENV_FILE не передано. Fallback на локальний .env — тільки для dev-середовища."
     else
       log "ERROR: env file not found (${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}) and .env missing"
       exit 1
@@ -105,6 +148,8 @@ deploy_swarm() {
   fi
 
   run_ansible_secrets_if_configured
+  run_validation_scripts
+  run_deploy_adjacent_scripts
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
   docker compose --env-file "${ENV_FILE}" \
@@ -112,7 +157,9 @@ deploy_swarm() {
     -f "${swarm_file}" \
     config > "${raw_manifest}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${raw_manifest}" > "${deploy_manifest}"
+  awk 'NR==1 && $1=="name:" {next} {print}' "${raw_manifest}" \
+    | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
+    > "${deploy_manifest}"
 
   log "Deploying stack ${STACK_NAME}"
   docker stack deploy -c "${deploy_manifest}" "${STACK_NAME}"
