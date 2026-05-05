@@ -1,10 +1,10 @@
 # CHANGELOG Index
 
-Це індекс томів changelog. Детальні записи ведуться у `CHANGELOGS/`.
+Це індекс томів changelog. Детальні записи ведуться у `docs/changelogs`.
 
 ## Поточний активний том
 
-1. [CHANGELOG_2026_VOL_02.md](CHANGELOGS/CHANGELOG_2026_VOL_02.md)
+1. [CHANGELOG_2026_VOL_02.md]
    - Статус: active
    - Рядків: 
 

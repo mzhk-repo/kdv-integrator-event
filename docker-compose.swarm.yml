@@ -39,7 +39,16 @@ services:
         constraints:
           - node.labels.app_zone == manager
     volumes:
-      - ${ENTRYPOINT_SCRYPT_PATH}:/app/scripts/entrypoint.sh:ro
+      - ${ENTRYPOINT_SCRYPT_PATH:-./scripts/entrypoint.sh}:/app/scripts/entrypoint.sh:ro
+
+volumes:
+  kdv-drive:
+    driver: rclone
+    driver_opts:
+      remote: "${RCLONE_REMOTE_NAME:?RCLONE_REMOTE_NAME is required}:"
+      allow_other: "true"
+      vfs_cache_mode: full
+      poll_interval: "0"
 
 secrets:
   app_env_payload:

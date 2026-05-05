@@ -6,6 +6,14 @@
 - **Risks:** Якщо `env.*.enc` треба розшифрувати автоматично, на хості має бути доступний `sops` і відповідний ключ. У штатному orchestration flow ризик мінімальний, бо вже передається готовий `ORCHESTRATOR_ENV_FILE`.
 - **Rollback:** Відкотити зміни `scripts/healthcheck.sh`, `docs/scripts_runbook.md` і цей запис через `git revert <commit_sha>` або вручну повернути попередній прямий виклик `docker compose ps`.
 
+## 2026-05-05 — Rclone Docker volume plugin замість host bind mount
+
+- **Context:** Інтегратор більше не має залежати від host-side `rclone mount` і абсолютного host-шляху в `INTEGRATOR_MOUNT_PATH`; потрібно задавати тільки назву remote з `rclone config`, яку обслуговує встановлений на хості rclone Docker volume plugin. Також bind `entrypoint.sh` для Swarm має задаватися відносно репозиторію, а не абсолютним шляхом.
+- **Change:** `docker-compose.yml` переведено з bind mount `${INTEGRATOR_MOUNT_PATH}:/mnt/drive:rslave` на named volume `kdv-drive` з `driver: rclone` і обов'язковим `RCLONE_REMOTE_NAME` у `driver_opts.remote`; `.env` у `env_file` зроблено optional для коректної валідації з `--env-file .env.example`. `docker-compose.swarm.yml` отримав такий самий volume definition і default для `ENTRYPOINT_SCRYPT_PATH` як `./scripts/entrypoint.sh`. `.env.example`, `README.md`, `docs/RUNBOOK_MAYDAY.md` і `docs/RUNBOOK_TESTING.md` оновлено під новий контракт: зовні задається `RCLONE_REMOTE_NAME`, а runtime `INTEGRATOR_MOUNT_PATH` лишається `/mnt/drive` всередині контейнера.
+- **Verification:** `docker compose --env-file .env.example -f docker-compose.yml config`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`.
+- **Risks:** На кожному Docker host/Swarm node, де може стартувати сервіс, має бути встановлений і налаштований rclone Docker volume plugin з доступом до відповідного `rclone.conf`; без цього Docker не створить volume. Якщо remote має іншу назву, потрібно оновити `RCLONE_REMOTE_NAME` в env.
+- **Rollback:** Повернути bind mount `${INTEGRATOR_MOUNT_PATH}:/mnt/drive:rslave`, прибрати top-level `volumes.kdv-drive`, повернути host-path у env і відкотити документацію/changelog через `git revert <commit_sha>`.
+
 ## 2026-04-09 — Docker Secrets migration: Крок 1 (розділення змінних)
 
 - **Context:** Розпочато інкрементальну міграцію на Docker Swarm secrets; потрібно відокремити non-secret конфіг від чутливих даних без змін бізнес-логіки застосунку.

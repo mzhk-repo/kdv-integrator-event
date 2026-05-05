@@ -10,14 +10,15 @@ services:
     command: /bin/sh /app/src/wait_for_drive.sh gunicorn -w 1 --threads 4 -b 0.0.0.0:5000 src.app:app
     
     env_file:
-      - .env
+      - path: .env
+        required: false
       
     environment:
       - TZ=Europe/Kyiv
       - INTEGRATOR_MOUNT_PATH=/mnt/drive
     volumes:
-      # 🟢 2. Обов'язково монтуємо диск (rclone), інакше скрипт не знайде PDF файли
-      - ${INTEGRATOR_MOUNT_PATH}:/mnt/drive:rslave
+      # 🟢 2. Обов'язково монтуємо rclone volume, інакше скрипт не знайде PDF файли
+      - kdv-drive:/mnt/drive
       
     networks:
       - proxy-net
@@ -47,3 +48,12 @@ networks:
   proxy-net:
     external: true
     name: ${EXTERNAL_NETWORK}
+
+volumes:
+  kdv-drive:
+    driver: rclone
+    driver_opts:
+      remote: "${RCLONE_REMOTE_NAME:?RCLONE_REMOTE_NAME is required}:"
+      allow_other: "true"
+      vfs_cache_mode: full
+      poll_interval: "0"
