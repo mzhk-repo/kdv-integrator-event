@@ -1,7 +1,6 @@
 services:
   kdv-api:
     image: ${KDV_IMAGE:-${KDV_IMAGE_REPOSITORY:-ghcr.io/pinokew/kdv-integrator-event}:${KDV_IMAGE_VERSION:-latest}}
-    pull_policy: always
     container_name: kdv-api
     restart: unless-stopped
     privileged: true

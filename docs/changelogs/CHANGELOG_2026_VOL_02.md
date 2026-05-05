@@ -102,3 +102,35 @@
 - **Verification:** Логи редеплою завершились рядком `Swarm deploy completed`; `docker stack deploy` оновив сервіс `kdv_integrator_event_kdv-api`. Файл `docs/scripts_runbook.md` створено.
 - **Risks:** При спробі деплою з fallback на локальний `.env` можливий провал `docker compose config` через відсутність частини swarm-змінних; для операційного запуску використовувати розшифрований `env.dev.enc`/`env.prod.enc`.
 - **Rollback:** Відкотити запис та runbook через `git revert <commit_sha>` або вручну видалити `docs/scripts_runbook.md`.
+
+## 2026-05-05 — Swarm deploy verification після `docker stack deploy`
+
+- **Context:** GitHub CI показував успішний deploy, хоча `kdv_integrator_event_kdv-api` залишався `0/1`: `docker service ps` показав `Rejected` з помилкою `No such image: ghcr.io/mzhk-repo/kdv-integrator-event:latest`. Причина в тому, що `docker stack deploy` лише створює/оновлює service object і запускає tasks у фоні, а orchestrator не перевіряв фактичний стан replicas.
+- **Change:** У `scripts/deploy-orchestrator-swarm.sh` додано post-deploy перевірку `verify_swarm_service()`, яка після `docker stack deploy` очікує desired replicas для `${STACK_NAME}_kdv-api`, а при таймауті друкує `docker service ls` і `docker service ps --no-trunc` та завершує CI з помилкою.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; поточний Swarm стан підтвердив першопричину: `kdv_integrator_event_kdv-api 0/1`, task `Rejected`, `No such image`.
+- **Risks:** Якщо pull образу або старт контейнера займає довше за дефолтні `180s`, потрібно підняти `SWARM_VERIFY_TIMEOUT`; тепер CI коректно падатиме при runtime-проблемах Swarm service.
+- **Rollback:** Відкотити правки `scripts/deploy-orchestrator-swarm.sh`, `.github/workflows/main.yml` і цей запис changelog через `git revert <commit_sha>` або вручну прибрати post-deploy verification.
+
+## 2026-05-05 — Локальний Docker build для Swarm deploy без GHCR pull
+
+- **Context:** Повторний ручний redeploy підтвердив, що приватний `ghcr.io/mzhk-repo/kdv-integrator-event:latest` існує, але Docker host/Swarm не має registry-доступу для digest/pull. Для цього інтегратора сервіс прив'язаний до конкретної ноди поруч із Koha/DSpace, тому push/pull через registry перед кожним deploy є зайвим операційним ризиком.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` переведено на дефолтний `ORCHESTRATOR_IMAGE_MODE=local`: перед render manifest виконується `docker build -t kdv-integrator-event:local`, далі експортується `KDV_IMAGE=kdv-integrator-event:local`, а `docker stack deploy` запускається з `--resolve-image never`. Registry path залишено доступним через `ORCHESTRATOR_IMAGE_MODE=registry`. У `.github/workflows/main.yml` повернуто `build_and_push_docker: false`, бо образ тепер збирається на deploy-host.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Локальний образ має існувати саме на ноді, де Swarm запускає task; placement constraint `node.labels.app_zone == manager` лишається критичним. Для multi-node/replicated deploy потрібно повернутися до registry mode або забезпечити image на кожній ноді.
+- **Rollback:** Встановити `ORCHESTRATOR_IMAGE_MODE=registry`, прибрати local build/export/`--resolve-image never` із orchestrator і знову ввімкнути registry build/push у workflow.
+
+## 2026-05-05 — Cleanup тимчасових Swarm manifest-файлів
+
+- **Context:** Після перерваного `deploy-orchestrator-swarm.sh` у корені репозиторію могли лишатися `.kdv_integrator_event.stack.raw.*.yml` і `.kdv_integrator_event.stack.deploy.*.yml`.
+- **Change:** У `scripts/deploy-orchestrator-swarm.sh` додано глобальний `cleanup()` з `trap cleanup EXIT`, який прибирає поточні temp-файли `RAW_MANIFEST`/`DEPLOY_MANIFEST`/`RUNTIME_ENV_FILE` і stale manifest-файли для поточного `STACK_NAME` незалежно від exit code.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Cleanup видаляє лише файли з pattern `.${STACK_NAME}.stack.raw.*.yml` і `.${STACK_NAME}.stack.deploy.*.yml` у `PROJECT_ROOT`; не зберігати вручну важливі файли з такими іменами.
+- **Rollback:** Прибрати `cleanup()`, `trap cleanup EXIT` і повернути локальні `mktemp`/`trap RETURN` для manifest-файлів.
+
+## 2026-05-05 — Env contract для local image mode
+
+- **Context:** Після переходу Swarm deploy на локальний образ `pull_policy: always` у базовому compose став суперечити local-image контракту, а `.env.example` не містив нових orchestrator-змінних.
+- **Change:** З `docker-compose.yml` прибрано `pull_policy: always`. У `.env.example` додано `ORCHESTRATOR_IMAGE_MODE` (`local|registry`), `LOCAL_IMAGE`, `SWARM_VERIFY_TIMEOUT` і `SWARM_VERIFY_INTERVAL` з приміткою щодо допустимих режимів.
+- **Verification:** `docker compose --env-file .env.example -f docker-compose.yml config`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`; `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Для registry-mode pull тепер не форсується через compose `pull_policy`; якщо потрібен примусовий pull у non-Swarm локальному запуску, його треба виконувати явно через `docker compose pull`.
+- **Rollback:** Повернути `pull_policy: always` і прибрати нові orchestrator-змінні з `.env.example`.

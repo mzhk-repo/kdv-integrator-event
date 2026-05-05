@@ -7,10 +7,36 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MODE="${ORCHESTRATOR_MODE:-noop}"
 STACK_NAME="${STACK_NAME:-kdv_integrator_event}"
 ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}"
+SWARM_SERVICE_NAME="${SWARM_SERVICE_NAME:-${STACK_NAME}_kdv-api}"
+SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-180}"
+SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-5}"
+ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-local}"
+LOCAL_IMAGE="${LOCAL_IMAGE:-kdv-integrator-event:local}"
+RAW_MANIFEST=""
+DEPLOY_MANIFEST=""
+RUNTIME_ENV_FILE=""
 
 log() {
   printf '[deploy-orchestrator] %s\n' "$*"
 }
+
+cleanup() {
+  local manifest
+
+  rm -f \
+    "${RAW_MANIFEST:-}" \
+    "${DEPLOY_MANIFEST:-}" \
+    "${RUNTIME_ENV_FILE:-}"
+
+  for manifest in \
+    "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw."*.yml \
+    "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy."*.yml; do
+    [[ -e "${manifest}" ]] || continue
+    rm -f "${manifest}"
+  done
+}
+
+trap cleanup EXIT
 
 detect_compose_file() {
   if [[ -f "docker-compose.yaml" ]]; then
@@ -119,14 +145,63 @@ run_ansible_secrets_if_configured() {
     --tags secrets
 }
 
+prepare_deploy_image() {
+  case "${ORCHESTRATOR_IMAGE_MODE}" in
+    local)
+      log "Building local Docker image: ${LOCAL_IMAGE}"
+      docker build -t "${LOCAL_IMAGE}" "${PROJECT_ROOT}"
+      export KDV_IMAGE="${LOCAL_IMAGE}"
+      log "Using local Docker image for Swarm deploy: ${KDV_IMAGE}"
+      ;;
+    registry)
+      log "Using registry image from env/compose configuration"
+      ;;
+    *)
+      log "ERROR: unsupported ORCHESTRATOR_IMAGE_MODE=${ORCHESTRATOR_IMAGE_MODE} (expected: local|registry)"
+      exit 1
+      ;;
+  esac
+}
+
+verify_swarm_service() {
+  local elapsed replicas running desired
+
+  log "Verifying Swarm service ${SWARM_SERVICE_NAME} (timeout=${SWARM_VERIFY_TIMEOUT}s)"
+
+  elapsed=0
+  while (( elapsed <= SWARM_VERIFY_TIMEOUT )); do
+    if ! docker service inspect "${SWARM_SERVICE_NAME}" >/dev/null 2>&1; then
+      log "Waiting for service to appear: ${SWARM_SERVICE_NAME}"
+    else
+      replicas="$(docker service ls --filter "name=${SWARM_SERVICE_NAME}" --format '{{.Replicas}}' | head -n 1)"
+      running="${replicas%%/*}"
+      desired="${replicas##*/}"
+
+      if [[ -n "${replicas}" && "${running}" == "${desired}" && "${desired}" != "0" ]]; then
+        log "Swarm service is healthy: ${SWARM_SERVICE_NAME} ${replicas}"
+        return 0
+      fi
+
+      log "Waiting for service replicas: ${SWARM_SERVICE_NAME} ${replicas:-unknown}"
+    fi
+
+    sleep "${SWARM_VERIFY_INTERVAL}"
+    elapsed=$((elapsed + SWARM_VERIFY_INTERVAL))
+  done
+
+  log "ERROR: Swarm service did not reach desired replicas: ${SWARM_SERVICE_NAME}"
+  docker service ls --filter "name=${SWARM_SERVICE_NAME}"
+  docker service ps "${SWARM_SERVICE_NAME}" --no-trunc || true
+  exit 1
+}
+
 deploy_swarm() {
-  local compose_file swarm_file raw_manifest deploy_manifest
+  local compose_file swarm_file deploy_args
 
   compose_file="$(detect_compose_file)"
   swarm_file="docker-compose.swarm.yml"
-  raw_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
-  deploy_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
-  trap 'rm -f "${raw_manifest:-}" "${deploy_manifest:-}"' RETURN
+  RAW_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
+  DEPLOY_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
 
   if [[ -z "${compose_file}" ]]; then
     log "ERROR: compose file not found (expected docker-compose.yaml|yml)"
@@ -150,19 +225,27 @@ deploy_swarm() {
   run_ansible_secrets_if_configured
   run_validation_scripts
   run_deploy_adjacent_scripts
+  prepare_deploy_image
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
   docker compose --env-file "${ENV_FILE}" \
     -f "${compose_file}" \
     -f "${swarm_file}" \
-    config > "${raw_manifest}"
+    config > "${RAW_MANIFEST}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${raw_manifest}" \
+  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
     | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
-    > "${deploy_manifest}"
+    > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
-  docker stack deploy -c "${deploy_manifest}" "${STACK_NAME}"
+  deploy_args=(docker stack deploy -c "${DEPLOY_MANIFEST}")
+  if [[ "${ORCHESTRATOR_IMAGE_MODE}" == "local" ]]; then
+    deploy_args+=(--resolve-image never)
+  fi
+  deploy_args+=("${STACK_NAME}")
+  "${deploy_args[@]}"
+
+  verify_swarm_service
 
   log "Swarm deploy completed"
 }
