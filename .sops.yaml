@@ -1,4 +1,3 @@
 creation_rules:
-  - path_regex: '.*\.enc$'
-    age:
-      - age12zqyhd05wj02488j5yel5tlz72zwujzpju26jzqsnj097vpfzgvsurvx8v
+  - path_regex: ^env\.(dev|prod)\.enc$
+    age: age12zqyhd05wj02488j5yel5tlz72zwujzpju26jzqsnj097vpfzgvsurvx8v

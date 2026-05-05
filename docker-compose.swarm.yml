@@ -44,4 +44,4 @@ services:
 secrets:
   app_env_payload:
     external: true
-    name: ${KDV_APP_ENV_PAYLOAD_SECRET_NAME:-kdv_app_env_payload_dev_v1}
+    name: ${KDV_APP_ENV_PAYLOAD_SECRET_NAME}
