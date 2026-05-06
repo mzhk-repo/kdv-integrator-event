@@ -158,3 +158,11 @@
 - **Verification:** `python3 -m py_compile src/koha.py src/core.py`; `docker run --rm --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work ... kdv-integrator-event:4cbbab5be27f -m pytest tests/test_core.py -q` -> `4 passed`.
 - **Risks:** Runtime тепер одразу показуватиме Koha REST auth/server failure як task error; це змінює текст помилки, але не успішний path.
 - **Rollback:** Прибрати `KohaRestError`/`_handle_rest_error()` і повернути попереднє `return None` для non-200 REST-відповідей.
+
+## 2026-05-06 — DSpace REST errors стали явними в логах інтегратора
+
+- **Context:** Під час створення item інтегратор логував лише `Failed to create item in DSpace`, хоча фактична відповідь DSpace була `HTTP 500` через відсутнє metadata registry field `koha.biblionumber` (`bad_dublin_core schema=koha.biblionumber.null`). Через повернення `None` з `create_item_direct()` причина маскувалася.
+- **Change:** У `src/dspace.py` додано `DSpaceRestError` і helper для sanitized причини відповіді DSpace. Non-2xx відповіді для створення item, оновлення metadata, створення bundle і upload bitstream тепер логуються зі status code, короткою причиною та endpoint-ом і пробрасываются як виняток. Додано contract test на `HTTP 500 bad_dublin_core`.
+- **Verification:** `python3 -m py_compile src/dspace.py src/core.py tests/test_contracts.py`; `docker run --rm --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5624f13df5c5 -m pytest tests/test_contracts.py tests/test_core.py -q` -> `10 passed`.
+- **Risks:** Текст помилок у task logs зміниться з generic `Failed to create item in DSpace` на конкретний DSpace REST failure; успішний path не змінено.
+- **Rollback:** Прибрати `DSpaceRestError`/`_raise_rest_error()` і повернути попередні `return None`/`False` для non-2xx DSpace-відповідей.
