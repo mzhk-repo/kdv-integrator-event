@@ -15,6 +15,10 @@ from .config import KOHA_API_URL, KOHA_OPAC_URL, KOHA_USER, KOHA_PASS, TIMEOUT
 logger = logging.getLogger("KohaClient")
 
 
+class KohaRestError(RuntimeError):
+    """Raised when Koha REST API returns an operational/auth error."""
+
+
 class KohaClient:
     def __init__(self):
         self.base_url = KOHA_API_URL
@@ -38,6 +42,36 @@ class KohaClient:
 
     # --- STANDARD MARC API METHODS ---
 
+    def _sanitize_error_body(self, response):
+        content_type = response.headers.get("content-type", "")
+        text = (response.text or "").strip().replace("\n", " ")
+
+        if "application/json" in content_type:
+            try:
+                data = response.json()
+                if isinstance(data, dict):
+                    text = str(
+                        data.get("error")
+                        or data.get("message")
+                        or data.get("errors")
+                        or "JSON error response"
+                    )
+            except Exception:
+                pass
+
+        return text[:200] if text else "empty response"
+
+    def _handle_rest_error(self, response, context):
+        status_code = response.status_code
+        reason = self._sanitize_error_body(response)
+
+        if status_code in {401, 403} or status_code >= 500:
+            message = f"Koha REST {context} failed: HTTP {status_code} ({reason})"
+            logger.error(message)
+            raise KohaRestError(message)
+
+        logger.warning(f"Koha REST {context} returned HTTP {status_code} ({reason})")
+
     def _get_biblio_xml(self, biblio_id):
         url = f"{self.base_url}/api/v1/biblios/{biblio_id}"
         headers = {"Accept": "application/marcxml+xml"}
@@ -45,8 +79,11 @@ class KohaClient:
             resp = self.session.get(url, headers=headers, timeout=TIMEOUT)
             if resp.status_code == 200:
                 return resp.text
+            self._handle_rest_error(resp, f"fetch biblio #{biblio_id} MARCXML")
             return None
         except Exception as e:
+            if isinstance(e, KohaRestError):
+                raise
             logger.error(f"❌ Network error fetching #{biblio_id}: {e}")
             return None
 
@@ -78,8 +115,12 @@ class KohaClient:
             resp = self.session.get(url, headers=headers, timeout=TIMEOUT)
             if resp.status_code == 200:
                 return resp.json().get("dateupdated")
+            self._handle_rest_error(resp, f"fetch biblio #{biblio_id} timestamp")
             return None
-        except Exception:
+        except Exception as e:
+            if isinstance(e, KohaRestError):
+                raise
+            logger.error(f"❌ Network error fetching timestamp #{biblio_id}: {e}")
             return None
 
     # --- 🟢 ROBUST COVER UPLOAD & SCRAPING ---

@@ -218,26 +218,23 @@ prepare_deploy_image() {
   esac
 }
 
-prepare_runtime_env_secret() {
-  local secret_hash secret_name
+run_versioned_env_secret_script() {
+  local script_path export_env
 
-  if ! command -v sha256sum >/dev/null 2>&1; then
-    log "ERROR: sha256sum not found; cannot create versioned runtime env secret"
+  script_path="${SCRIPT_DIR}/render-versioned-env-secret.sh"
+  if [[ ! -f "${script_path}" ]]; then
+    log "ERROR: versioned env secret script not found: ${script_path}"
     exit 1
   fi
 
-  secret_hash="$(sha256sum "${ENV_FILE}" | awk '{print substr($1, 1, 12)}')"
-  secret_name="${RUNTIME_ENV_SECRET_BASE}_${secret_hash}"
-
-  if docker secret inspect "${secret_name}" >/dev/null 2>&1; then
-    log "Runtime env secret already exists: ${secret_name}"
-  else
-    log "Creating runtime env secret: ${secret_name}"
-    docker secret create "${secret_name}" "${ENV_FILE}" >/dev/null
-  fi
-
-  export KDV_APP_ENV_PAYLOAD_SECRET_NAME="${secret_name}"
-  log "Using runtime env secret: ${KDV_APP_ENV_PAYLOAD_SECRET_NAME}"
+  log "Rendering versioned runtime env secret: ${script_path}"
+  export_env="$(
+    ORCHESTRATOR_ENV_FILE="${ENV_FILE}" \
+    RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE}" \
+    "${script_path}"
+  )"
+  eval "${export_env}"
+  log "Runtime env secret export applied: KDV_APP_ENV_PAYLOAD_SECRET_NAME=${KDV_APP_ENV_PAYLOAD_SECRET_NAME}"
 }
 
 verify_swarm_service() {
@@ -303,7 +300,7 @@ deploy_swarm() {
   run_ansible_secrets_if_configured
   run_validation_scripts
   run_deploy_adjacent_scripts
-  prepare_runtime_env_secret
+  run_versioned_env_secret_script
   prepare_deploy_image
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"

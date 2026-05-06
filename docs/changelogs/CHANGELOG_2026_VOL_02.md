@@ -142,3 +142,19 @@
 - **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`.
 - **Risks:** Versioned secrets накопичуються в Docker; старі secret-и, які вже не використовуються services, потрібно періодично прибирати окремим maintenance-кроком. Якщо явно задати статичний `LOCAL_IMAGE`, code-only redeploy може потребувати ручного `docker service update --force`.
 - **Rollback:** Повернути статичний `LOCAL_IMAGE`, прибрати `prepare_runtime_env_secret()` і знову використовувати стабільний `KDV_APP_ENV_PAYLOAD_SECRET_NAME`.
+
+## 2026-05-06 — Reusable script для versioned Swarm env secret
+
+- **Context:** Логіку створення versioned `app_env_payload` потрібно уніфікувати для повторного використання в інших репозиторіях, а не тримати inline у `deploy-orchestrator-swarm.sh`.
+- **Change:** Додано `scripts/render-versioned-env-secret.sh`: скрипт читає `ORCHESTRATOR_ENV_FILE`, визначає `RUNTIME_ENV_SECRET_BASE`, створює Docker secret `${base}_<sha256(env_file)[0:12]>` і друкує shell export `KDV_APP_ENV_PAYLOAD_SECRET_NAME` у `stdout`. `scripts/deploy-orchestrator-swarm.sh` тепер викликає цей скрипт перед render manifest і застосовує export через `eval`. Оновлено `docs/scripts_runbook.md`.
+- **Verification:** `bash -n scripts/render-versioned-env-secret.sh`; `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Скрипт створює Docker secrets на поточному Swarm manager; для dry-run потрібен окремий режим або запуск у тестовому Swarm. `stdout` зарезервований під export-рядки, тому додаткові логи в цьому скрипті мають писатися тільки в `stderr`.
+- **Rollback:** Повернути inline-функцію створення secret в orchestrator і видалити `scripts/render-versioned-env-secret.sh` та runbook-запис.
+
+## 2026-05-06 — Koha REST auth/server errors стали діагностичними
+
+- **Context:** Під час інтеграції запису `biblionumber=1` лог показував `No 956 field found`, хоча фактична причина була `HTTP 401 {"error":"Basic authentication disabled"}` від Koha REST API. Через повернення `None` з `_get_biblio_xml()` auth failure маскувався під відсутність MARC-поля.
+- **Change:** У `src/koha.py` додано `KohaRestError` і sanitized обробку REST-відповідей: `401`, `403` і `5xx` тепер логуються зі status code та короткою причиною без секретів і пробрасываются як виняток. `No 956 field found` лишається для випадку, коли MARCXML отримано, але поле `956` справді відсутнє. Додано unit test на `HTTP 401 Basic authentication disabled`.
+- **Verification:** `python3 -m py_compile src/koha.py src/core.py`; `docker run --rm --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work ... kdv-integrator-event:4cbbab5be27f -m pytest tests/test_core.py -q` -> `4 passed`.
+- **Risks:** Runtime тепер одразу показуватиме Koha REST auth/server failure як task error; це змінює текст помилки, але не успішний path.
+- **Rollback:** Прибрати `KohaRestError`/`_handle_rest_error()` і повернути попереднє `return None` для non-200 REST-відповідей.
