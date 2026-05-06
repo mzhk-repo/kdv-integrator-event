@@ -134,3 +134,11 @@
 - **Verification:** `docker compose --env-file .env.example -f docker-compose.yml config`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`; `bash -n scripts/deploy-orchestrator-swarm.sh`.
 - **Risks:** Для registry-mode pull тепер не форсується через compose `pull_policy`; якщо потрібен примусовий pull у non-Swarm локальному запуску, його треба виконувати явно через `docker compose pull`.
 - **Rollback:** Повернути `pull_policy: always` і прибрати нові orchestrator-змінні з `.env.example`.
+
+## 2026-05-06 — Versioned runtime env secret і git-SHA local image
+
+- **Context:** Після зміни `CF_ACCESS_TEAM_DOMAIN` у `env.prod.enc` CI зібрав локальний образ і `docker stack deploy` завершився успішно, але контейнер не перечитав нові секрети. Причина: Docker Swarm secrets immutable, а service spec посилався на те саме external secret name; також статичний local tag `kdv-integrator-event:local` не гарантував rolling update при code-only deploy.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` тепер читає orchestrator-змінні з `ORCHESTRATOR_ENV_FILE`, якщо вони не задані як shell ENV; для local image mode `LOCAL_IMAGE=auto` будує `kdv-integrator-event:<git-sha>`. Перед render manifest створюється versioned Docker secret `${RUNTIME_ENV_SECRET_BASE}_<sha256(env_file)[0:12]>`, експортується `KDV_APP_ENV_PAYLOAD_SECRET_NAME` з новим іменем, і Swarm отримує зміну service spec для rolling update. У `.env.example` додано `RUNTIME_ENV_SECRET_BASE` і змінено `LOCAL_IMAGE=auto`.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Versioned secrets накопичуються в Docker; старі secret-и, які вже не використовуються services, потрібно періодично прибирати окремим maintenance-кроком. Якщо явно задати статичний `LOCAL_IMAGE`, code-only redeploy може потребувати ручного `docker service update --force`.
+- **Rollback:** Повернути статичний `LOCAL_IMAGE`, прибрати `prepare_runtime_env_secret()` і знову використовувати стабільний `KDV_APP_ENV_PAYLOAD_SECRET_NAME`.

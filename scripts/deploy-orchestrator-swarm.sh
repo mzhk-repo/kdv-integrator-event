@@ -8,10 +8,11 @@ MODE="${ORCHESTRATOR_MODE:-noop}"
 STACK_NAME="${STACK_NAME:-kdv_integrator_event}"
 ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}"
 SWARM_SERVICE_NAME="${SWARM_SERVICE_NAME:-${STACK_NAME}_kdv-api}"
-SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-180}"
-SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-5}"
-ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-local}"
-LOCAL_IMAGE="${LOCAL_IMAGE:-kdv-integrator-event:local}"
+SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-}"
+SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-}"
+ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-}"
+LOCAL_IMAGE="${LOCAL_IMAGE:-}"
+RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-}"
 RAW_MANIFEST=""
 DEPLOY_MANIFEST=""
 RUNTIME_ENV_FILE=""
@@ -46,6 +47,60 @@ detect_compose_file() {
   else
     echo ""
   fi
+}
+
+read_env_value() {
+  local key line value
+  key="$1"
+
+  [[ -f "${ENV_FILE}" ]] || return 0
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -n "${line}" && "${line}" != \#* && "${line}" == *=* ]] || continue
+    [[ "${line%%=*}" == "${key}" ]] || continue
+
+    value="${line#*=}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    printf '%s' "${value}"
+    return 0
+  done < "${ENV_FILE}"
+}
+
+default_local_image() {
+  local git_sha
+
+  git_sha="$(git -C "${PROJECT_ROOT}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+  if [[ -z "${git_sha}" ]]; then
+    git_sha="$(date -u +%Y%m%d%H%M%S)"
+  fi
+
+  printf 'kdv-integrator-event:%s' "${git_sha}"
+}
+
+load_orchestrator_settings() {
+  ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-$(read_env_value ORCHESTRATOR_IMAGE_MODE)}"
+  ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-local}"
+
+  LOCAL_IMAGE="${LOCAL_IMAGE:-$(read_env_value LOCAL_IMAGE)}"
+  if [[ -z "${LOCAL_IMAGE}" || "${LOCAL_IMAGE}" == "auto" ]]; then
+    LOCAL_IMAGE="$(default_local_image)"
+  fi
+
+  SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-$(read_env_value SWARM_VERIFY_TIMEOUT)}"
+  SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-180}"
+
+  SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-$(read_env_value SWARM_VERIFY_INTERVAL)}"
+  SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-5}"
+
+  RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-$(read_env_value RUNTIME_ENV_SECRET_BASE)}"
+  RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-$(read_env_value KDV_APP_ENV_PAYLOAD_SECRET_NAME)}"
+  RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-kdv_app_env_payload}"
 }
 
 run_validation_scripts() {
@@ -163,6 +218,28 @@ prepare_deploy_image() {
   esac
 }
 
+prepare_runtime_env_secret() {
+  local secret_hash secret_name
+
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    log "ERROR: sha256sum not found; cannot create versioned runtime env secret"
+    exit 1
+  fi
+
+  secret_hash="$(sha256sum "${ENV_FILE}" | awk '{print substr($1, 1, 12)}')"
+  secret_name="${RUNTIME_ENV_SECRET_BASE}_${secret_hash}"
+
+  if docker secret inspect "${secret_name}" >/dev/null 2>&1; then
+    log "Runtime env secret already exists: ${secret_name}"
+  else
+    log "Creating runtime env secret: ${secret_name}"
+    docker secret create "${secret_name}" "${ENV_FILE}" >/dev/null
+  fi
+
+  export KDV_APP_ENV_PAYLOAD_SECRET_NAME="${secret_name}"
+  log "Using runtime env secret: ${KDV_APP_ENV_PAYLOAD_SECRET_NAME}"
+}
+
 verify_swarm_service() {
   local elapsed replicas running desired
 
@@ -222,9 +299,11 @@ deploy_swarm() {
     fi
   fi
 
+  load_orchestrator_settings
   run_ansible_secrets_if_configured
   run_validation_scripts
   run_deploy_adjacent_scripts
+  prepare_runtime_env_secret
   prepare_deploy_image
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
