@@ -34,14 +34,6 @@ services:
       
       - "traefik.docker.network=${EXTERNAL_NETWORK}"
       
-      # 🔴 4. StripPrefix ЗАКОМЕНТОВАНО (Видалено)
-      # Чому: Наш Flask app (src/app.py) вже очікує повний шлях '/kdv/api/...'
-      # Якщо Traefik відріже префікс, Flask поверне 404.
-      # - "traefik.http.middlewares.kdv-api-strip.stripprefix.prefixes=/kdv/api"
-      # - "traefik.http.routers.kdv-api.middlewares=kdv-api-strip"
-      
-      # Оскільки мідлвари немає, цей рядок теж коментуємо:
-      # - "traefik.http.routers.kdv-api.middlewares=kdv-api-strip"
 
 networks:
   proxy-net:
