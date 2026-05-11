@@ -22,17 +22,18 @@ services:
     networks:
       - proxy-net
 
-    labels:
-      - "traefik.enable=true"
-      # Хост залишив твій
-      - "traefik.http.routers.kdv-api.rule=Host(`${HOST}`) && PathPrefix(`${PATH_PREFIX}`)"
-      - "traefik.http.routers.kdv-api.priority=100"
-      - "traefik.http.routers.kdv-api.entrypoints=web"
-      
-      # 🟢 3. Порт змінено на 5000 (стандарт Flask/Gunicorn)
-      - "traefik.http.services.kdv-api.loadbalancer.server.port=5000"
-      
-      - "traefik.docker.network=${EXTERNAL_NETWORK}"
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        # Хост залишив твій
+        - "traefik.http.routers.kdv-api.rule=Host(`${HOST}`) && PathPrefix(`${PATH_PREFIX}`)"
+        - "traefik.http.routers.kdv-api.priority=100"
+        - "traefik.http.routers.kdv-api.entrypoints=web"
+
+        # 🟢 3. Порт змінено на 5000 (стандарт Flask/Gunicorn)
+        - "traefik.http.services.kdv-api.loadbalancer.server.port=5000"
+
+        - "traefik.swarm.network=${EXTERNAL_NETWORK}"
       
 
 networks:
