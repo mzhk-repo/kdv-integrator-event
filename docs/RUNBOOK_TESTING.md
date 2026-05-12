@@ -153,7 +153,7 @@ def test_http_flow(monkeypatch):
 **9) Типові помилки та як їх вирішувати**
 - `run_dspace_workflow() got an unexpected keyword argument 'koha_client'` — означає, що контейнер працює зі старою версією image. Рішення: оновити `KDV_IMAGE_VERSION` (або `KDV_IMAGE`) і виконати `docker compose pull && docker compose up -d`.
 - `Invalid Token` від API — перевірити `KDV_API_TOKEN` у `.env` та середовищі контейнера.
-- Проблеми з PDF/Poppler — переконатися, що `poppler-utils` встановлені у образі (включено в Dockerfile) і що файл існує на підмонтованому шляху `INTEGRATOR_MOUNT_PATH`.
+- Проблеми з PDF/Poppler — переконатися, що `poppler-utils` встановлені у образі (включено в Dockerfile), `RCLONE_REMOTE_NAME` вказує на наявний remote з `rclone config`, а файл існує на підмонтованому в контейнері шляху `INTEGRATOR_MOUNT_PATH`.
 - Падає `tests/test_contracts.py::test_koha_cgi_login_contract_payload_field_names` через `login_userid`/`login_password` — тест має порівнюватися з фактичними значеннями `KOHA_USER`/`KOHA_PASS` з runtime env, а не з hardcoded рядками.
 
 **10) Best practices**

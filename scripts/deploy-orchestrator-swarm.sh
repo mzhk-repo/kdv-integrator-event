@@ -7,10 +7,37 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MODE="${ORCHESTRATOR_MODE:-noop}"
 STACK_NAME="${STACK_NAME:-kdv_integrator_event}"
 ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/tmp/env.decrypted}"
+SWARM_SERVICE_NAME="${SWARM_SERVICE_NAME:-${STACK_NAME}_kdv-api}"
+SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-}"
+SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-}"
+ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-}"
+LOCAL_IMAGE="${LOCAL_IMAGE:-}"
+RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-}"
+RAW_MANIFEST=""
+DEPLOY_MANIFEST=""
+RUNTIME_ENV_FILE=""
 
 log() {
   printf '[deploy-orchestrator] %s\n' "$*"
 }
+
+cleanup() {
+  local manifest
+
+  rm -f \
+    "${RAW_MANIFEST:-}" \
+    "${DEPLOY_MANIFEST:-}" \
+    "${RUNTIME_ENV_FILE:-}"
+
+  for manifest in \
+    "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw."*.yml \
+    "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy."*.yml; do
+    [[ -e "${manifest}" ]] || continue
+    rm -f "${manifest}"
+  done
+}
+
+trap cleanup EXIT
 
 detect_compose_file() {
   if [[ -f "docker-compose.yaml" ]]; then
@@ -20,6 +47,60 @@ detect_compose_file() {
   else
     echo ""
   fi
+}
+
+read_env_value() {
+  local key line value
+  key="$1"
+
+  [[ -f "${ENV_FILE}" ]] || return 0
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -n "${line}" && "${line}" != \#* && "${line}" == *=* ]] || continue
+    [[ "${line%%=*}" == "${key}" ]] || continue
+
+    value="${line#*=}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    printf '%s' "${value}"
+    return 0
+  done < "${ENV_FILE}"
+}
+
+default_local_image() {
+  local git_sha
+
+  git_sha="$(git -C "${PROJECT_ROOT}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+  if [[ -z "${git_sha}" ]]; then
+    git_sha="$(date -u +%Y%m%d%H%M%S)"
+  fi
+
+  printf 'kdv-integrator-event:%s' "${git_sha}"
+}
+
+load_orchestrator_settings() {
+  ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-$(read_env_value ORCHESTRATOR_IMAGE_MODE)}"
+  ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-local}"
+
+  LOCAL_IMAGE="${LOCAL_IMAGE:-$(read_env_value LOCAL_IMAGE)}"
+  if [[ -z "${LOCAL_IMAGE}" || "${LOCAL_IMAGE}" == "auto" ]]; then
+    LOCAL_IMAGE="$(default_local_image)"
+  fi
+
+  SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-$(read_env_value SWARM_VERIFY_TIMEOUT)}"
+  SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-180}"
+
+  SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-$(read_env_value SWARM_VERIFY_INTERVAL)}"
+  SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-5}"
+
+  RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-$(read_env_value RUNTIME_ENV_SECRET_BASE)}"
+  RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-$(read_env_value KDV_APP_ENV_PAYLOAD_SECRET_NAME)}"
+  RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-kdv_app_env_payload}"
 }
 
 run_validation_scripts() {
@@ -119,14 +200,82 @@ run_ansible_secrets_if_configured() {
     --tags secrets
 }
 
+prepare_deploy_image() {
+  case "${ORCHESTRATOR_IMAGE_MODE}" in
+    local)
+      log "Building local Docker image: ${LOCAL_IMAGE}"
+      docker build -t "${LOCAL_IMAGE}" "${PROJECT_ROOT}"
+      export KDV_IMAGE="${LOCAL_IMAGE}"
+      log "Using local Docker image for Swarm deploy: ${KDV_IMAGE}"
+      ;;
+    registry)
+      log "Using registry image from env/compose configuration"
+      ;;
+    *)
+      log "ERROR: unsupported ORCHESTRATOR_IMAGE_MODE=${ORCHESTRATOR_IMAGE_MODE} (expected: local|registry)"
+      exit 1
+      ;;
+  esac
+}
+
+run_versioned_env_secret_script() {
+  local script_path export_env
+
+  script_path="${SCRIPT_DIR}/render-versioned-env-secret.sh"
+  if [[ ! -f "${script_path}" ]]; then
+    log "ERROR: versioned env secret script not found: ${script_path}"
+    exit 1
+  fi
+
+  log "Rendering versioned runtime env secret: ${script_path}"
+  export_env="$(
+    ORCHESTRATOR_ENV_FILE="${ENV_FILE}" \
+    RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE}" \
+    "${script_path}"
+  )"
+  eval "${export_env}"
+  log "Runtime env secret export applied: KDV_APP_ENV_PAYLOAD_SECRET_NAME=${KDV_APP_ENV_PAYLOAD_SECRET_NAME}"
+}
+
+verify_swarm_service() {
+  local elapsed replicas running desired
+
+  log "Verifying Swarm service ${SWARM_SERVICE_NAME} (timeout=${SWARM_VERIFY_TIMEOUT}s)"
+
+  elapsed=0
+  while (( elapsed <= SWARM_VERIFY_TIMEOUT )); do
+    if ! docker service inspect "${SWARM_SERVICE_NAME}" >/dev/null 2>&1; then
+      log "Waiting for service to appear: ${SWARM_SERVICE_NAME}"
+    else
+      replicas="$(docker service ls --filter "name=${SWARM_SERVICE_NAME}" --format '{{.Replicas}}' | head -n 1)"
+      running="${replicas%%/*}"
+      desired="${replicas##*/}"
+
+      if [[ -n "${replicas}" && "${running}" == "${desired}" && "${desired}" != "0" ]]; then
+        log "Swarm service is healthy: ${SWARM_SERVICE_NAME} ${replicas}"
+        return 0
+      fi
+
+      log "Waiting for service replicas: ${SWARM_SERVICE_NAME} ${replicas:-unknown}"
+    fi
+
+    sleep "${SWARM_VERIFY_INTERVAL}"
+    elapsed=$((elapsed + SWARM_VERIFY_INTERVAL))
+  done
+
+  log "ERROR: Swarm service did not reach desired replicas: ${SWARM_SERVICE_NAME}"
+  docker service ls --filter "name=${SWARM_SERVICE_NAME}"
+  docker service ps "${SWARM_SERVICE_NAME}" --no-trunc || true
+  exit 1
+}
+
 deploy_swarm() {
-  local compose_file swarm_file raw_manifest deploy_manifest
+  local compose_file swarm_file deploy_args
 
   compose_file="$(detect_compose_file)"
   swarm_file="docker-compose.swarm.yml"
-  raw_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
-  deploy_manifest="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
-  trap 'rm -f "${raw_manifest:-}" "${deploy_manifest:-}"' RETURN
+  RAW_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw.XXXXXX.yml")"
+  DEPLOY_MANIFEST="$(mktemp "${PROJECT_ROOT}/.${STACK_NAME}.stack.deploy.XXXXXX.yml")"
 
   if [[ -z "${compose_file}" ]]; then
     log "ERROR: compose file not found (expected docker-compose.yaml|yml)"
@@ -147,22 +296,32 @@ deploy_swarm() {
     fi
   fi
 
+  load_orchestrator_settings
   run_ansible_secrets_if_configured
   run_validation_scripts
   run_deploy_adjacent_scripts
+  run_versioned_env_secret_script
+  prepare_deploy_image
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"
   docker compose --env-file "${ENV_FILE}" \
     -f "${compose_file}" \
     -f "${swarm_file}" \
-    config > "${raw_manifest}"
+    config > "${RAW_MANIFEST}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${raw_manifest}" \
+  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
     | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
-    > "${deploy_manifest}"
+    > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
-  docker stack deploy -c "${deploy_manifest}" "${STACK_NAME}"
+  deploy_args=(docker stack deploy -c "${DEPLOY_MANIFEST}")
+  if [[ "${ORCHESTRATOR_IMAGE_MODE}" == "local" ]]; then
+    deploy_args+=(--resolve-image never)
+  fi
+  deploy_args+=("${STACK_NAME}")
+  "${deploy_args[@]}"
+
+  verify_swarm_service
 
   log "Swarm deploy completed"
 }

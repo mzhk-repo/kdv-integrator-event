@@ -5,6 +5,7 @@
 ### Бізнес-логіка
 - Головний orchestration-скрипт для `ORCHESTRATOR_MODE=swarm`.
 - Виконує pre-deploy перевірки: `healthcheck.sh` і `import src.config`.
+- Викликає `scripts/render-versioned-env-secret.sh` перед render manifest, щоб Swarm service отримував versioned runtime env secret з актуального `ORCHESTRATOR_ENV_FILE`.
 - Рендерить swarm manifest через `docker compose config` і виконує `docker stack deploy`.
 
 ### Ручний запуск
@@ -14,6 +15,23 @@ chmod 600 "${ENV_TMP}"
 sops --decrypt --input-type dotenv --output-type dotenv env.dev.enc > "${ENV_TMP}"
 ORCHESTRATOR_MODE=swarm ENVIRONMENT_NAME=development ORCHESTRATOR_ENV_FILE="${ENV_TMP}" bash scripts/deploy-orchestrator-swarm.sh
 echo $?
+rm -f "${ENV_TMP}"
+```
+
+## `scripts/render-versioned-env-secret.sh` (deploy-adjacent, reusable)
+
+### Бізнес-логіка
+- Створює immutable Docker Swarm secret із dotenv-файла `ORCHESTRATOR_ENV_FILE`.
+- Ім'я secret формується як `${RUNTIME_ENV_SECRET_BASE}_<sha256(env_file)[0:12]>`.
+- У `stdout` друкує тільки shell export для orchestrator: `export KDV_APP_ENV_PAYLOAD_SECRET_NAME=...`.
+- Логи пише у `stderr`, щоб результат можна було безпечно підхопити через `eval`.
+
+### Ручний запуск
+```bash
+ENV_TMP="$(mktemp /tmp/env.secret.XXXXXX)"
+chmod 600 "${ENV_TMP}"
+sops --decrypt --input-type dotenv --output-type dotenv env.dev.enc > "${ENV_TMP}"
+ORCHESTRATOR_ENV_FILE="${ENV_TMP}" RUNTIME_ENV_SECRET_BASE=kdv_app_env_payload scripts/render-versioned-env-secret.sh
 rm -f "${ENV_TMP}"
 ```
 

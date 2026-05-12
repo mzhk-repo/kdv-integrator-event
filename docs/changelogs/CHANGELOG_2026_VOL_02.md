@@ -6,6 +6,14 @@
 - **Risks:** Якщо `env.*.enc` треба розшифрувати автоматично, на хості має бути доступний `sops` і відповідний ключ. У штатному orchestration flow ризик мінімальний, бо вже передається готовий `ORCHESTRATOR_ENV_FILE`.
 - **Rollback:** Відкотити зміни `scripts/healthcheck.sh`, `docs/scripts_runbook.md` і цей запис через `git revert <commit_sha>` або вручну повернути попередній прямий виклик `docker compose ps`.
 
+## 2026-05-05 — Rclone Docker volume plugin замість host bind mount
+
+- **Context:** Інтегратор більше не має залежати від host-side `rclone mount` і абсолютного host-шляху в `INTEGRATOR_MOUNT_PATH`; потрібно задавати тільки назву remote з `rclone config`, яку обслуговує встановлений на хості rclone Docker volume plugin. Також bind `entrypoint.sh` для Swarm має задаватися відносно репозиторію, а не абсолютним шляхом.
+- **Change:** `docker-compose.yml` переведено з bind mount `${INTEGRATOR_MOUNT_PATH}:/mnt/drive:rslave` на named volume `kdv-drive` з `driver: rclone` і обов'язковим `RCLONE_REMOTE_NAME` у `driver_opts.remote`; `.env` у `env_file` зроблено optional для коректної валідації з `--env-file .env.example`. `docker-compose.swarm.yml` отримав такий самий volume definition і default для `ENTRYPOINT_SCRYPT_PATH` як `./scripts/entrypoint.sh`. `.env.example`, `README.md`, `docs/RUNBOOK_MAYDAY.md` і `docs/RUNBOOK_TESTING.md` оновлено під новий контракт: зовні задається `RCLONE_REMOTE_NAME`, а runtime `INTEGRATOR_MOUNT_PATH` лишається `/mnt/drive` всередині контейнера.
+- **Verification:** `docker compose --env-file .env.example -f docker-compose.yml config`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`.
+- **Risks:** На кожному Docker host/Swarm node, де може стартувати сервіс, має бути встановлений і налаштований rclone Docker volume plugin з доступом до відповідного `rclone.conf`; без цього Docker не створить volume. Якщо remote має іншу назву, потрібно оновити `RCLONE_REMOTE_NAME` в env.
+- **Rollback:** Повернути bind mount `${INTEGRATOR_MOUNT_PATH}:/mnt/drive:rslave`, прибрати top-level `volumes.kdv-drive`, повернути host-path у env і відкотити документацію/changelog через `git revert <commit_sha>`.
+
 ## 2026-04-09 — Docker Secrets migration: Крок 1 (розділення змінних)
 
 - **Context:** Розпочато інкрементальну міграцію на Docker Swarm secrets; потрібно відокремити non-secret конфіг від чутливих даних без змін бізнес-логіки застосунку.
@@ -94,3 +102,67 @@
 - **Verification:** Логи редеплою завершились рядком `Swarm deploy completed`; `docker stack deploy` оновив сервіс `kdv_integrator_event_kdv-api`. Файл `docs/scripts_runbook.md` створено.
 - **Risks:** При спробі деплою з fallback на локальний `.env` можливий провал `docker compose config` через відсутність частини swarm-змінних; для операційного запуску використовувати розшифрований `env.dev.enc`/`env.prod.enc`.
 - **Rollback:** Відкотити запис та runbook через `git revert <commit_sha>` або вручну видалити `docs/scripts_runbook.md`.
+
+## 2026-05-05 — Swarm deploy verification після `docker stack deploy`
+
+- **Context:** GitHub CI показував успішний deploy, хоча `kdv_integrator_event_kdv-api` залишався `0/1`: `docker service ps` показав `Rejected` з помилкою `No such image: ghcr.io/mzhk-repo/kdv-integrator-event:latest`. Причина в тому, що `docker stack deploy` лише створює/оновлює service object і запускає tasks у фоні, а orchestrator не перевіряв фактичний стан replicas.
+- **Change:** У `scripts/deploy-orchestrator-swarm.sh` додано post-deploy перевірку `verify_swarm_service()`, яка після `docker stack deploy` очікує desired replicas для `${STACK_NAME}_kdv-api`, а при таймауті друкує `docker service ls` і `docker service ps --no-trunc` та завершує CI з помилкою.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; поточний Swarm стан підтвердив першопричину: `kdv_integrator_event_kdv-api 0/1`, task `Rejected`, `No such image`.
+- **Risks:** Якщо pull образу або старт контейнера займає довше за дефолтні `180s`, потрібно підняти `SWARM_VERIFY_TIMEOUT`; тепер CI коректно падатиме при runtime-проблемах Swarm service.
+- **Rollback:** Відкотити правки `scripts/deploy-orchestrator-swarm.sh`, `.github/workflows/main.yml` і цей запис changelog через `git revert <commit_sha>` або вручну прибрати post-deploy verification.
+
+## 2026-05-05 — Локальний Docker build для Swarm deploy без GHCR pull
+
+- **Context:** Повторний ручний redeploy підтвердив, що приватний `ghcr.io/mzhk-repo/kdv-integrator-event:latest` існує, але Docker host/Swarm не має registry-доступу для digest/pull. Для цього інтегратора сервіс прив'язаний до конкретної ноди поруч із Koha/DSpace, тому push/pull через registry перед кожним deploy є зайвим операційним ризиком.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` переведено на дефолтний `ORCHESTRATOR_IMAGE_MODE=local`: перед render manifest виконується `docker build -t kdv-integrator-event:local`, далі експортується `KDV_IMAGE=kdv-integrator-event:local`, а `docker stack deploy` запускається з `--resolve-image never`. Registry path залишено доступним через `ORCHESTRATOR_IMAGE_MODE=registry`. У `.github/workflows/main.yml` повернуто `build_and_push_docker: false`, бо образ тепер збирається на deploy-host.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Локальний образ має існувати саме на ноді, де Swarm запускає task; placement constraint `node.labels.app_zone == manager` лишається критичним. Для multi-node/replicated deploy потрібно повернутися до registry mode або забезпечити image на кожній ноді.
+- **Rollback:** Встановити `ORCHESTRATOR_IMAGE_MODE=registry`, прибрати local build/export/`--resolve-image never` із orchestrator і знову ввімкнути registry build/push у workflow.
+
+## 2026-05-05 — Cleanup тимчасових Swarm manifest-файлів
+
+- **Context:** Після перерваного `deploy-orchestrator-swarm.sh` у корені репозиторію могли лишатися `.kdv_integrator_event.stack.raw.*.yml` і `.kdv_integrator_event.stack.deploy.*.yml`.
+- **Change:** У `scripts/deploy-orchestrator-swarm.sh` додано глобальний `cleanup()` з `trap cleanup EXIT`, який прибирає поточні temp-файли `RAW_MANIFEST`/`DEPLOY_MANIFEST`/`RUNTIME_ENV_FILE` і stale manifest-файли для поточного `STACK_NAME` незалежно від exit code.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Cleanup видаляє лише файли з pattern `.${STACK_NAME}.stack.raw.*.yml` і `.${STACK_NAME}.stack.deploy.*.yml` у `PROJECT_ROOT`; не зберігати вручну важливі файли з такими іменами.
+- **Rollback:** Прибрати `cleanup()`, `trap cleanup EXIT` і повернути локальні `mktemp`/`trap RETURN` для manifest-файлів.
+
+## 2026-05-05 — Env contract для local image mode
+
+- **Context:** Після переходу Swarm deploy на локальний образ `pull_policy: always` у базовому compose став суперечити local-image контракту, а `.env.example` не містив нових orchestrator-змінних.
+- **Change:** З `docker-compose.yml` прибрано `pull_policy: always`. У `.env.example` додано `ORCHESTRATOR_IMAGE_MODE` (`local|registry`), `LOCAL_IMAGE`, `SWARM_VERIFY_TIMEOUT` і `SWARM_VERIFY_INTERVAL` з приміткою щодо допустимих режимів.
+- **Verification:** `docker compose --env-file .env.example -f docker-compose.yml config`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`; `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Для registry-mode pull тепер не форсується через compose `pull_policy`; якщо потрібен примусовий pull у non-Swarm локальному запуску, його треба виконувати явно через `docker compose pull`.
+- **Rollback:** Повернути `pull_policy: always` і прибрати нові orchestrator-змінні з `.env.example`.
+
+## 2026-05-06 — Versioned runtime env secret і git-SHA local image
+
+- **Context:** Після зміни `CF_ACCESS_TEAM_DOMAIN` у `env.prod.enc` CI зібрав локальний образ і `docker stack deploy` завершився успішно, але контейнер не перечитав нові секрети. Причина: Docker Swarm secrets immutable, а service spec посилався на те саме external secret name; також статичний local tag `kdv-integrator-event:local` не гарантував rolling update при code-only deploy.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` тепер читає orchestrator-змінні з `ORCHESTRATOR_ENV_FILE`, якщо вони не задані як shell ENV; для local image mode `LOCAL_IMAGE=auto` будує `kdv-integrator-event:<git-sha>`. Перед render manifest створюється versioned Docker secret `${RUNTIME_ENV_SECRET_BASE}_<sha256(env_file)[0:12]>`, експортується `KDV_APP_ENV_PAYLOAD_SECRET_NAME` з новим іменем, і Swarm отримує зміну service spec для rolling update. У `.env.example` додано `RUNTIME_ENV_SECRET_BASE` і змінено `LOCAL_IMAGE=auto`.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Versioned secrets накопичуються в Docker; старі secret-и, які вже не використовуються services, потрібно періодично прибирати окремим maintenance-кроком. Якщо явно задати статичний `LOCAL_IMAGE`, code-only redeploy може потребувати ручного `docker service update --force`.
+- **Rollback:** Повернути статичний `LOCAL_IMAGE`, прибрати `prepare_runtime_env_secret()` і знову використовувати стабільний `KDV_APP_ENV_PAYLOAD_SECRET_NAME`.
+
+## 2026-05-06 — Reusable script для versioned Swarm env secret
+
+- **Context:** Логіку створення versioned `app_env_payload` потрібно уніфікувати для повторного використання в інших репозиторіях, а не тримати inline у `deploy-orchestrator-swarm.sh`.
+- **Change:** Додано `scripts/render-versioned-env-secret.sh`: скрипт читає `ORCHESTRATOR_ENV_FILE`, визначає `RUNTIME_ENV_SECRET_BASE`, створює Docker secret `${base}_<sha256(env_file)[0:12]>` і друкує shell export `KDV_APP_ENV_PAYLOAD_SECRET_NAME` у `stdout`. `scripts/deploy-orchestrator-swarm.sh` тепер викликає цей скрипт перед render manifest і застосовує export через `eval`. Оновлено `docs/scripts_runbook.md`.
+- **Verification:** `bash -n scripts/render-versioned-env-secret.sh`; `bash -n scripts/deploy-orchestrator-swarm.sh`.
+- **Risks:** Скрипт створює Docker secrets на поточному Swarm manager; для dry-run потрібен окремий режим або запуск у тестовому Swarm. `stdout` зарезервований під export-рядки, тому додаткові логи в цьому скрипті мають писатися тільки в `stderr`.
+- **Rollback:** Повернути inline-функцію створення secret в orchestrator і видалити `scripts/render-versioned-env-secret.sh` та runbook-запис.
+
+## 2026-05-06 — Koha REST auth/server errors стали діагностичними
+
+- **Context:** Під час інтеграції запису `biblionumber=1` лог показував `No 956 field found`, хоча фактична причина була `HTTP 401 {"error":"Basic authentication disabled"}` від Koha REST API. Через повернення `None` з `_get_biblio_xml()` auth failure маскувався під відсутність MARC-поля.
+- **Change:** У `src/koha.py` додано `KohaRestError` і sanitized обробку REST-відповідей: `401`, `403` і `5xx` тепер логуються зі status code та короткою причиною без секретів і пробрасываются як виняток. `No 956 field found` лишається для випадку, коли MARCXML отримано, але поле `956` справді відсутнє. Додано unit test на `HTTP 401 Basic authentication disabled`.
+- **Verification:** `python3 -m py_compile src/koha.py src/core.py`; `docker run --rm --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work ... kdv-integrator-event:4cbbab5be27f -m pytest tests/test_core.py -q` -> `4 passed`.
+- **Risks:** Runtime тепер одразу показуватиме Koha REST auth/server failure як task error; це змінює текст помилки, але не успішний path.
+- **Rollback:** Прибрати `KohaRestError`/`_handle_rest_error()` і повернути попереднє `return None` для non-200 REST-відповідей.
+
+## 2026-05-06 — DSpace REST errors стали явними в логах інтегратора
+
+- **Context:** Під час створення item інтегратор логував лише `Failed to create item in DSpace`, хоча фактична відповідь DSpace була `HTTP 500` через відсутнє metadata registry field `koha.biblionumber` (`bad_dublin_core schema=koha.biblionumber.null`). Через повернення `None` з `create_item_direct()` причина маскувалася.
+- **Change:** У `src/dspace.py` додано `DSpaceRestError` і helper для sanitized причини відповіді DSpace. Non-2xx відповіді для створення item, оновлення metadata, створення bundle і upload bitstream тепер логуються зі status code, короткою причиною та endpoint-ом і пробрасываются як виняток. Додано contract test на `HTTP 500 bad_dublin_core`.
+- **Verification:** `python3 -m py_compile src/dspace.py src/core.py tests/test_contracts.py`; `docker run --rm --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5624f13df5c5 -m pytest tests/test_contracts.py tests/test_core.py -q` -> `10 passed`.
+- **Risks:** Текст помилок у task logs зміниться з generic `Failed to create item in DSpace` на конкретний DSpace REST failure; успішний path не змінено.
+- **Rollback:** Прибрати `DSpaceRestError`/`_raise_rest_error()` і повернути попередні `return None`/`False` для non-2xx DSpace-відповідей.

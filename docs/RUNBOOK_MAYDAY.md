@@ -53,7 +53,7 @@ docker compose up -d
 3. Повторити healthcheck.
 
 Якщо не допомогло:
-1. Перевірити `.env` (обов'язкові змінні, особливо `KDV_API_TOKEN`, `INTEGRATOR_MOUNT_PATH`, `KOHA_*`, `DSPACE_*`).
+1. Перевірити `.env` (обов'язкові змінні, особливо `KDV_API_TOKEN`, `RCLONE_REMOTE_NAME`, `KOHA_*`, `DSPACE_*`).
 2. Відкотитись на попередній стабільний тег (див. секцію rollback).
 
 ### 3.2 Readiness = not_ready (drive/mount недоступний)
@@ -63,10 +63,11 @@ docker compose up -d
 - В payload видно, що mount path не існує або нема прав `read/write`.
 
 Дії:
-1. Перевірити, що диск/шлях дійсно змонтований на хості.
-2. Перевірити значення `INTEGRATOR_MOUNT_PATH` у runtime env.
-3. Перевірити права доступу для користувача контейнера.
-4. Після виправлення перезапустити `docker compose pull && docker compose up -d`.
+1. Перевірити, що rclone Docker volume plugin встановлений на Docker host.
+2. Перевірити, що `RCLONE_REMOTE_NAME` збігається з remote у `rclone config`.
+3. Перевірити значення `INTEGRATOR_MOUNT_PATH` у runtime env: для контейнера має бути `/mnt/drive`.
+4. Перевірити права доступу для користувача контейнера.
+5. Після виправлення перезапустити `docker compose pull && docker compose up -d`.
 
 ### 3.3 Cloudflare 524 / великі таймаути з браузера
 

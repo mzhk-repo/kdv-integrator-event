@@ -304,7 +304,7 @@ Internet → Cloudflare Access (JWT) → Tailscale VPN → KDV Integrator → Ko
 ```bash
 # 1. Налаштування змінних середовища
 cp .env.example .env
-# Заповніть: KOHA_*, DSPACE_*, KDV_API_TOKEN, INTEGRATOR_MOUNT_PATH
+# Заповніть: KOHA_*, DSPACE_*, KDV_API_TOKEN, RCLONE_REMOTE_NAME
 
 # 2. Завантаження потрібного образу з GHCR і запуск сервісу
 docker compose pull
@@ -337,9 +337,9 @@ PYTHONPATH=$(pwd) pytest -q
 <summary>Readiness endpoint повертає 503</summary>
 
 ```bash
-# Перевірте, що INTEGRATOR_MOUNT_PATH існує і доступний
-ls -la $INTEGRATOR_MOUNT_PATH
-# Або вкажіть шлях, що існує на вашій машині в .env
+# Перевірте, що rclone Docker volume plugin встановлений і remote існує
+docker plugin ls
+rclone listremotes | grep "^${RCLONE_REMOTE_NAME}:$"
 ```
 </details>
 

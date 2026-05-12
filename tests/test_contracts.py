@@ -12,7 +12,7 @@ os.environ.setdefault("DSPACE_API_USER", "user")
 os.environ.setdefault("DSPACE_API_PASS", "pass")
 os.environ.setdefault("INTEGRATOR_MOUNT_PATH", "/tmp")
 
-from src.dspace import DSpaceClient
+from src.dspace import DSpaceClient, DSpaceRestError
 from src.koha import KohaClient
 import src.koha as koha_module
 
@@ -86,6 +86,35 @@ def test_dspace_update_metadata_contract_builds_json_patch(monkeypatch):
         {"value": "Author A", "language": None},
         {"value": "Author B", "language": None},
     ]
+
+
+def test_dspace_create_item_error_is_diagnostic(monkeypatch):
+    client = DSpaceClient()
+
+    def fake_request(method, endpoint, **kwargs):
+        return _Resp(
+            status_code=500,
+            payload={
+                "message": (
+                    "bad_dublin_core schema=koha.biblionumber.null. "
+                    "Metadata field does not exist!"
+                )
+            },
+        )
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    try:
+        client.create_item_direct("collection-uuid", {"dc.title": "Test"})
+    except DSpaceRestError as exc:
+        msg = str(exc)
+    else:
+        raise AssertionError("DSpaceRestError was not raised")
+
+    assert "DSpace create item failed" in msg
+    assert "HTTP 500" in msg
+    assert "bad_dublin_core schema=koha.biblionumber.null" in msg
+    assert "/core/items" in msg
 
 
 def test_koha_step1_temp_upload_contract_headers_and_file_field(monkeypatch, tmp_path):

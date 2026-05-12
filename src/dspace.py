@@ -7,6 +7,10 @@ from .config import DSPACE_API_URL, DSPACE_USER, DSPACE_PASS, TIMEOUT, UPLOAD_TI
 logger = logging.getLogger("DSpaceClient")
 
 
+class DSpaceRestError(RuntimeError):
+    pass
+
+
 class DSpaceClient:
     def __init__(self):
         self.base_url = DSPACE_API_URL
@@ -114,6 +118,33 @@ class DSpaceClient:
             return [{"value": str(v), "language": None} for v in value]
         return [{"value": str(value), "language": None}]
 
+    def _response_reason(self, resp):
+        try:
+            data = resp.json()
+            if isinstance(data, dict):
+                for key in ("message", "detail", "error", "title"):
+                    value = data.get(key)
+                    if value:
+                        return str(value)
+        except Exception:
+            pass
+
+        text = (getattr(resp, "text", "") or "").strip()
+        if not text:
+            return "empty response body"
+        return " ".join(text.split())[:500]
+
+    def _raise_rest_error(self, action, endpoint, resp):
+        if resp is None:
+            msg = f"{action} failed: no response from DSpace [{endpoint}]"
+        else:
+            msg = (
+                f"{action} failed: HTTP {resp.status_code} "
+                f"({self._response_reason(resp)}) [{endpoint}]"
+            )
+        logger.error(msg)
+        raise DSpaceRestError(msg)
+
     def update_metadata(self, item_uuid, metadata_dict):
         operations = []
         for key, value in metadata_dict.items():
@@ -131,7 +162,11 @@ class DSpaceClient:
         resp = self._request(
             "PATCH", f"/core/items/{item_uuid}", json=operations, headers=headers
         )
-        return resp is not None and resp.status_code == 200
+        if resp is not None and resp.status_code == 200:
+            return True
+        self._raise_rest_error(
+            "DSpace update item metadata", f"/core/items/{item_uuid}", resp
+        )
 
     def create_item_direct(self, collection_uuid, metadata_dict):
         # ... (код створення без змін, для скорочення місця, він ідентичний v6.5) ...
@@ -165,7 +200,7 @@ class DSpaceClient:
 
         if resp is not None and resp.status_code in [200, 201]:
             return resp.json()
-        return None
+        self._raise_rest_error("DSpace create item", "/core/items", resp)
 
     def upload_to_item(self, item_uuid, file_path):
         if not os.path.exists(file_path):
@@ -185,7 +220,11 @@ class DSpaceClient:
             if resp and resp.status_code in [200, 201]:
                 bundle_uuid = resp.json()["uuid"]
             else:
-                return False
+                self._raise_rest_error(
+                    "DSpace create ORIGINAL bundle",
+                    f"/core/items/{item_uuid}/bundles",
+                    resp,
+                )
 
         old_ct = self.session.headers.pop("Content-Type", None)
         try:
@@ -197,7 +236,15 @@ class DSpaceClient:
                     files=files,
                     timeout=UPLOAD_TIMEOUT,
                 )
-                return resp and resp.status_code in [200, 201]
+                if resp and resp.status_code in [200, 201]:
+                    return True
+                self._raise_rest_error(
+                    "DSpace upload bitstream",
+                    f"/core/bundles/{bundle_uuid}/bitstreams",
+                    resp,
+                )
+        except DSpaceRestError:
+            raise
         except Exception:
             return False
         finally:

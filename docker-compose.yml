@@ -1,7 +1,6 @@
 services:
   kdv-api:
     image: ${KDV_IMAGE:-${KDV_IMAGE_REPOSITORY:-ghcr.io/pinokew/kdv-integrator-event}:${KDV_IMAGE_VERSION:-latest}}
-    pull_policy: always
     container_name: kdv-api
     restart: unless-stopped
     privileged: true
@@ -10,40 +9,43 @@ services:
     command: /bin/sh /app/src/wait_for_drive.sh gunicorn -w 1 --threads 4 -b 0.0.0.0:5000 src.app:app
     
     env_file:
-      - .env
+      - path: .env
+        required: false
       
     environment:
       - TZ=Europe/Kyiv
       - INTEGRATOR_MOUNT_PATH=/mnt/drive
     volumes:
-      # 🟢 2. Обов'язково монтуємо диск (rclone), інакше скрипт не знайде PDF файли
-      - ${INTEGRATOR_MOUNT_PATH}:/mnt/drive:rslave
+      # 🟢 2. Обов'язково монтуємо rclone volume, інакше скрипт не знайде PDF файли
+      - kdv-drive:/mnt/drive
       
     networks:
       - proxy-net
 
-    labels:
-      - "traefik.enable=true"
-      # Хост залишив твій
-      - "traefik.http.routers.kdv-api.rule=Host(`${HOST}`) && PathPrefix(`${PATH_PREFIX}`)"
-      - "traefik.http.routers.kdv-api.priority=100"
-      - "traefik.http.routers.kdv-api.entrypoints=web"
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        # Хост залишив твій
+        - "traefik.http.routers.kdv-api.rule=Host(`${HOST}`) && PathPrefix(`${PATH_PREFIX}`)"
+        - "traefik.http.routers.kdv-api.priority=100"
+        - "traefik.http.routers.kdv-api.entrypoints=web"
+
+        # 🟢 3. Порт змінено на 5000 (стандарт Flask/Gunicorn)
+        - "traefik.http.services.kdv-api.loadbalancer.server.port=5000"
+
+        - "traefik.swarm.network=${EXTERNAL_NETWORK}"
       
-      # 🟢 3. Порт змінено на 5000 (стандарт Flask/Gunicorn)
-      - "traefik.http.services.kdv-api.loadbalancer.server.port=5000"
-      
-      - "traefik.docker.network=${EXTERNAL_NETWORK}"
-      
-      # 🔴 4. StripPrefix ЗАКОМЕНТОВАНО (Видалено)
-      # Чому: Наш Flask app (src/app.py) вже очікує повний шлях '/kdv/api/...'
-      # Якщо Traefik відріже префікс, Flask поверне 404.
-      # - "traefik.http.middlewares.kdv-api-strip.stripprefix.prefixes=/kdv/api"
-      # - "traefik.http.routers.kdv-api.middlewares=kdv-api-strip"
-      
-      # Оскільки мідлвари немає, цей рядок теж коментуємо:
-      # - "traefik.http.routers.kdv-api.middlewares=kdv-api-strip"
 
 networks:
   proxy-net:
     external: true
     name: ${EXTERNAL_NETWORK}
+
+volumes:
+  kdv-drive:
+    driver: rclone
+    driver_opts:
+      remote: "${RCLONE_REMOTE_NAME:?RCLONE_REMOTE_NAME is required}:"
+      allow_other: "true"
+      vfs_cache_mode: full
+      poll_interval: "0"

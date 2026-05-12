@@ -1,5 +1,26 @@
 from src.core import parse_marc_details, run_dspace_workflow, process_integration_logic
 from src.tasks import task_manager
+from src.koha import KohaClient, KohaRestError
+
+
+class DummyKohaResponse:
+    def __init__(self, status_code, text, content_type="application/json"):
+        self.status_code = status_code
+        self.text = text
+        self.headers = {"content-type": content_type}
+
+    def json(self):
+        import json
+
+        return json.loads(self.text)
+
+
+class DummySession:
+    def __init__(self, response):
+        self.response = response
+
+    def get(self, *args, **kwargs):
+        return self.response
 
 
 # stub implementations
@@ -49,6 +70,25 @@ def test_parse_marc_rules_basic():
     xml = '<record><datafield tag="245" ind1=" " ind2=" "><subfield code="a">Hello</subfield></datafield></record>'
     out = parse_marc_details(xml)
     assert out.get("dc.title") == "Hello"
+
+
+def test_koha_rest_auth_error_is_diagnostic():
+    client = KohaClient.__new__(KohaClient)
+    client.base_url = "http://koha.local"
+    client.session = DummySession(
+        DummyKohaResponse(401, '{"error":"Basic authentication disabled"}')
+    )
+
+    try:
+        client.get_biblio_metadata(1)
+    except KohaRestError as exc:
+        msg = str(exc)
+    else:
+        raise AssertionError("KohaRestError was not raised")
+
+    assert "HTTP 401" in msg
+    assert "Basic authentication disabled" in msg
+    assert "No 956 field found" not in msg
 
 
 def test_run_dspace_with_stubs(tmp_path):
