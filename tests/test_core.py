@@ -1,3 +1,8 @@
+import uuid
+from unittest.mock import Mock, call, patch
+
+import pytest
+
 from src.core import parse_marc_details, run_dspace_workflow, process_integration_logic
 from src.tasks import task_manager
 from src.services.pdf import OptimizeResult
@@ -159,6 +164,30 @@ class FakeExplodingOptimizer:
         raise RuntimeError("optimizer exploded")
 
 
+class FakeTimeoutFallbackOptimizer:
+    def optimize(self, original_path, job_id):
+        return OptimizeResult(
+            success=False,
+            path=original_path,
+            fallback_reason="timeout",
+            original_mb=1.0,
+            optimized_mb=None,
+            optimization_time_ms=130000,
+            thread_wait_ms=0,
+        )
+
+
+def _force_optimization(monkeypatch):
+    monkeypatch.setattr("src.core.needs_optimization", lambda _path, skip: True)
+    monkeypatch.setattr(
+        "src.core.has_optimizer_disk_space", lambda _path, data_dir: True
+    )
+
+
+def _fixed_job_id(value="11111111-1111-4111-8111-111111111111"):
+    return uuid.UUID(value)
+
+
 def _prepare_optimizer_dirs(tmp_path, monkeypatch):
     data_dir = tmp_path / "kdv_optimize"
     input_dir = data_dir / "input"
@@ -280,3 +309,110 @@ def test_run_dspace_optimizer_exception_falls_back_to_original(tmp_path, monkeyp
     assert dspace.uploaded[0][1] == str(pdf)
     assert list(input_dir.iterdir()) == []
     assert list(output_dir.iterdir()) == []
+
+
+def test_core_cleanup_on_exception(tmp_path, monkeypatch):
+    """finally видаляє tmp файли навіть якщо optimizer.optimize() кидає виняток."""
+    input_dir, output_dir = _prepare_optimizer_dirs(tmp_path, monkeypatch)
+    _force_optimization(monkeypatch)
+    koha = StubKoha()
+    dspace = StubDSpace()
+    pdf = tmp_path / "file.pdf"
+    pdf.write_bytes(b"original-content")
+
+    res = run_dspace_workflow(
+        5,
+        str(pdf),
+        {"collection_uuid": "coll"},
+        koha_client=koha,
+        dspace_client=dspace,
+        optimizer_client=FakeExplodingOptimizer(),
+    )
+
+    assert res["pdf_optimized"] == "false"
+    assert res["pdf_fallback_reason"] == "exception"
+    assert dspace.uploaded[0][1] == str(pdf)
+    assert list(input_dir.iterdir()) == []
+    assert list(output_dir.iterdir()) == []
+
+
+def test_core_cleanup_on_dspace_exception(tmp_path, monkeypatch):
+    """finally видаляє tmp файли навіть якщо dspace upload_to_item() кидає виняток."""
+    input_dir, output_dir = _prepare_optimizer_dirs(tmp_path, monkeypatch)
+    _force_optimization(monkeypatch)
+    job_uuid = _fixed_job_id()
+    input_tmp = str(input_dir / f"{job_uuid}.pdf")
+    output_tmp = str(output_dir / f"{job_uuid}.pdf")
+    koha = StubKoha()
+    dspace = FailingUploadDSpace()
+    pdf = tmp_path / "file.pdf"
+    pdf.write_bytes(b"original-content")
+
+    with patch("src.core.uuid.uuid4", return_value=job_uuid), patch(
+        "src.core.os.remove"
+    ) as remove_mock:
+        with pytest.raises(Exception, match="upload exploded"):
+            run_dspace_workflow(
+                5,
+                str(pdf),
+                {"collection_uuid": "coll"},
+                koha_client=koha,
+                dspace_client=dspace,
+                optimizer_client=FakeSuccessOptimizer(),
+            )
+
+    remove_mock.assert_has_calls([call(input_tmp), call(output_tmp)], any_order=False)
+    assert remove_mock.call_count == 2
+
+
+def test_optimizer_fallback_does_not_fail_archive(tmp_path, monkeypatch):
+    """Fallback оптимізації не переводить архівацію в error."""
+    _prepare_optimizer_dirs(tmp_path, monkeypatch)
+    _force_optimization(monkeypatch)
+    koha = StubKoha()
+    dspace = StubDSpace()
+    pdf = tmp_path / "file.pdf"
+    pdf.write_bytes(b"original-content")
+
+    res = run_dspace_workflow(
+        5,
+        str(pdf),
+        {"collection_uuid": "coll"},
+        koha_client=koha,
+        dspace_client=dspace,
+        optimizer_client=FakeTimeoutFallbackOptimizer(),
+    )
+
+    assert res["handle"].endswith("/handle/1/2")
+    assert res["pdf_optimized"] == "false"
+    assert res["pdf_fallback_reason"] == "timeout"
+    assert dspace.uploaded[0][1] == str(pdf)
+
+
+def test_hard_limit_does_not_prevent_optimization_path(tmp_path, monkeypatch):
+    """Поточний LIMIT_ERROR зупиняє workflow до optimization path; контракт не змінюється."""
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    huge_pdf = mount / "huge.pdf"
+    huge_pdf.write_bytes(b"%PDF-1.4\n")
+    koha = StubKoha()
+    koha.metadata = {"file_path": "huge.pdf", "collection_uuid": "coll"}
+    dspace = StubDSpace()
+    run_dspace = Mock()
+
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(mount))
+    monkeypatch.setattr("src.core.os.path.getsize", lambda _path: 251 * 1024 * 1024)
+    monkeypatch.setattr("src.core.run_dspace_workflow", run_dspace)
+
+    with pytest.raises(Exception, match="FILE TOO LARGE"):
+        process_integration_logic(
+            "task-id",
+            5,
+            koha_client=koha,
+            dspace_client=dspace,
+            optimizer_client=FakeTimeoutFallbackOptimizer(),
+        )
+
+    run_dspace.assert_not_called()
+    assert any(status == "error" and "FILE TOO LARGE" in msg for _, status, msg in koha.status_log)
+

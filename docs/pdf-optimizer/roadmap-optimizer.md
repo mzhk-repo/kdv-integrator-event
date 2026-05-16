@@ -776,9 +776,9 @@ build-and-scan-kdv-optimizer:
 ```
 
 **Критерії прийняття:**
-- [ ] PR з CRITICAL CVE у `kdv-optimizer` image → CI fails, merge заблоковано
-- [ ] PR без CRITICAL → CI passes
-- [ ] `kdv-optimizer` image пушиться до GHCR тільки з `main` гілки
+- [x] PR з CRITICAL CVE у `kdv-optimizer` image → CI fails, merge заблоковано
+- [x] PR без CRITICAL → CI passes
+- [x] `kdv-optimizer` image пушиться до GHCR тільки з `main` гілки
 
 ---
 
@@ -826,8 +826,8 @@ def test_optimizer_client_unavailable():
 ```
 
 **Критерії прийняття:**
-- [ ] Всі 5 тестів проходять
-- [ ] `needs_optimization()` не кидає виняток ні в одному сценарії
+- [x] Всі 5 тестів проходять
+- [x] `needs_optimization()` не кидає виняток ні в одному сценарії
 
 ---
 
@@ -863,8 +863,8 @@ def test_hard_limit_does_not_prevent_optimization_path():
 ```
 
 **Критерії прийняття:**
-- [ ] Всі 4 тести проходять
-- [ ] `test_core_cleanup_on_dspace_exception` — перевіряє що `os.remove` викликаний для обох tmp файлів
+- [x] Всі 4 тести проходять
+- [x] `test_core_cleanup_on_dspace_exception` — перевіряє що `os.remove` викликаний для обох tmp файлів
 
 ---
 
@@ -872,7 +872,7 @@ def test_hard_limit_does_not_prevent_optimization_path():
 
 **Файли для зміни:**
 - `tests/test_app.py`
-- `tests/test_scripts.py`
+- `tests/test_robot.py`
 
 **Детальні інструкції:**
 
@@ -884,7 +884,7 @@ def test_integrate_without_payload_defaults_to_optimization():
     assert response.status_code != 400
     # Перевірити що обробник отримав skip_optimization=False
 
-# test_scripts.py
+# test_robot.py
 def test_robot_skip_optimization_flag():
     """--skip-optimization прапор передає skip_optimization: true в payload"""
     # mock requests.post, перехопити payload
@@ -893,9 +893,9 @@ def test_robot_skip_optimization_flag():
 ```
 
 **Критерії прийняття:**
-- [ ] Обидва тести проходять
-- [ ] Усі існуючі тести + нові optimizer-тести проходять
-- [ ] `pytest` завершується з exit code 0
+- [x] Обидва тести проходять
+- [x] Усі існуючі тести + нові optimizer-тести проходять
+- [x] `pytest` завершується з exit code 0
 
 ---
 

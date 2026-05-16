@@ -278,3 +278,21 @@
 - **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`; локальний render/sanitize pipeline у `/tmp` підтвердив `cpus: "2"` і `cpus: "0.5"` у deploy manifest.
 - **Risks:** Sanitize застосовується до всіх рядків `cpus:` у rendered manifest, що відповідає вимогам Swarm deploy для resource limits/reservations; інші numeric поля не змінюються.
 - **Rollback:** Прибрати другий `sed` з sanitize pipeline у `scripts/deploy-orchestrator-swarm.sh` і цей changelog-запис.
+
+## 2026-05-16 — Unit-тести PDFOptimizerService (Фаза 7.1)
+
+- **Context:** Після підключення `kdv-optimizer` до Swarm потрібно покрити бізнес-логіку optimizer-а unit-тестами без запуску реального Ghostscript або HTTP-сервісу.
+- **Change:** У `tests/test_services.py` додано 5 focused тестів для PDF optimizer: threshold-евристика `needs_optimization()`, conservative fallback при `pdfinfo` timeout, disk preflight fail без submit у process pool, fallback на original path при більшому output після mocked Ghostscript, а також `PDFOptimizerClient` fallback при `ConnectionError`. Тестовий файл отримав безпечні ENV-заглушки для імпортів `src.config` без реальних секретів.
+- **Verification:** `python3 -m py_compile tests/test_services.py`; `pytest tests/test_services.py -q` -> `8 passed`.
+- **Risks:** Disk preflight test фіксує поточний контракт `PDFOptimizerService.submit_job()` — контрольований `RuntimeError` і відсутність submit у pool; перетворення цього стану на `skipped_no_disk` telemetry виконується на рівні `kdv-api` workflow.
+- **Rollback:** Видалити нові optimizer-тести та тестові ENV-заглушки з `tests/test_services.py`, відкотити checkbox-и roadmap і цей changelog-запис.
+
+## 2026-05-16 — Testing runbook для PDF optimizer tests
+
+- **Context:** Після додавання unit-тестів Фази 7.1 потрібно оновити інструкцію запуску тестів, щоб зафіксувати `kdv-optimizer` у `PYTHONPATH` і актуальний active changelog path.
+- **Change:** Оновлено `docs/RUNBOOK_TESTING.md`: додано посилання на `src/services/pdf.py`, `kdv-optimizer/kdv_optimizer/services/pdf.py` і `tests/test_pdf_optimizer_client.py`; додано команди запуску optimizer unit-тестів локально та в контейнері; зафіксовано очікуваний focused result `8 passed`; оновлено active changelog path на `docs/changelogs/CHANGELOG_2026_VOL_02.md`; додано troubleshooting для `ModuleNotFoundError: kdv_optimizer`.
+- **Verification:** Переглянуто diff `docs/RUNBOOK_TESTING.md`; структура розділів збережена, optimizer unit-тести описані після contract-тестів.
+- **Risks:** Команда з контейнером використовує імʼя `kdv-api`, як і попередній runbook; у Swarm runtime може знадобитися підставити актуальний container id/name з `docker ps`.
+- **Rollback:** Відкотити зміни `docs/RUNBOOK_TESTING.md` і цей changelog-запис.
+
+нові записи вносити в НОВИЙ ТОМ: docs/changelogs/CHANGELOG_2026_VOL_03.md
