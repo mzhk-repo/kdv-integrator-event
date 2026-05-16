@@ -12,6 +12,7 @@ SWARM_VERIFY_TIMEOUT="${SWARM_VERIFY_TIMEOUT:-}"
 SWARM_VERIFY_INTERVAL="${SWARM_VERIFY_INTERVAL:-}"
 ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-}"
 LOCAL_IMAGE="${LOCAL_IMAGE:-}"
+LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-}"
 RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-}"
 RAW_MANIFEST=""
 DEPLOY_MANIFEST=""
@@ -72,7 +73,7 @@ read_env_value() {
   done < "${ENV_FILE}"
 }
 
-default_local_image() {
+default_image_tag() {
   local git_sha
 
   git_sha="$(git -C "${PROJECT_ROOT}" rev-parse --short=12 HEAD 2>/dev/null || true)"
@@ -80,12 +81,23 @@ default_local_image() {
     git_sha="$(date -u +%Y%m%d%H%M%S)"
   fi
 
-  printf 'kdv-integrator-event:%s' "${git_sha}"
+  printf '%s' "${git_sha}"
+}
+
+default_local_image() {
+  printf 'kdv-integrator-event:%s' "${LOCAL_IMAGE_TAG}"
+}
+
+default_local_optimizer_image() {
+  printf 'kdv-optimizer:%s' "${LOCAL_IMAGE_TAG}"
 }
 
 load_orchestrator_settings() {
   ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-$(read_env_value ORCHESTRATOR_IMAGE_MODE)}"
   ORCHESTRATOR_IMAGE_MODE="${ORCHESTRATOR_IMAGE_MODE:-local}"
+
+  LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-$(read_env_value LOCAL_IMAGE_TAG)}"
+  LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-$(default_image_tag)}"
 
   LOCAL_IMAGE="${LOCAL_IMAGE:-$(read_env_value LOCAL_IMAGE)}"
   if [[ -z "${LOCAL_IMAGE}" || "${LOCAL_IMAGE}" == "auto" ]]; then
@@ -201,12 +213,22 @@ run_ansible_secrets_if_configured() {
 }
 
 prepare_deploy_image() {
+  local optimizer_image
+
   case "${ORCHESTRATOR_IMAGE_MODE}" in
     local)
-      log "Building local Docker image: ${LOCAL_IMAGE}"
+      optimizer_image="$(default_local_optimizer_image)"
+
+      log "Building local Docker image for kdv-api: ${LOCAL_IMAGE}"
       docker build -t "${LOCAL_IMAGE}" "${PROJECT_ROOT}"
       export KDV_IMAGE="${LOCAL_IMAGE}"
-      log "Using local Docker image for Swarm deploy: ${KDV_IMAGE}"
+
+      log "Building local Docker image for kdv-optimizer: ${optimizer_image}"
+      docker build -t "${optimizer_image}" "${PROJECT_ROOT}/kdv-optimizer"
+      export KDV_OPTIMIZER_IMAGE="${optimizer_image}"
+
+      log "Using local Docker image for Swarm deploy: KDV_IMAGE=${KDV_IMAGE}"
+      log "Using local Docker image for Swarm deploy: KDV_OPTIMIZER_IMAGE=${KDV_OPTIMIZER_IMAGE}"
       ;;
     registry)
       log "Using registry image from env/compose configuration"
@@ -238,36 +260,43 @@ run_versioned_env_secret_script() {
 }
 
 verify_swarm_service() {
-  local elapsed replicas running desired
+  local service_name elapsed replicas running desired
+  service_name="$1"
 
-  log "Verifying Swarm service ${SWARM_SERVICE_NAME} (timeout=${SWARM_VERIFY_TIMEOUT}s)"
+  log "Verifying Swarm service ${service_name} (timeout=${SWARM_VERIFY_TIMEOUT}s)"
 
   elapsed=0
   while (( elapsed <= SWARM_VERIFY_TIMEOUT )); do
-    if ! docker service inspect "${SWARM_SERVICE_NAME}" >/dev/null 2>&1; then
-      log "Waiting for service to appear: ${SWARM_SERVICE_NAME}"
+    if ! docker service inspect "${service_name}" >/dev/null 2>&1; then
+      log "Waiting for service to appear: ${service_name}"
     else
-      replicas="$(docker service ls --filter "name=${SWARM_SERVICE_NAME}" --format '{{.Replicas}}' | head -n 1)"
+      replicas="$(docker service ls --filter "name=${service_name}" --format '{{.Replicas}}' | head -n 1)"
       running="${replicas%%/*}"
       desired="${replicas##*/}"
 
       if [[ -n "${replicas}" && "${running}" == "${desired}" && "${desired}" != "0" ]]; then
-        log "Swarm service is healthy: ${SWARM_SERVICE_NAME} ${replicas}"
+        log "Swarm service is healthy: ${service_name} ${replicas}"
         return 0
       fi
 
-      log "Waiting for service replicas: ${SWARM_SERVICE_NAME} ${replicas:-unknown}"
+      log "Waiting for service replicas: ${service_name} ${replicas:-unknown}"
     fi
 
     sleep "${SWARM_VERIFY_INTERVAL}"
     elapsed=$((elapsed + SWARM_VERIFY_INTERVAL))
   done
 
-  log "ERROR: Swarm service did not reach desired replicas: ${SWARM_SERVICE_NAME}"
-  docker service ls --filter "name=${SWARM_SERVICE_NAME}"
-  docker service ps "${SWARM_SERVICE_NAME}" --no-trunc || true
+  log "ERROR: Swarm service did not reach desired replicas: ${service_name}"
+  docker service ls --filter "name=${service_name}"
+  docker service ps "${service_name}" --no-trunc || true
   exit 1
 }
+
+# ROLLBACK ІНСТРУКЦІЯ:
+# 1. Вимкнути оптимізацію без відкату коду:
+#    docker service update --env-add OPTIMIZER_URL=disabled ${STACK_NAME}_kdv-api
+# 2. Або відкотити compose + передеплоїти попередній GIT_SHA.
+# 3. DSpace/Koha дані не зачіпаються при будь-якому варіанті.
 
 deploy_swarm() {
   local compose_file swarm_file deploy_args
@@ -311,6 +340,7 @@ deploy_swarm() {
 
   awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
     | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
+    | sed -E 's/^([[:space:]]*cpus:[[:space:]]*)([0-9]+(\.[0-9]+)?)$/\1"\2"/' \
     > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
@@ -321,7 +351,8 @@ deploy_swarm() {
   deploy_args+=("${STACK_NAME}")
   "${deploy_args[@]}"
 
-  verify_swarm_service
+  verify_swarm_service "${SWARM_SERVICE_NAME}"
+  verify_swarm_service "${STACK_NAME}_kdv-optimizer"
 
   log "Swarm deploy completed"
 }

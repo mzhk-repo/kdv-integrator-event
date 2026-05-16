@@ -63,20 +63,35 @@ Robot читає файл `candidates.txt` в корені проекту. Фо�
 ### Простий запуск (за замовч. наслідування)
 
 ```bash
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 ```
 
 **Що буде:**
 - Прочитає `candidates.txt`
 - Запустить архівацію **послідовно** (ID за ID, чекаючи результату)
+- За замовчуванням передасть `skip_optimization=false`, тобто PDF-оптимізація увімкнена
 - Показуватиме прогрес та результати на екран
 - Напишефуть подробиці в `logs/robot_batch.log`
+
+### CLI-параметри
+
+```bash
+docker compose exec kdv-api python3 scripts/robot.py --help
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt --skip-optimization
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt --parallelism 1 --max-wait 900
+```
+
+- `--skip-optimization` → передає `skip_optimization=true` для всього batch.
+- `--parallelism` → перекриває `ROBOT_PARALLELISM`.
+- `--max-wait` → перекриває `ROBOT_MAX_WAIT`.
+
+> ⚠️ Якщо `--parallelism > 1` без `--skip-optimization`, задачі можуть чекати чергу `kdv-optimizer`. Рекомендовано `--parallelism 1` або `--skip-optimization`; для паралелізму 2 збільшуйте `--max-wait` до 1200.
 
 ### Хочемо швидше? Паралелізм!
 
 ```bash
-# Запустити 4 архівації одночасно
-ROBOT_PARALLELISM=4 docker compose exec kdv-api python3 -m src.robot
+# Запустити 4 архівації одночасно через CLI
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt --parallelism 4
 ```
 
 **Умовно:**
@@ -111,26 +126,26 @@ ROBOT_PARALLELISM=1                # за замовч. 1 (послідовно)
 | `BATCH_DELAY` | 5 сек | Пауза між стартами завдань | Збільш якщо Koha повільна, зменш якщо потрібна швидкість |
 | `POLL_INTERVAL` | 3 сек | Як часто питати "готово?" | Збільш якщо архівація довга, зменш якщо важко дочекатись |
 | `MAX_WAIT` | 900 сек | Скільки геврив чекати | Збільш для великих фото, зменш якщо не хочеш лежатись довге |
-| `PARALLELISM` | 1 | Скільки одночасно | Збільш для прискорення (але обережно!) |
+| `PARALLELISM` | 1 | Скільки одночасно | Збільш для прискорення; при оптимізації краще лишати 1 або збільшувати `MAX_WAIT` |
 
 ### Приклади налаштувань
 
 **Сценарій 1: Швидкий тест (10 книг)**
 ```bash
 ROBOT_PARALLELISM=2 ROBOT_BATCH_DELAY=1 ROBOT_POLL_INTERVAL=1 \
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 ```
 
 **Сценарій 2: Виробничий пуск на ночі (1000+ книг)**
 ```bash
 ROBOT_PARALLELISM=4 ROBOT_BATCH_DELAY=2 ROBOT_POLL_INTERVAL=5 ROBOT_MAX_WAIT=1800 \
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 ```
 
 **Сценарій 3: Консервативний (коли база дуже завантажена)**
 ```bash
 ROBOT_PARALLELISM=1 ROBOT_BATCH_DELAY=10 ROBOT_POLL_INTERVAL=10 ROBOT_MAX_WAIT=1200 \
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 ```
 
 ---
@@ -218,8 +233,8 @@ docker compose exec kdv-api python3 -m src.robot
 **Причина:** Завдання занадто довге (велики фоток, повільна DSpace).
 
 **Що робити:**
-1. Збільш `ROBOT_MAX_WAIT`: `ROBOT_MAX_WAIT=1800 docker compose exec kdv-api python3 -m src.robot`
-2. Або запусти той же ID окремо: `docker compose exec kdv-api python3 -c "from src.robot import process_single_biblio; print(process_single_biblio('123'))"`
+1. Збільш `ROBOT_MAX_WAIT`: `ROBOT_MAX_WAIT=1800 docker compose exec kdv-api python3 scripts/robot.py candidates.txt`
+2. Або запусти той же ID окремо: `docker compose exec kdv-api python3 -c "from scripts.robot import process_single_biblio; print(process_single_biblio('123'))"`
 
 ### Проблема: "FAILED — но error message"
 
@@ -242,7 +257,7 @@ docker compose exec kdv-api python3 -m src.robot
 head -10 candidates.txt > candidates_test.txt
 
 # Запустити
-docker compose exec kdv-api python3 -c "from src.robot import run_batch; run_batch('candidates_test.txt')"
+docker compose exec kdv-api python3 -c "from scripts.robot import run_batch; run_batch('candidates_test.txt')"
 
 # Гляти результати
 docker compose exec kdv-api tail -50 logs/robot_batch.log
@@ -253,13 +268,13 @@ docker compose exec kdv-api tail -50 logs/robot_batch.log
 ```bash
 # Запустити в tmux (якщо є)
 tmux new-session -d -s robot \
-  "cd /path/to/kdv && ROBOT_PARALLELISM=4 docker compose exec kdv-api python3 -m src.robot"
+  "cd /path/to/kdv && ROBOT_PARALLELISM=4 docker compose exec kdv-api python3 scripts/robot.py candidates.txt"
 
 # Потім подивитись прогрес
 tmux attach -t robot
 
 # Або просто redirect в файл:
-nohup docker compose exec kdv-api python3 -m src.robot > robot_run.log 2>&1 &
+nohup docker compose exec kdv-api python3 scripts/robot.py candidates.txt > robot_run.log 2>&1 &
 tail -f robot_run.log
 ```
 
@@ -271,14 +286,14 @@ docker compose exec kdv-api grep "FAILED\|TIMEOUT" logs/robot_batch.log | \
   grep -oP "#\d+" | sed 's/#//' > candidates_retry.txt
 
 # Це дасть тільки ID які провалилась, потім:
-docker compose exec kdv-api python3 -c "from src.robot import run_batch; run_batch('candidates_retry.txt')"
+docker compose exec kdv-api python3 -c "from scripts.robot import run_batch; run_batch('candidates_retry.txt')"
 ```
 
 ### Рецепт 4: Під'їднання вставки з одного сеансу
 
 ```bash
 # Запов'нити candidates.txt за запуском 1
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 
 # Потім запов'нити FILE2:
 echo "
@@ -286,7 +301,7 @@ echo "
 " >> candidates.txt
 
 # Запустити знову (буде нові + старі, але old дублі автоматично пропускаються)
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 ```
 
 ---
@@ -303,7 +318,7 @@ cat > candidates.txt << EOF
 EOF
 
 # 2. Запускаємо послідовно, детальна спостереження
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 
 # 3. Перевіряємо результати
 docker compose exec kdv-api tail -30 logs/robot_batch.log
@@ -322,7 +337,7 @@ EOF
 
 # 2. Запускаємо з паралелізмом, більш консервативним чекуванням
 ROBOT_PARALLELISM=4 ROBOT_BATCH_DELAY=2 ROBOT_POLL_INTERVAL=5 \
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 
 # 3. Контролюємо вживання ресурсів
 docker stats kdv-api kdv-koha kdv-dspace
@@ -344,7 +359,7 @@ EOF
 
 # 2. Запускаємо з більш довгим MAX_WAIT (велики файли)
 ROBOT_PARALLELISM=2 ROBOT_MAX_WAIT=1800 \
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 
 # 3. Перевіряємо, чи все OK
 docker compose exec kdv-api cat logs/robot_batch.log | tail -100
@@ -358,7 +373,7 @@ docker compose exec kdv-api cat logs/robot_batch.log | tail -100
 
 ```bash
 # 1. Robot архівує
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 
 # 2. Nightwalker перевіряє і виправляє (на ночі)
 NIGHTWALKER_AUTO_DELAY=0.05 \

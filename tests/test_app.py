@@ -110,3 +110,54 @@ def test_cors_allowlist_returns_origin_only_for_allowed(monkeypatch):
 
     assert allowed.headers.get("Access-Control-Allow-Origin") == "https://koha.example.org"
     assert denied.headers.get("Access-Control-Allow-Origin") is None
+
+
+def test_integrate_without_payload_defaults_to_optimization(monkeypatch):
+    client = app.test_client()
+    captured = {}
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app._make_clients", lambda: (object(), object()))
+
+    def fake_start_task(func, biblionumber, **kwargs):
+        captured["func"] = func
+        captured["biblionumber"] = biblionumber
+        captured["kwargs"] = kwargs
+        return "task-1"
+
+    monkeypatch.setattr("src.app.task_manager.start_task", fake_start_task)
+
+    response = client.post(
+        "/kdv/api/integrate/123", headers={"X-KDV-TOKEN": "test-token"}
+    )
+
+    assert response.status_code == 202
+    assert response.get_json()["task_id"] == "task-1"
+    assert captured["biblionumber"] == 123
+    assert captured["kwargs"]["skip_optimization"] is False
+
+
+def test_integrate_accepts_skip_optimization_true(monkeypatch):
+    client = app.test_client()
+    captured = {}
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app._make_clients", lambda: (object(), object()))
+
+    def fake_start_task(func, biblionumber, **kwargs):
+        captured["kwargs"] = kwargs
+        return "task-2"
+
+    monkeypatch.setattr("src.app.task_manager.start_task", fake_start_task)
+
+    response = client.post(
+        "/kdv/api/integrate/123",
+        json={"skip_optimization": True},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 202
+    assert response.get_json()["task_id"] == "task-2"
+    assert captured["kwargs"]["skip_optimization"] is True

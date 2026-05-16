@@ -1,7 +1,10 @@
+import contextlib
 import os
 import logging
 import re
+import shutil
 import time
+import uuid
 import concurrent.futures
 from io import BytesIO
 from pymarc import parse_xml_to_array
@@ -11,9 +14,126 @@ from .koha import KohaClient
 from .dspace import DSpaceClient
 from .services.covers import CoverService
 from .services.files import FileService
+from .services.pdf import (
+    PDFOptimizerClient,
+    has_optimizer_disk_space,
+    needs_optimization,
+)
 from .mapping import METADATA_RULES, TYPE_CONVERSION
 
 logger = logging.getLogger("KDV-Core")
+
+
+def _optimizer_data_dir() -> str:
+    return os.environ.get("OPTIMIZER_DATA_DIR") or os.environ.get(
+        "DATA_DIR", "/data/kdv_optimize"
+    )
+
+
+def _optimizer_input_dir() -> str:
+    return os.environ.get("OPTIMIZER_INPUT_DIR") or os.environ.get(
+        "INPUT_DIR", os.path.join(_optimizer_data_dir(), "input")
+    )
+
+
+def _optimizer_output_dir() -> str:
+    return os.environ.get("OPTIMIZER_OUTPUT_DIR") or os.environ.get(
+        "OUTPUT_DIR", os.path.join(_optimizer_data_dir(), "output")
+    )
+
+
+def _file_mb(path: str) -> float | None:
+    try:
+        return round(os.path.getsize(path) / 1024 / 1024, 2)
+    except OSError:
+        return None
+
+
+def _disk_free_mb(path: str) -> float | None:
+    try:
+        return round(shutil.disk_usage(path).free / 1024 / 1024, 2)
+    except OSError:
+        return None
+
+
+def _build_pdf_telemetry(pdf_path: str) -> dict:
+    return {
+        "pdf_optimized": "false",
+        "pdf_fallback_reason": None,
+        "pdf_original_mb": _file_mb(pdf_path),
+        "pdf_final_mb": _file_mb(pdf_path),
+        "pdf_pages": None,
+        "pdf_optimization_time_ms": None,
+        "pdf_thread_wait_ms": None,
+        "pdf_disk_free_mb": _disk_free_mb(_optimizer_data_dir()),
+    }
+
+
+def _make_optimizer_client() -> PDFOptimizerClient | None:
+    base_url = os.environ.get("OPTIMIZER_URL", "").strip()
+    if not base_url:
+        return None
+    timeout = int(os.environ.get("OPTIMIZER_TIMEOUT", "130"))
+    return PDFOptimizerClient(base_url=base_url, timeout=timeout)
+
+
+def _prepare_pdf_for_upload(
+    pdf_path: str,
+    skip_optimization: bool,
+    optimizer_client: PDFOptimizerClient | None = None,
+) -> tuple[str, dict, tuple[str, str]]:
+    telemetry = _build_pdf_telemetry(pdf_path)
+    job_id = str(uuid.uuid4())
+    input_tmp = os.path.join(_optimizer_input_dir(), f"{job_id}.pdf")
+    output_tmp = os.path.join(_optimizer_output_dir(), f"{job_id}.pdf")
+    cleanup_paths = (input_tmp, output_tmp)
+
+    if skip_optimization:
+        telemetry["pdf_optimized"] = "skipped_by_user"
+        return pdf_path, telemetry, cleanup_paths
+
+    if not needs_optimization(pdf_path, skip=False):
+        telemetry["pdf_optimized"] = "skipped_by_size"
+        return pdf_path, telemetry, cleanup_paths
+
+    if not has_optimizer_disk_space(pdf_path, data_dir=_optimizer_data_dir()):
+        telemetry["pdf_optimized"] = "skipped_no_disk"
+        telemetry["pdf_disk_free_mb"] = _disk_free_mb(_optimizer_data_dir())
+        return pdf_path, telemetry, cleanup_paths
+
+    client = optimizer_client or _make_optimizer_client()
+    if client is None:
+        telemetry["pdf_fallback_reason"] = "optimizer_unavailable"
+        return pdf_path, telemetry, cleanup_paths
+
+    try:
+        os.makedirs(os.path.dirname(input_tmp), exist_ok=True)
+        os.makedirs(os.path.dirname(output_tmp), exist_ok=True)
+        shutil.copy2(pdf_path, input_tmp)
+        result = client.optimize(pdf_path, job_id)
+        final_pdf_path = result.path
+        telemetry.update(
+            {
+                "pdf_optimized": "true" if result.success else "false",
+                "pdf_fallback_reason": result.fallback_reason,
+                "pdf_original_mb": result.original_mb or telemetry["pdf_original_mb"],
+                "pdf_final_mb": _file_mb(final_pdf_path),
+                "pdf_optimization_time_ms": result.optimization_time_ms,
+                "pdf_thread_wait_ms": result.thread_wait_ms,
+            }
+        )
+        return final_pdf_path, telemetry, cleanup_paths
+    except Exception as exc:
+        logger.warning("PDF optimizer failed, uploading original PDF: %s", exc)
+        telemetry["pdf_fallback_reason"] = "exception"
+        telemetry["pdf_final_mb"] = _file_mb(pdf_path)
+        return pdf_path, telemetry, cleanup_paths
+
+
+def _cleanup_optimizer_files(paths: tuple[str, str]) -> None:
+    for file_path in paths:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(file_path)
 
 
 def parse_marc_details(xml_data):
@@ -70,7 +190,13 @@ def parse_marc_details(xml_data):
 
 
 def run_dspace_workflow(
-    biblionumber, file_path, meta, koha_client=None, dspace_client=None
+    biblionumber,
+    file_path,
+    meta,
+    koha_client=None,
+    dspace_client=None,
+    skip_optimization: bool = False,
+    optimizer_client: PDFOptimizerClient | None = None,
 ):
     """Execute metadata extraction and file upload to DSpace.
 
@@ -115,16 +241,34 @@ def run_dspace_workflow(
         else f"{DSPACE_UI_URL}/items/{item_uuid}"
     )
 
-    logger.info(f"📤 [DSpace-Thread] Uploading file to Item {item_uuid}")
-    if not local_dspace.upload_to_item(item_uuid, file_path):
-        raise Exception("Failed to upload file")
+    final_pdf_path = file_path
+    pdf_telemetry = _build_pdf_telemetry(file_path)
+    cleanup_paths = ()
+    try:
+        final_pdf_path, pdf_telemetry, cleanup_paths = _prepare_pdf_for_upload(
+            file_path,
+            skip_optimization=skip_optimization,
+            optimizer_client=optimizer_client,
+        )
+        logger.info(f"📤 [DSpace-Thread] Uploading file to Item {item_uuid}")
+        if not local_dspace.upload_to_item(item_uuid, final_pdf_path):
+            raise Exception("Failed to upload file")
+    finally:
+        _cleanup_optimizer_files(cleanup_paths)
 
     logger.info(f"✅ [DSpace-Thread] Finished for #{biblionumber}")
-    return {"handle": final_link, "uuid": item_uuid}
+    result = {"handle": final_link, "uuid": item_uuid}
+    result.update(pdf_telemetry)
+    return result
 
 
 def process_integration_logic(
-    task_id, biblionumber, koha_client=None, dspace_client=None
+    task_id,
+    biblionumber,
+    koha_client=None,
+    dspace_client=None,
+    skip_optimization: bool = False,
+    optimizer_client: PDFOptimizerClient | None = None,
 ):
     """Main orchestration logic executed inside a background thread.
 
@@ -188,6 +332,8 @@ def process_integration_logic(
                 meta,
                 koha_client=koha,
                 dspace_client=dspace_client,
+                skip_optimization=skip_optimization,
+                optimizer_client=optimizer_client,
             )
 
             logger.info("⚡ [Core] Parallel tasks started: Cover + DSpace")

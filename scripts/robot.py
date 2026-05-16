@@ -1,13 +1,13 @@
 # запуск робота для масової архівації:
-# docker compose exec kdv-api python3 -m src.robot
+# docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 
+import argparse
 import requests
 import time
 import logging
 import sys
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from .config import KDV_API_TOKEN
 
 
 # Налаштування логування
@@ -25,7 +25,19 @@ logging.basicConfig(
 logger = logging.getLogger("Robot")
 
 API_BASE = "http://localhost:5000/kdv/api"
-HEADERS = {"X-KDV-TOKEN": KDV_API_TOKEN}
+
+
+def build_headers():
+    token = os.getenv("KDV_API_TOKEN")
+    if not token:
+        try:
+            from .config import KDV_API_TOKEN as token
+        except ImportError:
+            sys.path.insert(
+                0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+            from src.config import KDV_API_TOKEN as token
+    return {"X-KDV-TOKEN": token}
 
 
 def _env_int(name, default, minimum=1):
@@ -58,6 +70,56 @@ BATCH_DELAY = _env_float(
 )  # throttle між стартами задач
 MAX_WAIT = _env_int("ROBOT_MAX_WAIT", 900, minimum=30)
 ROBOT_PARALLELISM = _env_int("ROBOT_PARALLELISM", 1, minimum=1)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="KDV Integrator batch robot")
+    parser.add_argument(
+        "candidates_file",
+        nargs="?",
+        default="candidates.txt",
+        help="Файл зі списком biblionumber або діапазонами",
+    )
+    parser.add_argument(
+        "--skip-optimization",
+        action="store_true",
+        default=False,
+        help="Вимкнути PDF-оптимізацію для всього батчу",
+    )
+    parser.add_argument(
+        "--parallelism",
+        type=int,
+        default=ROBOT_PARALLELISM,
+        help="Кількість паралельних задач (fallback: ROBOT_PARALLELISM)",
+    )
+    parser.add_argument(
+        "--max-wait",
+        type=int,
+        default=MAX_WAIT,
+        help="Максимальний час очікування задачі у секундах (fallback: ROBOT_MAX_WAIT)",
+    )
+    return parser
+
+
+def _normalize_positive_int(value, default, minimum=1):
+    try:
+        return max(int(value), minimum)
+    except Exception:
+        return default
+
+
+def warn_optimizer_queue_if_needed(parallelism, skip_optimization, max_wait):
+    if parallelism <= 1 or skip_optimization:
+        return
+    logger.warning(
+        "⚠ ROBOT_PARALLELISM > 1 з увімкненою оптимізацією: "
+        "задачі чекатимуть чергу optimizer."
+    )
+    logger.warning("  Рекомендовано: --parallelism 1 або --skip-optimization")
+    logger.warning(
+        f"  Поточний max-wait: {max_wait}s. "
+        "При паралелізмі 2 рекомендовано --max-wait 1200"
+    )
 
 
 def parse_candidates(filename):
@@ -118,7 +180,7 @@ def parse_candidates(filename):
     return [str(i) for i in sorted_ids]
 
 
-def process_single_biblio(biblionumber):
+def process_single_biblio(biblionumber, skip_optimization=False, max_wait=MAX_WAIT):
     """
     Виконує повний цикл архівації для однієї книги:
     POST (Start) -> Polling (Wait) -> Result
@@ -127,7 +189,13 @@ def process_single_biblio(biblionumber):
 
     # 1. Ініціація (POST)
     try:
-        resp = requests.post(f"{API_BASE}/integrate/{biblionumber}", headers=HEADERS)
+        payload = {"skip_optimization": bool(skip_optimization)}
+        headers = build_headers()
+        resp = requests.post(
+            f"{API_BASE}/integrate/{biblionumber}",
+            headers=headers,
+            json=payload,
+        )
 
         # Обробка статусів HTTP
         if resp.status_code == 409:
@@ -161,14 +229,12 @@ def process_single_biblio(biblionumber):
 
     # 2. Очікування (Polling)
     waited = 0
-    max_wait = MAX_WAIT  # configurable timeout
-
     while waited < max_wait:
         time.sleep(POLL_INTERVAL)
         waited += POLL_INTERVAL
 
         try:
-            status_resp = requests.get(f"{API_BASE}/status/{task_id}", headers=HEADERS)
+            status_resp = requests.get(f"{API_BASE}/status/{task_id}", headers=headers)
 
             if status_resp.status_code == 404:
                 # Інколи буває race condition, спробуємо ще раз
@@ -209,7 +275,23 @@ def process_single_biblio(biblionumber):
     return "TIMEOUT"
 
 
-def run_batch(filename="candidates.txt"):
+def run_batch(
+    filename="candidates.txt",
+    skip_optimization=False,
+    parallelism=None,
+    max_wait=None,
+):
+    parallelism = _normalize_positive_int(
+        ROBOT_PARALLELISM if parallelism is None else parallelism,
+        ROBOT_PARALLELISM,
+        minimum=1,
+    )
+    max_wait = _normalize_positive_int(
+        MAX_WAIT if max_wait is None else max_wait,
+        MAX_WAIT,
+        minimum=30,
+    )
+
     ids = parse_candidates(filename)
 
     if not ids:
@@ -220,9 +302,12 @@ def run_batch(filename="candidates.txt"):
     logger.info(f"📋 BATCH STARTED. Candidates: {len(ids)}")
     logger.info(f"   List: {', '.join(ids[:10])} ...")  # Показати перші 10
     logger.info(
-        f"   Controls: parallelism={ROBOT_PARALLELISM}, batch_delay={BATCH_DELAY}s, poll_interval={POLL_INTERVAL}s, max_wait={MAX_WAIT}s"
+        f"   Controls: parallelism={parallelism}, batch_delay={BATCH_DELAY}s, "
+        f"poll_interval={POLL_INTERVAL}s, max_wait={max_wait}s, "
+        f"skip_optimization={skip_optimization}"
     )
     logger.info("=" * 40)
+    warn_optimizer_queue_if_needed(parallelism, skip_optimization, max_wait)
 
     stats = {
         "SUCCESS": 0,
@@ -234,10 +319,14 @@ def run_batch(filename="candidates.txt"):
         "ERROR_CONN": 0,
     }
 
-    if ROBOT_PARALLELISM <= 1:
+    if parallelism <= 1:
         for i, bib_id in enumerate(ids):
             logger.info(f"--- Item {i + 1}/{len(ids)} ---")
-            result = process_single_biblio(bib_id)
+            result = process_single_biblio(
+                bib_id,
+                skip_optimization=skip_optimization,
+                max_wait=max_wait,
+            )
 
             key = result if result in stats else "FAILED"
             stats[key] = stats.get(key, 0) + 1
@@ -245,11 +334,16 @@ def run_batch(filename="candidates.txt"):
             if i < len(ids) - 1:
                 time.sleep(BATCH_DELAY)
     else:
-        with ThreadPoolExecutor(max_workers=ROBOT_PARALLELISM) as executor:
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
             futures = {}
             for i, bib_id in enumerate(ids):
                 logger.info(f"--- Queue item {i + 1}/{len(ids)} ---")
-                fut = executor.submit(process_single_biblio, bib_id)
+                fut = executor.submit(
+                    process_single_biblio,
+                    bib_id,
+                    skip_optimization=skip_optimization,
+                    max_wait=max_wait,
+                )
                 futures[fut] = bib_id
                 if i < len(ids) - 1:
                     time.sleep(BATCH_DELAY)
@@ -272,5 +366,11 @@ def run_batch(filename="candidates.txt"):
 
 
 if __name__ == "__main__":
-    # Для запуску: docker compose exec kdv-api python3 -m src.robot
-    run_batch("candidates.txt")
+    # Для запуску: docker compose exec kdv-api python3 scripts/robot.py candidates.txt
+    args = build_parser().parse_args()
+    run_batch(
+        args.candidates_file,
+        skip_optimization=args.skip_optimization,
+        parallelism=args.parallelism,
+        max_wait=args.max_wait,
+    )
