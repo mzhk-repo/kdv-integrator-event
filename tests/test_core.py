@@ -1,3 +1,4 @@
+import logging
 import uuid
 from unittest.mock import Mock, call, patch
 
@@ -253,6 +254,33 @@ def test_run_dspace_success_result_contains_pdf_telemetry(tmp_path, monkeypatch)
     assert dspace.uploaded[0][1] != str(pdf)
     assert list(input_dir.iterdir()) == []
     assert list(output_dir.iterdir()) == []
+
+
+def test_run_dspace_logs_optimizer_handoff(tmp_path, monkeypatch, caplog):
+    _prepare_optimizer_dirs(tmp_path, monkeypatch)
+    _force_optimization(monkeypatch)
+    job_uuid = _fixed_job_id()
+    koha = StubKoha()
+    dspace = StubDSpace()
+    pdf = tmp_path / "file.pdf"
+    pdf.write_bytes(b"original-content")
+
+    with patch("src.core.uuid.uuid4", return_value=job_uuid), caplog.at_level(
+        logging.INFO, logger="KDV-Core"
+    ):
+        res = run_dspace_workflow(
+            5,
+            str(pdf),
+            {"collection_uuid": "coll"},
+            koha_client=koha,
+            dspace_client=dspace,
+            optimizer_client=FakeSuccessOptimizer(),
+        )
+
+    assert res["pdf_optimized"] == "true"
+    assert "PDF optimization job submitted to optimizer" in caplog.text
+    assert str(job_uuid) in caplog.text
+    assert "PDF optimization completed" in caplog.text
 
 
 def test_run_dspace_upload_failure_cleans_optimizer_tmp_files(tmp_path, monkeypatch):

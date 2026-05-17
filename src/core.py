@@ -90,26 +90,60 @@ def _prepare_pdf_for_upload(
 
     if skip_optimization:
         telemetry["pdf_optimized"] = "skipped_by_user"
+        logger.info(
+            "PDF optimization skipped by user: source=%s original_mb=%s",
+            pdf_path,
+            telemetry["pdf_original_mb"],
+        )
         return pdf_path, telemetry, cleanup_paths
 
     if not needs_optimization(pdf_path, skip=False):
         telemetry["pdf_optimized"] = "skipped_by_size"
+        logger.info(
+            "PDF optimization skipped by heuristic: source=%s original_mb=%s",
+            pdf_path,
+            telemetry["pdf_original_mb"],
+        )
         return pdf_path, telemetry, cleanup_paths
 
     if not has_optimizer_disk_space(pdf_path, data_dir=_optimizer_data_dir()):
         telemetry["pdf_optimized"] = "skipped_no_disk"
         telemetry["pdf_disk_free_mb"] = _disk_free_mb(_optimizer_data_dir())
+        logger.warning(
+            "PDF optimization skipped: not enough shared-volume disk space "
+            "source=%s original_mb=%s disk_free_mb=%s data_dir=%s",
+            pdf_path,
+            telemetry["pdf_original_mb"],
+            telemetry["pdf_disk_free_mb"],
+            _optimizer_data_dir(),
+        )
         return pdf_path, telemetry, cleanup_paths
 
     client = optimizer_client or _make_optimizer_client()
     if client is None:
         telemetry["pdf_fallback_reason"] = "optimizer_unavailable"
+        logger.warning(
+            "PDF optimization fallback: optimizer client unavailable "
+            "source=%s original_mb=%s job_id=%s",
+            pdf_path,
+            telemetry["pdf_original_mb"],
+            job_id,
+        )
         return pdf_path, telemetry, cleanup_paths
 
     try:
         os.makedirs(os.path.dirname(input_tmp), exist_ok=True)
         os.makedirs(os.path.dirname(output_tmp), exist_ok=True)
         shutil.copy2(pdf_path, input_tmp)
+        logger.info(
+            "PDF optimization job submitted to optimizer: job_id=%s source=%s "
+            "input_tmp=%s expected_output=%s original_mb=%s",
+            job_id,
+            pdf_path,
+            input_tmp,
+            output_tmp,
+            telemetry["pdf_original_mb"],
+        )
         result = client.optimize(pdf_path, job_id)
         final_pdf_path = result.path
         telemetry.update(
@@ -122,9 +156,37 @@ def _prepare_pdf_for_upload(
                 "pdf_thread_wait_ms": result.thread_wait_ms,
             }
         )
+        if result.success:
+            logger.info(
+                "PDF optimization completed: job_id=%s final_path=%s original_mb=%s "
+                "final_mb=%s optimization_time_ms=%s thread_wait_ms=%s",
+                job_id,
+                final_pdf_path,
+                telemetry["pdf_original_mb"],
+                telemetry["pdf_final_mb"],
+                telemetry["pdf_optimization_time_ms"],
+                telemetry["pdf_thread_wait_ms"],
+            )
+        else:
+            logger.warning(
+                "PDF optimization fallback: job_id=%s reason=%s source=%s "
+                "upload_path=%s original_mb=%s final_mb=%s",
+                job_id,
+                telemetry["pdf_fallback_reason"],
+                pdf_path,
+                final_pdf_path,
+                telemetry["pdf_original_mb"],
+                telemetry["pdf_final_mb"],
+            )
         return final_pdf_path, telemetry, cleanup_paths
     except Exception as exc:
-        logger.warning("PDF optimizer failed, uploading original PDF: %s", exc)
+        logger.warning(
+            "PDF optimization exception, uploading original PDF: job_id=%s "
+            "source=%s error=%s",
+            job_id,
+            pdf_path,
+            exc,
+        )
         telemetry["pdf_fallback_reason"] = "exception"
         telemetry["pdf_final_mb"] = _file_mb(pdf_path)
         return pdf_path, telemetry, cleanup_paths

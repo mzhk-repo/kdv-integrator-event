@@ -96,36 +96,86 @@ class PDFOptimizerClient:
 
     def optimize(self, original_path: str, job_id: str) -> OptimizeResult:
         try:
+            logger.info(
+                "Sending PDF optimization request: job_id=%s optimizer_url=%s "
+                "original_path=%s original_mb=%s",
+                job_id,
+                self.base_url,
+                original_path,
+                self._file_mb(original_path),
+            )
             post_resp = self._client.post(
                 f"{self.base_url}/optimize",
                 json={"job_id": job_id},
                 timeout=self.timeout,
             )
             if post_resp.status_code >= 500:
+                logger.warning(
+                    "PDF optimizer returned server error on submit: job_id=%s "
+                    "status_code=%s",
+                    job_id,
+                    post_resp.status_code,
+                )
                 return self._fallback(original_path, "optimizer_unavailable")
             if post_resp.status_code >= 400:
-                return self._fallback(original_path, self._reason_from_response(post_resp))
+                reason = self._reason_from_response(post_resp)
+                logger.warning(
+                    "PDF optimizer rejected submit: job_id=%s status_code=%s "
+                    "reason=%s",
+                    job_id,
+                    post_resp.status_code,
+                    reason,
+                )
+                return self._fallback(original_path, reason)
 
             started_at = time.monotonic()
+            logger.info(
+                "PDF optimizer accepted job: job_id=%s status_code=%s timeout=%s",
+                job_id,
+                post_resp.status_code,
+                self.timeout,
+            )
             while (time.monotonic() - started_at) < self.timeout:
                 get_resp = self._client.get(
                     f"{self.base_url}/optimize/{job_id}",
                     timeout=self.timeout,
                 )
                 if get_resp.status_code >= 500:
+                    logger.warning(
+                        "PDF optimizer returned server error while polling: "
+                        "job_id=%s status_code=%s",
+                        job_id,
+                        get_resp.status_code,
+                    )
                     return self._fallback(original_path, "optimizer_unavailable")
                 if get_resp.status_code >= 400:
-                    return self._fallback(original_path, self._reason_from_response(get_resp))
+                    reason = self._reason_from_response(get_resp)
+                    logger.warning(
+                        "PDF optimizer polling failed: job_id=%s status_code=%s "
+                        "reason=%s",
+                        job_id,
+                        get_resp.status_code,
+                        reason,
+                    )
+                    return self._fallback(original_path, reason)
 
                 data = get_resp.json()
                 status = data.get("status")
                 if status == "done":
+                    logger.info("PDF optimizer reported success: job_id=%s", job_id)
                     return self._validate_and_build_result(data, original_path)
                 if status == "error":
-                    return self._fallback(original_path, self._reason_from_payload(data))
+                    reason = self._reason_from_payload(data)
+                    logger.warning(
+                        "PDF optimizer reported error: job_id=%s reason=%s",
+                        job_id,
+                        reason,
+                    )
+                    return self._fallback(original_path, reason)
 
                 time.sleep(self.poll_interval)
 
+            logger.warning("PDF optimizer polling timeout: job_id=%s", job_id)
             return self._fallback(original_path, "timeout")
         except requests.exceptions.ConnectionError as exc:
             logger.warning("PDF optimizer unavailable: %s", exc)

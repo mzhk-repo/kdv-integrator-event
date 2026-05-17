@@ -1,3 +1,4 @@
+import logging
 import shutil
 import subprocess
 import time
@@ -9,6 +10,7 @@ from typing import Any
 from kdv_optimizer.config import OptimizerConfig
 
 
+logger = logging.getLogger("KDV-Optimizer")
 config = OptimizerConfig()
 _optimizer_pool = ProcessPoolExecutor(max_workers=1)
 
@@ -79,13 +81,29 @@ def _check_disk_space(filepath: str) -> bool:
         )
         free_bytes = shutil.disk_usage(usage_path).free
     except OSError:
+        logger.warning("Optimizer disk preflight failed: input_path=%s", filepath)
         return False
 
-    return free_bytes > int(file_size * DISK_SPACE_MULTIPLIER)
+    required_bytes = int(file_size * DISK_SPACE_MULTIPLIER)
+    enough_space = free_bytes > required_bytes
+    logger.info(
+        "Optimizer disk preflight: input_path=%s free_mb=%s required_mb=%s ok=%s",
+        filepath,
+        _mb(free_bytes),
+        _mb(required_bytes),
+        enough_space,
+    )
+    return enough_space
 
 
 def run_ghostscript(input_path: str, output_path: str) -> None:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Ghostscript optimization started: input_path=%s output_path=%s timeout=%s",
+        input_path,
+        output_path,
+        config.GS_TIMEOUT,
+    )
     subprocess.run(
         [
             "nice",
@@ -138,21 +156,61 @@ def _error_result(
 def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
     started_at = time.perf_counter()
     original_size = Path(input_path).stat().st_size
+    logger.info(
+        "PDF optimization process started: input_path=%s output_path=%s original_mb=%s",
+        input_path,
+        output_path,
+        _mb(original_size),
+    )
 
     run_ghostscript(input_path, output_path)
 
     output = Path(output_path)
     if not output.exists():
+        logger.warning(
+            "PDF optimization failed: reason=missing_output input_path=%s "
+            "output_path=%s time_ms=%s",
+            input_path,
+            output_path,
+            int((time.perf_counter() - started_at) * 1000),
+        )
         return _error_result("missing_output", input_path, output_path, started_at)
 
     optimized_size = output.stat().st_size
     if optimized_size <= 0:
+        logger.warning(
+            "PDF optimization failed: reason=empty_output input_path=%s "
+            "output_path=%s time_ms=%s",
+            input_path,
+            output_path,
+            int((time.perf_counter() - started_at) * 1000),
+        )
         return _error_result("empty_output", input_path, output_path, started_at)
 
     if optimized_size > original_size:
+        logger.warning(
+            "PDF optimization failed: reason=larger_output input_path=%s "
+            "output_path=%s original_mb=%s final_mb=%s time_ms=%s",
+            input_path,
+            output_path,
+            _mb(original_size),
+            _mb(optimized_size),
+            int((time.perf_counter() - started_at) * 1000),
+        )
         return _error_result("larger_output", input_path, output_path, started_at)
 
     reduction_pct = round((1 - (optimized_size / original_size)) * 100, 2)
+    time_ms = int((time.perf_counter() - started_at) * 1000)
+    logger.info(
+        "PDF optimization process completed: input_path=%s output_path=%s "
+        "original_mb=%s final_mb=%s reduction_pct=%s time_ms=%s",
+        input_path,
+        output_path,
+        _mb(original_size),
+        _mb(optimized_size),
+        reduction_pct,
+        time_ms,
+    )
     return {
         "status": "done",
         "output_path": output_path,
@@ -162,7 +220,7 @@ def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
             "original_mb": _mb(original_size),
             "final_mb": _mb(optimized_size),
             "reduction_pct": reduction_pct,
-            "time_ms": int((time.perf_counter() - started_at) * 1000),
+            "time_ms": time_ms,
         },
     }
 
@@ -172,8 +230,19 @@ class PDFOptimizerService:
         input_path, output_path = build_job_paths(job_id)
 
         if not _check_disk_space(input_path):
+            logger.warning(
+                "Optimizer job rejected by disk preflight: job_id=%s input_path=%s",
+                job_id,
+                input_path,
+            )
             raise RuntimeError("not enough disk space for PDF optimization")
 
+        logger.info(
+            "Optimizer job queued: job_id=%s input_path=%s output_path=%s",
+            job_id,
+            input_path,
+            output_path,
+        )
         return _optimizer_pool.submit(_optimize_pdf, input_path, output_path)
 
     def get_job_status(self, job_id: str, future: Future) -> dict[str, Any]:
@@ -185,6 +254,12 @@ class PDFOptimizerService:
         try:
             return future.result()
         except subprocess.TimeoutExpired as exc:
+            logger.warning(
+                "Optimizer job timed out: job_id=%s timeout=%s error=%s",
+                job_id,
+                config.GS_TIMEOUT,
+                exc,
+            )
             return {
                 "status": "error",
                 "output_path": None,
@@ -195,6 +270,7 @@ class PDFOptimizerService:
                 },
             }
         except Exception as exc:
+            logger.exception("Optimizer job raised exception: job_id=%s", job_id)
             return {
                 "status": "error",
                 "output_path": None,

@@ -1,3 +1,4 @@
+import logging
 import os
 
 import subprocess
@@ -128,6 +129,27 @@ def test_optimizer_larger_output_fallback(tmp_path):
     assert result["output_path"] == str(original)
     assert result["stats"]["fallback_reason"] == "larger_output"
     assert result["stats"]["candidate_output_path"] == str(output)
+
+
+def test_optimizer_success_logs_completion(tmp_path, caplog):
+    """Optimizer логує старт і успішне завершення без реального Ghostscript."""
+    original = tmp_path / "original.pdf"
+    output = tmp_path / "optimized.pdf"
+    original.write_bytes(b"original-content")
+
+    def fake_run_ghostscript(_input_path, output_path):
+        Path(output_path).write_bytes(b"small")
+
+    with patch.object(
+        optimizer_pdf, "run_ghostscript", side_effect=fake_run_ghostscript
+    ), caplog.at_level(logging.INFO, logger="KDV-Optimizer"):
+        result = optimizer_pdf._optimize_pdf(str(original), str(output))
+
+    assert result["status"] == "done"
+    assert result["stats"]["fallback_reason"] is None
+    assert "PDF optimization process started" in caplog.text
+    assert "PDF optimization process completed" in caplog.text
+    assert "reduction_pct" in caplog.text
 
 
 def test_optimizer_client_unavailable(tmp_path):

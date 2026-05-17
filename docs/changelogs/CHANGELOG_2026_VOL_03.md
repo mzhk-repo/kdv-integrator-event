@@ -15,3 +15,28 @@
 - **Verification:** `python3 -m py_compile tests/test_app.py tests/test_robot.py`; локальний `pytest` на хості не запустився через відсутній `flask`; контейнерна перевірка `docker run --rm --env-file .env.example --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5f50c2647018 -m pytest tests/test_app.py tests/test_robot.py -q` -> `15 passed`.
 - **Risks:** Roadmap тепер відображає фактичну структуру тестів: robot CLI покривається через `tests/test_robot.py`; якщо в майбутньому зʼявляться інші scripts-тести, їх можна винести окремо без зміни поточного контракту.
 - **Rollback:** Відкотити checkbox-и/уточнення roadmap і цей changelog-запис.
+
+## 2026-05-17 — Runbook для PDF optimizer
+
+- **Context:** Після завершення основних фаз впровадження `kdv-optimizer` потрібен окремий операційний runbook для використання, конфігурації, перевірки, troubleshooting і rollback модуля оптимізації PDF.
+- **Change:** Додано `docs/RUNBOOK_PDF_OPTIMIZER.md` на основі `docs/pdf-optimizer/PRD-optimizer.md` і `docs/pdf-optimizer/roadmap-optimizer.md`. Документ описує архітектуру `kdv-api`/`kdv-optimizer`, умови запуску оптимізації, ENV, Docker Compose/Swarm контракт, Koha/API/Robot usage, health/readiness checks, telemetry, deploy/redeploy, rollback, cleanup temp-файлів, troubleshooting, тестування, Ghostscript CVE policy і SLO орієнтири.
+- **Verification:** Переглянуто `docs/RUNBOOK_PDF_OPTIMIZER.md` через `sed`; перевірено наявність ключових розділів через `rg` (`DATA_DIR`, `/ready`, rollback, telemetry, Trivy, `skip_optimization`, `kdv_optimize_data`).
+- **Risks:** Команди з контейнерами використовують placeholders `<kdv-api-container-id>`/`<kdv-optimizer-container-id>`; оператор має підставити актуальні значення з `docker ps`.
+- **Rollback:** Видалити `docs/RUNBOOK_PDF_OPTIMIZER.md` і цей changelog-запис.
+
+## 2026-05-17 — README update для PDF optimizer
+
+- **Context:** Після додавання `kdv-optimizer` і окремого runbook потрібно актуалізувати головний README як вхідну точку для розробників та операторів, не видаляючи існуючі розділи.
+- **Change:** Оновлено `README.md`: статус і M8-контекст, ключові можливості, архітектурну схему, topology репозиторію, ENV для optimizer-а, локальний запуск, pytest-команди з `kdv-optimizer` у `PYTHONPATH`, CI/CD опис, rollback, API/інтеграції, health/readiness probes, SLO та документаційні посилання. Додано посилання на `docs/RUNBOOK_PDF_OPTIMIZER.md` і активний changelog `docs/changelogs/CHANGELOG_2026_VOL_03.md`.
+- **Verification:** Переглянуто README через `sed`; перевірено ключові згадки через `rg` (`kdv-optimizer`, `RUNBOOK_PDF_OPTIMIZER`, `KDV_OPTIMIZER`, `PYTHONPATH`, `v0.4`).
+- **Risks:** README лишається high-level документом; детальні operational команди винесені в runbook-и, насамперед `docs/RUNBOOK_PDF_OPTIMIZER.md`.
+- **Rollback:** Відкотити зміни `README.md` і цей changelog-запис.
+
+## 2026-05-17 — Logging для PDF optimizer pipeline
+
+- **Context:** Після успішної UI-архівації важкого PDF файл завантажувався в DSpace вже оптимізованим, але у логах `kdv-api` і `kdv-optimizer` не було зрозумілих подій про передачу job, виконання Ghostscript, success або fallback/error.
+- **Change:** Додано `INFO/WARNING` логування в `src/core.py` і `src/services/pdf.py` для skip/fallback/handoff/success сценаріїв інтегратора. Додано stdout logging setup і події прийому, submit, status transition, readiness failure у `kdv-optimizer/optimizer_app.py`. У `kdv-optimizer/kdv_optimizer/services/pdf.py` додано логи disk preflight, queue, старту Ghostscript, успішного завершення та помилок `missing_output`, `empty_output`, `larger_output`, `timeout`, `exception`. Додано focused тести на integrator handoff log і optimizer completion log.
+- **Verification:** `python3 -m py_compile src/core.py src/services/pdf.py kdv-optimizer/optimizer_app.py kdv-optimizer/kdv_optimizer/services/pdf.py tests/test_core.py tests/test_services.py`; локальний `pytest` на хості не запустився через відсутній `pymarc`; контейнерна перевірка `docker run --rm --env-file .env.example --entrypoint python -e PYTHONPATH=/work:/work/kdv-optimizer -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:0b6b996e30b3 -m pytest tests/test_core.py tests/test_services.py -q` -> `22 passed`; `git diff --check -- src/core.py src/services/pdf.py kdv-optimizer/optimizer_app.py kdv-optimizer/kdv_optimizer/services/pdf.py tests/test_core.py tests/test_services.py`. `ruff` не запущено: модуль/команда недоступні в host Python і в образі `kdv-integrator-event:0b6b996e30b3`.
+- **Risks:** Логи містять локальні шляхи PDF у контейнері/shared volume та `job_id`, але не містять токенів, паролів або API-ключів. Polling `processing` не логується на кожен запит, щоб не створювати зайвий шум.
+- **Rollback:** Відкотити зміни у `src/core.py`, `src/services/pdf.py`, `kdv-optimizer/optimizer_app.py`, `kdv-optimizer/kdv_optimizer/services/pdf.py`, `tests/test_core.py`, `tests/test_services.py` і цей changelog-запис.
+
