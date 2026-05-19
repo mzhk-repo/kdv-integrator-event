@@ -35,6 +35,7 @@ class StubKoha:
     def __init__(self):
         self.metadata = {"file_path": "missing.pdf", "collection_uuid": "coll123"}
         self.status_log = []
+        self.uploaded_covers = []
 
     def get_biblio_metadata(self, num):
         return self.metadata
@@ -50,6 +51,13 @@ class StubKoha:
 
     def get_cover_image_url(self, num):
         return "http://koha/cover.jpg"
+
+    def upload_cover(self, num, file_path):
+        self.uploaded_covers.append((num, file_path))
+        return True
+
+    def check_cover_exists(self, num):
+        return False
 
 
 class StubDSpace:
@@ -77,6 +85,23 @@ def test_parse_marc_rules_basic():
     xml = '<record><datafield tag="245" ind1=" " ind2=" "><subfield code="a">Hello</subfield></datafield></record>'
     out = parse_marc_details(xml)
     assert out.get("dc.title") == "Hello"
+
+
+def test_koha_metadata_extracts_external_cover_path():
+    client = KohaClient.__new__(KohaClient)
+    client._get_biblio_xml = lambda _biblio_id: (
+        '<record><datafield tag="956" ind1=" " ind2=" ">'
+        '<subfield code="u">books/book.pdf</subfield>'
+        '<subfield code="p">covers/book.jpg</subfield>'
+        '<subfield code="x">collection-uuid</subfield>'
+        '</datafield></record>'
+    )
+
+    meta = client.get_biblio_metadata(42)
+
+    assert meta["file_path"] == "books/book.pdf"
+    assert meta["cover_path"] == "covers/book.jpg"
+    assert meta["collection_uuid"] == "collection-uuid"
 
 
 def test_koha_rest_auth_error_is_diagnostic():
@@ -415,6 +440,82 @@ def test_optimizer_fallback_does_not_fail_archive(tmp_path, monkeypatch):
     assert res["pdf_optimized"] == "false"
     assert res["pdf_fallback_reason"] == "timeout"
     assert dspace.uploaded[0][1] == str(pdf)
+
+
+def test_external_cover_upload_runs_when_pdf_missing(tmp_path, monkeypatch):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    cover = mount / "covers" / "manual.jpg"
+    cover.parent.mkdir()
+    cover.write_bytes(b"jpeg-bytes")
+    koha = StubKoha()
+    koha.metadata = {
+        "file_path": "books/missing.pdf",
+        "cover_path": "covers/manual.jpg",
+        "collection_uuid": "coll",
+    }
+    dspace = StubDSpace()
+    run_dspace = Mock()
+
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(mount))
+    monkeypatch.setattr("src.core.run_dspace_workflow", run_dspace)
+
+    with pytest.raises(Exception, match="File not found on disk"):
+        process_integration_logic(
+            "task-id",
+            5,
+            koha_client=koha,
+            dspace_client=dspace,
+        )
+
+    assert koha.uploaded_covers == [("5", str(cover))]
+    run_dspace.assert_not_called()
+    assert any(
+        status == "error" and msg == "File missing: books/missing.pdf"
+        for _, status, msg in koha.status_log
+    )
+
+
+def test_external_cover_upload_runs_when_pdf_field_empty(tmp_path, monkeypatch):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    cover = mount / "manual.jpg"
+    cover.write_bytes(b"jpeg-bytes")
+    koha = StubKoha()
+    koha.metadata = {
+        "file_path": None,
+        "cover_path": "manual.jpg",
+        "collection_uuid": "coll",
+    }
+
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(mount))
+
+    with pytest.raises(Exception, match="File not found on disk"):
+        process_integration_logic(
+            "task-id", 5, koha_client=koha, dspace_client=StubDSpace()
+        )
+
+    assert koha.uploaded_covers == [("5", str(cover))]
+
+
+def test_cover_relative_path_cannot_escape_mount(tmp_path, monkeypatch):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    pdf = mount / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    koha = StubKoha()
+    koha.metadata = {
+        "file_path": "book.pdf",
+        "cover_path": "../secret.jpg",
+        "collection_uuid": "coll",
+    }
+
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(mount))
+
+    with pytest.raises(ValueError, match=r"Invalid relative path in 956\$p"):
+        process_integration_logic(
+            "task-id", 5, koha_client=koha, dspace_client=StubDSpace()
+        )
 
 
 def test_hard_limit_does_not_prevent_optimization_path(tmp_path, monkeypatch):

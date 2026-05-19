@@ -138,6 +138,8 @@ task_manager.start_task(
 
 956$c — Пряме посилання на обкладинку (опак-image.pl?imagenumber=...).
 
+956$p — Відносний шлях до готової обкладинки; якщо заданий, cover workflow завантажує цей файл і не генерує JPG з PDF.
+
 856$u — Handle-посилання на репозиторій.
 
 ### 7. Протокол "Hybrid CGI" (Cover Upload)
@@ -147,6 +149,7 @@ REST API Koha не дозволяє повноцінно працювати з �
 - **Auth:** Логін через POST-форму на mainpage.pl (у CoverService._ensure_cgi_login).
 - **AJAX Spoofing:** Завантаження файлу на upload-file.pl з заголовком `X-Requested-With: XMLHttpRequest` (інакше Koha не віддасть JSON).
 - **Scraping:** Парсинг HTML сторінки інструментів для знаходження `imagenumber`, щоб сформувати публічне посилання.
+- **External cover path:** якщо в `956$p` є відносний шлях до зображення, `CoverService` завантажує цей файл напряму; наявність PDF книги не є передумовою для цієї спроби upload.
 
 🛡 Безпека та Відмовостійкість (M2/M3)
 

@@ -103,6 +103,7 @@ class KohaClient:
         field = fields_956[0]
         return {
             "file_path": self._get_subfield_safe(field, "u"),
+            "cover_path": self._get_subfield_safe(field, "p"),
             "collection_uuid": self._get_subfield_safe(field, "x"),
             "status": self._get_subfield_safe(field, "y"),
             "dspace_uuid": self._get_subfield_safe(field, "3"),

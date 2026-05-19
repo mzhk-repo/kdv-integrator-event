@@ -7,9 +7,10 @@
 1. [CHANGELOG_2026_VOL_03.md]
    - Статус: active
    - Рядків: 
-2. [CHANGELOG_2026_VOL_02.md]
-   - Статус: archived
-   - Рядків: 
+
+Попередні томи:
+- docs/changelogs/CHANGELOG_2026_VOL_01.md
+- docs/changelogs/CHANGELOG_2026_VOL_02.md
 
 ## Політика ротації
 

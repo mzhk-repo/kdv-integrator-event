@@ -208,6 +208,40 @@ def test_files_move_to_error(tmp_path):
     assert moved.exists()
 
 
+class FakeCoverKoha:
+    def __init__(self):
+        self.uploaded = []
+        self.checked = False
+
+    def check_cover_exists(self, biblionumber):
+        self.checked = True
+        return True
+
+    def upload_cover(self, biblionumber, file_path):
+        self.uploaded.append((biblionumber, file_path))
+        return True
+
+
+def test_cover_service_uploads_external_cover_without_pdf_generation(tmp_path):
+    cover = tmp_path / "manual.jpg"
+    cover.write_bytes(b"jpeg-bytes")
+    koha = FakeCoverKoha()
+    cs = CoverService(koha_client=koha)
+
+    with patch.object(cs, "_generate_image") as generate_mock:
+        res = cs.process_book(
+            "42",
+            None,
+            str(tmp_path),
+            cover_source_path=str(cover),
+        )
+
+    assert res == {"status": "success", "file": str(cover)}
+    assert koha.uploaded == [("42", str(cover))]
+    assert koha.checked is False
+    generate_mock.assert_not_called()
+
+
 def test_cover_service_initialization():
     # just ensure it can be constructed without Koha
     cs = CoverService()

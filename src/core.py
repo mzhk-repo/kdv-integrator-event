@@ -198,6 +198,28 @@ def _cleanup_optimizer_files(paths: tuple[str, str]) -> None:
             os.remove(file_path)
 
 
+def _resolve_mount_relative_path(
+    relative_path: str | None, field_name: str
+) -> str | None:
+    if not relative_path:
+        return None
+
+    clean_path = relative_path.strip()
+    if not clean_path:
+        return None
+
+    candidate = os.path.normpath(clean_path)
+    if os.path.isabs(candidate) or candidate.startswith("..") or "/.." in candidate:
+        raise ValueError(f"Invalid relative path in {field_name}: {relative_path}")
+
+    mount_root = os.path.abspath(INTEGRATOR_MOUNT_PATH)
+    full_path = os.path.abspath(os.path.join(mount_root, candidate))
+    if os.path.commonpath([mount_root, full_path]) != mount_root:
+        raise ValueError(f"Path escapes mount root in {field_name}: {relative_path}")
+
+    return full_path
+
+
 def parse_marc_details(xml_data):
     try:
         reader = parse_xml_to_array(BytesIO(xml_data.encode("utf-8")))
@@ -351,9 +373,18 @@ def process_integration_logic(
             raise Exception("No 956 field found")
 
         file_rel_path = meta["file_path"]
-        original_full_path = os.path.join(INTEGRATOR_MOUNT_PATH, file_rel_path)
+        cover_rel_path = meta.get("cover_path")
+        cover_source_path = _resolve_mount_relative_path(cover_rel_path, "956$p")
+        original_full_path = _resolve_mount_relative_path(file_rel_path, "956$u")
 
-        if not os.path.exists(original_full_path):
+        if not original_full_path or not os.path.exists(original_full_path):
+            if cover_source_path:
+                cover_service.process_book(
+                    str(biblionumber),
+                    None,
+                    os.path.dirname(cover_source_path),
+                    cover_source_path=cover_source_path,
+                )
             koha.set_status(biblionumber, "error", f"File missing: {file_rel_path}")
             raise Exception("File not found on disk")
 
@@ -384,6 +415,7 @@ def process_integration_logic(
                 str(biblionumber),
                 current_active_path,
                 pdf_dir,
+                cover_source_path=cover_source_path,
             )
 
             # Task B: DSpace
