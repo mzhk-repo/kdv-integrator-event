@@ -93,6 +93,7 @@ def test_koha_metadata_extracts_external_cover_path():
         '<record><datafield tag="956" ind1=" " ind2=" ">'
         '<subfield code="u">books/book.pdf</subfield>'
         '<subfield code="p">covers/book.jpg</subfield>'
+        '<subfield code="q">extra/a.pdf|extra/b.pdf</subfield>'
         '<subfield code="x">collection-uuid</subfield>'
         '</datafield></record>'
     )
@@ -101,6 +102,7 @@ def test_koha_metadata_extracts_external_cover_path():
 
     assert meta["file_path"] == "books/book.pdf"
     assert meta["cover_path"] == "covers/book.jpg"
+    assert meta["additional_files"] == "extra/a.pdf|extra/b.pdf"
     assert meta["collection_uuid"] == "collection-uuid"
 
 
@@ -159,6 +161,11 @@ def test_task_manager_integration(tmp_path):
     assert info is not None
     assert info["status"] in ("error", "success")
     assert koha.status_log
+
+
+class ExistingItemDSpace(StubDSpace):
+    def find_item_by_biblionumber(self, num):
+        return {"uuid": "existing-u1", "handle": "1/2"}
 
 
 class FailingUploadDSpace(StubDSpace):
@@ -224,6 +231,95 @@ def _prepare_optimizer_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("INPUT_DIR", str(input_dir))
     monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
     return input_dir, output_dir
+
+
+def test_run_dspace_uploads_additional_files_without_rename_or_optimizer(
+    tmp_path, monkeypatch
+):
+    koha = StubKoha()
+    dspace = StubDSpace()
+    primary = tmp_path / "biblio_73_v01.pdf"
+    extra_a = tmp_path / "extra-a.pdf"
+    extra_b = tmp_path / "nested" / "extra-b.pdf"
+    primary.write_bytes(b"primary")
+    extra_a.write_bytes(b"extra-a")
+    extra_b.parent.mkdir()
+    extra_b.write_bytes(b"extra-b")
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(tmp_path))
+
+    res = run_dspace_workflow(
+        73,
+        str(primary),
+        {
+            "collection_uuid": "coll",
+            "additional_files": "extra-a.pdf|nested/extra-b.pdf",
+        },
+        koha_client=koha,
+        dspace_client=dspace,
+        skip_optimization=True,
+    )
+
+    assert res["additional_files_uploaded"] == [
+        "extra-a.pdf",
+        "nested/extra-b.pdf",
+    ]
+    assert res["additional_files_failed"] == []
+    assert dspace.uploaded == [
+        ("u1", str(primary), "biblio_73_v01.pdf"),
+        ("u1", str(extra_a), None),
+        ("u1", str(extra_b), None),
+    ]
+
+
+def test_run_dspace_additional_missing_and_invalid_are_non_fatal(tmp_path, monkeypatch):
+    koha = StubKoha()
+    dspace = StubDSpace()
+    primary = tmp_path / "biblio_74_v01.pdf"
+    primary.write_bytes(b"primary")
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(tmp_path))
+
+    res = run_dspace_workflow(
+        74,
+        str(primary),
+        {
+            "collection_uuid": "coll",
+            "additional_files": "missing.pdf|../secret.pdf",
+        },
+        koha_client=koha,
+        dspace_client=dspace,
+        skip_optimization=True,
+    )
+
+    assert res["handle"].endswith("/handle/1/2")
+    assert res["additional_files_uploaded"] == []
+    assert res["additional_files_failed"] == [
+        {"path": "missing.pdf", "reason": "missing"},
+        {"path": "../secret.pdf", "reason": "invalid_path"},
+    ]
+    assert dspace.uploaded == [("u1", str(primary), "biblio_74_v01.pdf")]
+
+
+def test_run_dspace_existing_item_uploads_additional_files(tmp_path, monkeypatch):
+    koha = StubKoha()
+    dspace = ExistingItemDSpace()
+    primary = tmp_path / "biblio_75_v01.pdf"
+    extra = tmp_path / "extra.pdf"
+    primary.write_bytes(b"primary")
+    extra.write_bytes(b"extra")
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(tmp_path))
+
+    res = run_dspace_workflow(
+        75,
+        str(primary),
+        {"collection_uuid": "coll", "additional_files": "extra.pdf"},
+        koha_client=koha,
+        dspace_client=dspace,
+        skip_optimization=True,
+    )
+
+    assert res["status"] == "linked_existing"
+    assert res["additional_files_uploaded"] == ["extra.pdf"]
+    assert dspace.uploaded == [("existing-u1", str(extra), None)]
 
 
 def test_run_dspace_skip_optimization_marks_telemetry(tmp_path):

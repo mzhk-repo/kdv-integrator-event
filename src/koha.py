@@ -104,6 +104,7 @@ class KohaClient:
         return {
             "file_path": self._get_subfield_safe(field, "u"),
             "cover_path": self._get_subfield_safe(field, "p"),
+            "additional_files": self._get_subfield_safe(field, "q"),
             "collection_uuid": self._get_subfield_safe(field, "x"),
             "status": self._get_subfield_safe(field, "y"),
             "dspace_uuid": self._get_subfield_safe(field, "3"),

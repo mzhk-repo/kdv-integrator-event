@@ -71,7 +71,7 @@
 - **Cover Automator** — автоматичне створення JPG-мініатюр з першої сторінки PDF (`pdf2image`) або завантаження готової обкладинки з `956$p`
 - **PDF Optimizer** — ізольований `kdv-optimizer` стискає важкі scan-like PDF через Ghostscript перед DSpace upload, із fallback на оригінал
 - **CGI Protocol Bypass** — завантаження обкладинок через емуляцію браузерної сесії (обхід обмежень Koha REST API)
-- **MARC Enrichment** — зворотній запис Handle DSpace (`856$u`) та URL обкладинки (`956$c`) у Koha; `956$p` може задавати відносний шлях до готової обкладинки
+- **MARC Enrichment** — зворотній запис Handle DSpace (`856$u`) та URL обкладинки (`956$c`) у Koha; `956$p` задає готову обкладинку, `956$q` — additional файли для ORIGINAL
 - **Batch & Audit** — `robot.py` для масової архівації, `nightwalker.py` для пошуку "зомбі" (файли без посилань)
 
 ### Що НЕ входить у скоуп

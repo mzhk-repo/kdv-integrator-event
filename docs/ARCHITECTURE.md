@@ -140,6 +140,8 @@ task_manager.start_task(
 
 956$p — Відносний шлях до готової обкладинки; якщо заданий, cover workflow завантажує цей файл і не генерує JPG з PDF.
 
+956$q — Відносні шляхи additional файлів через `|`; вони завантажуються в ORIGINAL без rename і без `kdv-optimizer`.
+
 856$u — Handle-посилання на репозиторій.
 
 ### 7. Протокол "Hybrid CGI" (Cover Upload)

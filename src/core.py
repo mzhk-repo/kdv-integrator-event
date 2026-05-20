@@ -198,6 +198,70 @@ def _cleanup_optimizer_files(paths: tuple[str, str]) -> None:
             os.remove(file_path)
 
 
+def _parse_additional_file_paths(raw_paths: str | None) -> list[str]:
+    if not raw_paths:
+        return []
+    return [part.strip() for part in raw_paths.split("|") if part.strip()]
+
+
+def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) -> dict:
+    uploaded = []
+    failed = []
+
+    for relative_path in _parse_additional_file_paths(raw_paths):
+        try:
+            full_path = _resolve_mount_relative_path(relative_path, "956$q")
+        except ValueError as exc:
+            logger.warning(
+                "Additional DSpace file path rejected: item_uuid=%s relative_path=%s error=%s",
+                item_uuid,
+                relative_path,
+                exc,
+            )
+            failed.append({"path": relative_path, "reason": "invalid_path"})
+            continue
+
+        if not full_path or not os.path.exists(full_path):
+            logger.warning(
+                "Additional DSpace file missing: item_uuid=%s relative_path=%s full_path=%s",
+                item_uuid,
+                relative_path,
+                full_path,
+            )
+            failed.append({"path": relative_path, "reason": "missing"})
+            continue
+
+        try:
+            if dspace_client.upload_to_item(item_uuid, full_path):
+                logger.info(
+                    "Additional DSpace file uploaded: item_uuid=%s relative_path=%s full_path=%s",
+                    item_uuid,
+                    relative_path,
+                    full_path,
+                )
+                uploaded.append(relative_path)
+            else:
+                logger.warning(
+                    "Additional DSpace file upload returned False: item_uuid=%s relative_path=%s",
+                    item_uuid,
+                    relative_path,
+                )
+                failed.append({"path": relative_path, "reason": "upload_failed"})
+        except Exception as exc:
+            logger.warning(
+                "Additional DSpace file upload failed: item_uuid=%s relative_path=%s error=%s",
+                item_uuid,
+                relative_path,
+                exc,
+            )
+            failed.append({"path": relative_path, "reason": str(exc)})
+
+    return {
+        "additional_files_uploaded": uploaded,
+        "additional_files_failed": failed,
+    }
+
+
 def _resolve_mount_relative_path(
     relative_path: str | None, field_name: str
 ) -> str | None:
@@ -311,7 +375,11 @@ def run_dspace_workflow(
             if handle
             else f"{DSPACE_UI_URL}/items/{item_uuid}"
         )
-        return {"handle": final_link, "uuid": item_uuid, "status": "linked_existing"}
+        result = {"handle": final_link, "uuid": item_uuid, "status": "linked_existing"}
+        result.update(
+            _upload_additional_files(local_dspace, item_uuid, meta.get("additional_files"))
+        )
+        return result
 
     item_data = local_dspace.create_item_direct(collection_uuid, md)
     if not item_data:
@@ -345,12 +413,16 @@ def run_dspace_workflow(
             item_uuid, final_pdf_path, upload_name=upload_name
         ):
             raise Exception("Failed to upload file")
+        additional_telemetry = _upload_additional_files(
+            local_dspace, item_uuid, meta.get("additional_files")
+        )
     finally:
         _cleanup_optimizer_files(cleanup_paths)
 
     logger.info(f"✅ [DSpace-Thread] Finished for #{biblionumber}")
     result = {"handle": final_link, "uuid": item_uuid}
     result.update(pdf_telemetry)
+    result.update(additional_telemetry)
     return result
 
 
