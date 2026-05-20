@@ -202,9 +202,13 @@ class DSpaceClient:
             return resp.json()
         self._raise_rest_error("DSpace create item", "/core/items", resp)
 
-    def upload_to_item(self, item_uuid, file_path):
+    def upload_to_item(self, item_uuid, file_path, upload_name=None):
         if not os.path.exists(file_path):
             return False
+
+        filename = os.path.basename(upload_name or file_path)
+        if not filename:
+            filename = os.path.basename(file_path)
 
         bundle_uuid = None
         resp = self._request("GET", f"/core/items/{item_uuid}/bundles")
@@ -229,7 +233,7 @@ class DSpaceClient:
         old_ct = self.session.headers.pop("Content-Type", None)
         try:
             with open(file_path, "rb") as f:
-                files = {"file": (os.path.basename(file_path), f, "application/pdf")}
+                files = {"file": (filename, f, "application/pdf")}
                 resp = self._request(
                     "POST",
                     f"/core/bundles/{bundle_uuid}/bitstreams",

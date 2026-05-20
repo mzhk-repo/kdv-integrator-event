@@ -70,8 +70,8 @@ class StubDSpace:
     def create_item_direct(self, uuid, md):
         return {"uuid": "u1", "handle": "1/2"}
 
-    def upload_to_item(self, item_uuid, path):
-        self.uploaded.append((item_uuid, path))
+    def upload_to_item(self, item_uuid, path, upload_name=None):
+        self.uploaded.append((item_uuid, path, upload_name))
         return True
 
     def update_metadata(self, item_uuid, md):
@@ -162,8 +162,8 @@ def test_task_manager_integration(tmp_path):
 
 
 class FailingUploadDSpace(StubDSpace):
-    def upload_to_item(self, item_uuid, path):
-        self.uploaded.append((item_uuid, path))
+    def upload_to_item(self, item_uuid, path, upload_name=None):
+        self.uploaded.append((item_uuid, path, upload_name))
         raise Exception("upload exploded")
 
 
@@ -279,6 +279,31 @@ def test_run_dspace_success_result_contains_pdf_telemetry(tmp_path, monkeypatch)
     assert dspace.uploaded[0][1] != str(pdf)
     assert list(input_dir.iterdir()) == []
     assert list(output_dir.iterdir()) == []
+
+
+def test_run_dspace_optimized_upload_keeps_rename_first_filename(tmp_path, monkeypatch):
+    _prepare_optimizer_dirs(tmp_path, monkeypatch)
+    _force_optimization(monkeypatch)
+    koha = StubKoha()
+    dspace = StubDSpace()
+    processed_dir = tmp_path / "Processed"
+    processed_dir.mkdir()
+    pdf = processed_dir / "biblio_73_v01.pdf"
+    pdf.write_bytes(b"original-content")
+
+    res = run_dspace_workflow(
+        73,
+        str(pdf),
+        {"collection_uuid": "coll"},
+        koha_client=koha,
+        dspace_client=dspace,
+        optimizer_client=FakeSuccessOptimizer(),
+    )
+
+    assert res["pdf_optimized"] == "true"
+    assert dspace.uploaded[0][1] != str(pdf)
+    assert dspace.uploaded[0][1].endswith(".pdf")
+    assert dspace.uploaded[0][2] == "biblio_73_v01.pdf"
 
 
 def test_run_dspace_logs_optimizer_handoff(tmp_path, monkeypatch, caplog):

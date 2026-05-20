@@ -88,6 +88,41 @@ def test_dspace_update_metadata_contract_builds_json_patch(monkeypatch):
     ]
 
 
+def test_dspace_upload_to_item_uses_explicit_upload_name(monkeypatch, tmp_path):
+    client = DSpaceClient()
+    pdf = tmp_path / "11111111-1111-4111-8111-111111111111.pdf"
+    pdf.write_bytes(b"pdf-bytes")
+    captured = {}
+
+    def fake_request(method, endpoint, **kwargs):
+        if method == "GET" and endpoint == "/core/items/item-uuid/bundles":
+            return _Resp(
+                status_code=200,
+                payload={
+                    "_embedded": {
+                        "bundles": [{"name": "ORIGINAL", "uuid": "bundle-uuid"}]
+                    }
+                },
+            )
+        captured["method"] = method
+        captured["endpoint"] = endpoint
+        captured["files"] = kwargs["files"]
+        return _Resp(status_code=201)
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    ok = client.upload_to_item(
+        "item-uuid", str(pdf), upload_name="Processed/biblio_73_v01.pdf"
+    )
+
+    assert ok is True
+    assert captured["method"] == "POST"
+    assert captured["endpoint"] == "/core/bundles/bundle-uuid/bitstreams"
+    upload_field = captured["files"]["file"]
+    assert upload_field[0] == "biblio_73_v01.pdf"
+    assert upload_field[2] == "application/pdf"
+
+
 def test_dspace_create_item_error_is_diagnostic(monkeypatch):
     client = DSpaceClient()
 

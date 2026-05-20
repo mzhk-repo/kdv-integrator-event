@@ -334,8 +334,16 @@ def run_dspace_workflow(
             skip_optimization=skip_optimization,
             optimizer_client=optimizer_client,
         )
-        logger.info(f"📤 [DSpace-Thread] Uploading file to Item {item_uuid}")
-        if not local_dspace.upload_to_item(item_uuid, final_pdf_path):
+        upload_name = os.path.basename(file_path)
+        logger.info(
+            "📤 [DSpace-Thread] Uploading file to Item %s upload_path=%s upload_name=%s",
+            item_uuid,
+            final_pdf_path,
+            upload_name,
+        )
+        if not local_dspace.upload_to_item(
+            item_uuid, final_pdf_path, upload_name=upload_name
+        ):
             raise Exception("Failed to upload file")
     finally:
         _cleanup_optimizer_files(cleanup_paths)

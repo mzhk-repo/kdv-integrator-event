@@ -37,8 +37,8 @@ class StubDSpace:
         self.created = True
         return {"uuid": "uuid-1", "handle": "123/456"}
 
-    def upload_to_item(self, item_uuid, file_path):
-        print("DSpace.upload_to_item", item_uuid, file_path)
+    def upload_to_item(self, item_uuid, file_path, upload_name=None):
+        print("DSpace.upload_to_item", item_uuid, file_path, upload_name)
         return True
 
 
