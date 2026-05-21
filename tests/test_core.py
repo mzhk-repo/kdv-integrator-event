@@ -46,8 +46,10 @@ class StubKoha:
     def set_status(self, num, status, msg=None):
         self.status_log.append((num, status, msg))
 
-    def set_success(self, num, handle_url, item_uuid=None, cover_url=None):
-        self.status_log.append((num, "imported", handle_url))
+    def set_success(
+        self, num, handle_url, item_uuid=None, cover_url=None, primary_download_url=None
+    ):
+        self.status_log.append((num, "imported", handle_url, primary_download_url))
 
     def get_cover_image_url(self, num):
         return "http://koha/cover.jpg"
@@ -72,10 +74,13 @@ class StubDSpace:
 
     def upload_to_item(self, item_uuid, path, upload_name=None):
         self.uploaded.append((item_uuid, path, upload_name))
-        return True
+        return {"uuid": f"bitstream-{len(self.uploaded)}"}
 
     def update_metadata(self, item_uuid, md):
         return True
+
+    def get_primary_bitstream(self, item_uuid):
+        return {"uuid": "existing-primary-bitstream"}
 
     def find_item_uuid_by_handle(self, handle):
         return None
@@ -233,6 +238,26 @@ def _prepare_optimizer_dirs(tmp_path, monkeypatch):
     return input_dir, output_dir
 
 
+def test_run_dspace_returns_primary_download_url(tmp_path):
+    koha = StubKoha()
+    dspace = StubDSpace()
+    pdf = tmp_path / "biblio_73_v01.pdf"
+    pdf.write_bytes(b"primary")
+
+    res = run_dspace_workflow(
+        73,
+        str(pdf),
+        {"collection_uuid": "coll"},
+        koha_client=koha,
+        dspace_client=dspace,
+        skip_optimization=True,
+    )
+
+    assert res["primary_download_url"].endswith(
+        "/bitstreams/bitstream-1/download"
+    )
+
+
 def test_run_dspace_uploads_additional_files_without_rename_or_optimizer(
     tmp_path, monkeypatch
 ):
@@ -318,6 +343,9 @@ def test_run_dspace_existing_item_uploads_additional_files(tmp_path, monkeypatch
     )
 
     assert res["status"] == "linked_existing"
+    assert res["primary_download_url"].endswith(
+        "/bitstreams/existing-primary-bitstream/download"
+    )
     assert res["additional_files_uploaded"] == ["extra.pdf"]
     assert dspace.uploaded == [("existing-u1", str(extra), None)]
 

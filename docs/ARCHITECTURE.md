@@ -142,7 +142,9 @@ task_manager.start_task(
 
 956$q — Відносні шляхи additional файлів через `|`; вони завантажуються в ORIGINAL без rename і без `kdv-optimizer`.
 
-856$u — Handle-посилання на репозиторій.
+856 #1 `$u` — Пряме посилання на primary bitstream download, `$y` = `Файл`.
+
+856 #2 `$u` — Handle-посилання на репозиторій, `$y` = `Запис в репозиторії`.
 
 ### 7. Протокол "Hybrid CGI" (Cover Upload)
 

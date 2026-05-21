@@ -313,13 +313,21 @@ class KohaClient:
     def set_status(self, biblio_id, status, msg=None):
         return self._update_956(biblio_id, status=status, log_msg=msg)
 
-    def set_success(self, biblio_id, handle_url, item_uuid=None, cover_url=None):
+    def set_success(
+        self,
+        biblio_id,
+        handle_url,
+        item_uuid=None,
+        cover_url=None,
+        primary_download_url=None,
+    ):
         return self._update_956(
             biblio_id,
             status="imported",
             handle_url=handle_url,
             item_uuid=item_uuid,
             cover_url=cover_url,
+            primary_download_url=primary_download_url,
         )
 
     def _update_956(
@@ -330,6 +338,7 @@ class KohaClient:
         handle_url=None,
         item_uuid=None,
         cover_url=None,
+        primary_download_url=None,
     ):
         xml_data = self._get_biblio_xml(biblio_id)
         if not xml_data:
@@ -364,19 +373,33 @@ class KohaClient:
                     pass
                 f956.add_subfield("c", cover_url)
 
-        if handle_url:
+        if handle_url or primary_download_url:
             for f in record.get_fields("856"):
                 record.remove_field(f)
-            record.add_ordered_field(
-                Field(
-                    tag="856",
-                    indicators=["4", "0"],
-                    subfields=[
-                        Subfield(code="u", value=handle_url),
-                        Subfield(code="y", value="Repo Link"),
-                    ],
+
+            if primary_download_url:
+                record.add_ordered_field(
+                    Field(
+                        tag="856",
+                        indicators=["4", "0"],
+                        subfields=[
+                            Subfield(code="u", value=primary_download_url),
+                            Subfield(code="y", value="Файл"),
+                        ],
+                    )
                 )
-            )
+
+            if handle_url:
+                record.add_ordered_field(
+                    Field(
+                        tag="856",
+                        indicators=["4", "0"],
+                        subfields=[
+                            Subfield(code="u", value=handle_url),
+                            Subfield(code="y", value="Запис в репозиторії"),
+                        ],
+                    )
+                )
 
         new_xml = pymarc.record_to_xml(record).decode("utf-8")
         headers = {"Content-Type": "application/marcxml+xml"}

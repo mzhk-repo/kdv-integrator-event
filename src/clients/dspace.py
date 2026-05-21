@@ -25,6 +25,9 @@ class DSpaceClientWrapper:
     def create_item_direct(self, collection_uuid, metadata_dict):
         return self._client.create_item_direct(collection_uuid, metadata_dict)
 
+    def get_primary_bitstream(self, item_uuid):
+        return self._client.get_primary_bitstream(item_uuid)
+
     def upload_to_item(self, item_uuid, file_path, upload_name=None):
         return self._client.upload_to_item(
             item_uuid, file_path, upload_name=upload_name

@@ -49,6 +49,15 @@ def _file_mb(path: str) -> float | None:
         return None
 
 
+def _primary_download_url(bitstream_data) -> str | None:
+    if not isinstance(bitstream_data, dict):
+        return None
+    bitstream_uuid = bitstream_data.get("uuid")
+    if not bitstream_uuid:
+        return None
+    return f"{DSPACE_UI_URL}/bitstreams/{bitstream_uuid}/download"
+
+
 def _disk_free_mb(path: str) -> float | None:
     try:
         return round(shutil.disk_usage(path).free / 1024 / 1024, 2)
@@ -375,7 +384,13 @@ def run_dspace_workflow(
             if handle
             else f"{DSPACE_UI_URL}/items/{item_uuid}"
         )
-        result = {"handle": final_link, "uuid": item_uuid, "status": "linked_existing"}
+        primary_bitstream = local_dspace.get_primary_bitstream(item_uuid)
+        result = {
+            "handle": final_link,
+            "uuid": item_uuid,
+            "status": "linked_existing",
+            "primary_download_url": _primary_download_url(primary_bitstream),
+        }
         result.update(
             _upload_additional_files(local_dspace, item_uuid, meta.get("additional_files"))
         )
@@ -409,10 +424,12 @@ def run_dspace_workflow(
             final_pdf_path,
             upload_name,
         )
-        if not local_dspace.upload_to_item(
+        primary_bitstream = local_dspace.upload_to_item(
             item_uuid, final_pdf_path, upload_name=upload_name
-        ):
+        )
+        if not primary_bitstream:
             raise Exception("Failed to upload file")
+        primary_download_url = _primary_download_url(primary_bitstream)
         additional_telemetry = _upload_additional_files(
             local_dspace, item_uuid, meta.get("additional_files")
         )
@@ -420,7 +437,11 @@ def run_dspace_workflow(
         _cleanup_optimizer_files(cleanup_paths)
 
     logger.info(f"✅ [DSpace-Thread] Finished for #{biblionumber}")
-    result = {"handle": final_link, "uuid": item_uuid}
+    result = {
+        "handle": final_link,
+        "uuid": item_uuid,
+        "primary_download_url": primary_download_url,
+    }
     result.update(pdf_telemetry)
     result.update(additional_telemetry)
     return result
@@ -548,6 +569,7 @@ def process_integration_logic(
                 dspace_result["handle"],
                 item_uuid=dspace_result["uuid"],
                 cover_url=cover_url,
+                primary_download_url=dspace_result.get("primary_download_url"),
             )
 
         return dspace_result

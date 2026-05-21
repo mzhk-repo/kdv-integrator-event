@@ -202,6 +202,25 @@ class DSpaceClient:
             return resp.json()
         self._raise_rest_error("DSpace create item", "/core/items", resp)
 
+    def get_primary_bitstream(self, item_uuid):
+        bundle_uuid = None
+        resp = self._request("GET", f"/core/items/{item_uuid}/bundles")
+        if resp is not None and resp.status_code == 200:
+            for bundle in resp.json().get("_embedded", {}).get("bundles", []):
+                if bundle.get("name") == "ORIGINAL":
+                    bundle_uuid = bundle.get("uuid")
+                    break
+
+        if not bundle_uuid:
+            return None
+
+        resp = self._request("GET", f"/core/bundles/{bundle_uuid}/bitstreams")
+        if resp is not None and resp.status_code == 200:
+            bitstreams = resp.json().get("_embedded", {}).get("bitstreams", [])
+            if bitstreams:
+                return bitstreams[0]
+        return None
+
     def upload_to_item(self, item_uuid, file_path, upload_name=None):
         if not os.path.exists(file_path):
             return False
@@ -241,7 +260,10 @@ class DSpaceClient:
                     timeout=UPLOAD_TIMEOUT,
                 )
                 if resp and resp.status_code in [200, 201]:
-                    return True
+                    try:
+                        return resp.json()
+                    except Exception:
+                        return True
                 self._raise_rest_error(
                     "DSpace upload bitstream",
                     f"/core/bundles/{bundle_uuid}/bitstreams",

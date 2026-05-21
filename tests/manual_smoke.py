@@ -18,8 +18,13 @@ class StubKoha:
     def set_status(self, biblio, status, msg=None):
         print(f"Koha.set_status called {biblio} {status} {msg}")
 
-    def set_success(self, biblio, handle_url, item_uuid=None, cover_url=None):
-        print(f"Koha.set_success {biblio} {handle_url} {item_uuid} {cover_url}")
+    def set_success(
+        self, biblio, handle_url, item_uuid=None, cover_url=None, primary_download_url=None
+    ):
+        print(
+            f"Koha.set_success {biblio} {handle_url} {item_uuid} "
+            f"{cover_url} {primary_download_url}"
+        )
 
     def get_cover_image_url(self, biblionumber):
         return "http://koha.cover/image.jpg"
@@ -39,7 +44,7 @@ class StubDSpace:
 
     def upload_to_item(self, item_uuid, file_path, upload_name=None):
         print("DSpace.upload_to_item", item_uuid, file_path, upload_name)
-        return True
+        return {"uuid": "bitstream-uuid"}
 
 
 # test parse_marc
