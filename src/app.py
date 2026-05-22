@@ -179,6 +179,15 @@ def readinesscheck():
     )
 
 
+def _parse_integrate_payload():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "skip_optimization": bool(payload.get("skip_optimization", False)),
+    }
+
+
 def _make_clients():
     """Return a fresh pair of Koha/DSpace clients (wrappers) for glue code.
 
@@ -190,12 +199,14 @@ def _make_clients():
 @app.route("/kdv/api/integrate/<int:biblionumber>", methods=["POST"])
 def archive_record_async(biblionumber):
     try:
+        payload = _parse_integrate_payload()
         koha_client, dspace_client = _make_clients()
         task_id = task_manager.start_task(
             process_integration_logic,
             biblionumber,
             koha_client=koha_client,
             dspace_client=dspace_client,
+            skip_optimization=payload["skip_optimization"],
         )
         return jsonify({"status": "accepted", "task_id": task_id}), 202
     except Exception as e:

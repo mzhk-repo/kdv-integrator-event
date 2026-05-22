@@ -3,8 +3,8 @@
 > **Middleware-сервіс для автоматизованої синхронізації Koha ILS із цифровим репозиторієм DSpace 7/8.** Отримує запит на архівацію → завантажує PDF і метадані до DSpace → генерує обкладинку → синхронізує посилання назад у MARC-запис Koha.
 
 [![Status](https://img.shields.io/badge/status-production--ready-brightgreen)]()
-[![Version](https://img.shields.io/badge/version-0.3.0-blue)]()
-[![Tests](https://img.shields.io/badge/tests-22%20passed-brightgreen)]()
+[![Version](https://img.shields.io/badge/version-0.4.0--m8-blue)]()
+[![Tests](https://img.shields.io/badge/tests-pytest-brightgreen)]()
 [![Security](https://img.shields.io/badge/security-Cloudflare%20Zero%20Trust-blueviolet)]()
 [![License](https://img.shields.io/badge/license-internal-lightgrey)]()
 
@@ -31,22 +31,31 @@
 
 | Параметр | Значення |
 |---|---|
-| **Поточна версія** | `v0.3.0` |
+| **Поточна версія** | `v0.4.0-m8` |
 | **Стадія** | Production-ready |
-| **Останній реліз** | `2026-03-05` |
-| **Наступний мілстоун** | `M8` — Post-prod analytics & Scale-out → [Roadmap](docs/ROADMAP.md) |
+| **Останній реліз** | `2026-05-17` |
+| **Поточний мілстоун** | `M8` — PDF optimizer, post-prod analytics & scale-out → [Roadmap](docs/ROADMAP.md), [PDF optimizer roadmap](docs/pdf-optimizer/roadmap-optimizer.md) |
 | **Відомі критичні баги** | `0` |
 | **Технічний борг** | 🟢 Низький |
 
-### Останні зміни (2026-03-13)
+### Останні зміни (2026-05-17)
+- Додано ізольований сервіс `kdv-optimizer` для автоматичної оптимізації важких PDF перед upload у DSpace.
+- `docker-compose.yml`/Swarm deploy тепер піднімають два сервіси: `kdv-api` та внутрішній `kdv-optimizer` зі shared volume `kdv_optimize_data`.
+- `/integrate` backward-compatible: старі клієнти без JSON body працюють, новий payload підтримує `skip_optimization`.
+- `scripts/robot.py` підтримує `--skip-optimization`, `--parallelism`, `--max-wait`.
+- Додано [RUNBOOK_PDF_OPTIMIZER.md](docs/RUNBOOK_PDF_OPTIMIZER.md) для конфігурації, health/readiness, troubleshooting і rollback.
+
+### Попередні помітні зміни (2026-03-13)
 - Міграція домену інтегратора на `repo.pinokew.buzz` (Cloudflare Access Application URL: `/kdv/api/*`).
 - Додано базовий endpoint `GET /kdv/api` (service index) та alias `GET /kdv/api/readiness`.
 - Оновлено `IntranetUserJS.js`: визначення "вже архівовано" тепер працює не лише по домену, а й по шаблонах DSpace-лінків (`/handle/`, `/items/`) і 856-контенту на сторінці.
 
 ### Що зараз в роботі (M8)
-- [ ] Метрики p95 latency, success rate, queue depth
-- [ ] Документация масштабування воркерів
-- [ ] Тюнінг rate-limit параметрів за даними prod-трафіку
+- [x] Ізольований PDF optimizer service (`kdv-optimizer`)
+- [x] Shared volume, Swarm deploy і readiness перевірки optimizer-а
+- [x] Koha UI/API/Robot skip optimization controls
+- [ ] Post-prod SLO baseline: p95 latency, fallback rate, queue depth
+- [ ] Тюнінг rate-limit/parallelism параметрів за даними prod-трафіку
 
 ---
 
@@ -59,9 +68,10 @@
 
 - **Async Core** — API миттєво повертає `task_id`, важкі операції виконуються у фоні (захист від Cloudflare 524 Timeout)
 - **Fork-Join паралелізм** — завантаження до DSpace та генерація обкладинки відбуваються одночасно (+50% швидкості)
-- **Cover Automator** — автоматичне створення JPG-мініатюр з першої сторінки PDF (`pdf2image`)
+- **Cover Automator** — автоматичне створення JPG-мініатюр з першої сторінки PDF (`pdf2image`) або завантаження готової обкладинки з `956$p`
+- **PDF Optimizer** — ізольований `kdv-optimizer` стискає важкі scan-like PDF через Ghostscript перед DSpace upload, із fallback на оригінал
 - **CGI Protocol Bypass** — завантаження обкладинок через емуляцію браузерної сесії (обхід обмежень Koha REST API)
-- **MARC Enrichment** — зворотній запис Handle DSpace (`856$u`) та URL обкладинки (`956$c`) у Koha
+- **MARC Enrichment** — зворотній запис двох `856`: прямий download primary bitstream (`$y Файл`) і Handle DSpace (`$y Запис в репозиторії`); `956$p` задає готову обкладинку, `956$q` — additional файли для ORIGINAL
 - **Batch & Audit** — `robot.py` для масової архівації, `nightwalker.py` для пошуку "зомбі" (файли без посилань)
 
 ### Що НЕ входить у скоуп
@@ -84,17 +94,19 @@
 | **Контейнеризація** | Docker + Compose | — | Ізоляція середовища, оркестрація |
 | **CI/CD** | GitHub Actions | — | Lint, тести, security scan, деплой |
 | **Безпека** | Cloudflare Access + Tailscale | — | Zero Trust: JWT-auth, VPN-tunnel |
-| **Тестування** | pytest | — | Unit + integration + contract (22 тести) |
+| **Тестування** | pytest | — | Unit + integration + contract тести |
 | **Linting / Quality** | ruff | — | Статичний аналіз |
 | **Dependency Audit** | pip-audit + trivy | — | CVE-сканування |
 | **PDF Processing** | pdf2image + Pillow | — | Генерація обкладинок |
+| **PDF Optimization** | Ghostscript + poppler-utils | pinned у `kdv-optimizer` image | Оптимізація важких PDF в ізольованому контейнері |
 
 ### Принципи архітектури
 
 - **Стиль**: Single-process event-driven (Flask + ThreadPoolExecutor)
 - **Паттерни**: Fork-Join, Dependency Injection, Thin-Wrapper Clients, State Machine (задачі)
-- **Комунікація**: Sync REST (Koha/DSpace API), CGI emulation (Koha covers upload)
+- **Комунікація**: Sync REST (Koha/DSpace API), CGI emulation (Koha covers upload), internal HTTP `kdv-api` → `kdv-optimizer`
 - **Консистентність**: Task ID + ідемпотентний pipeline (перевірка дублікатів у DSpace перед завантаженням)
+- **PDF fallback**: будь-яка помилка optimizer-а не валить архівацію, DSpace отримує original PDF із telemetry у `task.result`
 
 ### Схема взаємодії компонентів
 
@@ -124,8 +136,9 @@
   │   │  fetch PDF         │   │   pdf2image → JPG    │  │
   │   │  map MARC→DC       │   │   upload via CGI     │  │
   │   │  create DSpace item│   │   write 956$c        │  │
+  │   │  optimize PDF       │   │                      │  │
   │   │  upload bitstream  │   │                      │  │
-  │   │  write 856$u       │   └─────────────────────┘  │
+  │   │  write 856 links   │   └─────────────────────┘  │
   │   └────────────────────┘   Fork-Join (ThreadPool)   │
   └─────────────────────────────────────────────────────┘
                          │
@@ -157,16 +170,23 @@ kdv-integrator-event/
 │   │   └── dspace.py               # DSpaceClientWrapper (thin wrapper для DI/тестів)
 │   └── services/
 │       ├── covers.py               # CoverService: pdf2image → JPG, retry policy
-│       └── files.py                # FileService: versioning, Processed/Error folders
+│       ├── files.py                # FileService: versioning, Processed/Error folders
+│       └── pdf.py                  # PDFOptimizerClient + size/page/disk heuristics
+│
+├── 📁 kdv-optimizer/               # Ізольований PDF optimizer mini-service
+│   ├── optimizer_app.py            # Flask API: /optimize, /health, /ready
+│   ├── Dockerfile                  # Ghostscript/poppler pinned image, non-root user
+│   └── kdv_optimizer/              # OptimizerConfig, PDFOptimizerService, TTLJanitor
 │
 ├── 📁 scripts/                     # Утилітні скрипти
 │   ├── robot.py                    # Пакетна архівація (Batch Processing)
 │   ├── nightwalker.py              # Аудит каталогу: пошук "зомбі", sync метаданих
-│   └── healthcheck.sh              # Curl-перевірка /health для Docker HEALTHCHECK
+│   ├── healthcheck.sh              # Curl-перевірка /health для Docker HEALTHCHECK
+│   └── poc_optimizer.py            # R&D benchmark PDF рушіїв
 │
 ├── 📁 tests/                       # Тести
 │   ├── test_core.py                # Unit-тести оркестратора (DI, Fork-Join)
-│   ├── test_services.py            # FileService, CoverService
+│   ├── test_services.py            # FileService, CoverService, PDF optimizer heuristics
 │   ├── test_clients.py             # Клієнти-обгортки
 │   ├── test_state_machine.py       # State machine + ідемпотентність
 │   ├── test_app.py                 # Flask endpoints (smoke)
@@ -180,10 +200,11 @@ kdv-integrator-event/
 │   ├── RUNBOOK_TESTING.md          # Тестування: моки, DI, порядок запуску
 │   ├── RUNBOOK_MAYDAY.md           # Incident response: Cloudflare/Koha/DSpace/mount
 │   ├── RUNBOOK_NIGHTWALKER.md      # Інструкція: аудит каталогу через nightwalker.py
-│   └── RUNBOOK_ROBOT.md            # Інструкція: масова архівація через robot.py
+│   ├── RUNBOOK_ROBOT.md            # Інструкція: масова архівація через robot.py
+│   └── RUNBOOK_PDF_OPTIMIZER.md    # Інструкція: конфігурація, перевірка, rollback optimizer-а
 │
-├── 📁 CHANGELOGS/
-│   └── CHANGELOG_2026_VOL_01.md   # Детальний лог усіх змін (Context/Change/Verification)
+├── 📁 docs/changelogs/
+│   └── CHANGELOG_2026_VOL_03.md   # Активний том changelog (Context/Change/Verification)
 │
 ├── 📁 archive/                     # Застарілі версії файлів (reference only)
 ├── docker-compose.yml              # Запуск сервісу в контейнері
@@ -203,9 +224,11 @@ kdv-integrator-event/
 | `src/app.py` | DI-фабрика клієнтів, ендпоінти, auth middleware |
 | `src/mapping.py` | Контракт MARC → Dublin Core (змінювати обережно) |
 | `docs/RUNBOOK_MAYDAY.md` | Першочергово при production-інциденті |
+| `docs/RUNBOOK_PDF_OPTIMIZER.md` | Використання, конфігурація, health/readiness, rollback `kdv-optimizer` |
 | `docs/RELEASE.md` | Обов'язково перед будь-яким деплоєм |
 | `.env.example` | Документація всіх ENV змінних |
 | `candidates.txt` | Вхідні дані для robot.py (biblionumber per line) |
+| `kdv-optimizer/` | Ізольований сервіс оптимізації PDF |
 
 ---
 
@@ -234,9 +257,17 @@ kdv-integrator-event/
   │ (intra)  │     │  (repo)     │
   └──────────┘     └─────────────┘
         ▲
-        │ 956$c (cover URL) + 856$u (handle)
+        │ 956$c (cover URL) + 856$u (file + handle)
         └── MARC update (зворотній запис)
+
+  ┌──────────────────────────────────────┐
+  │ kdv-optimizer (internal only)        │
+  │ /health /ready /optimize             │
+  │ shared volume: /data/kdv_optimize    │
+  └──────────────────────────────────────┘
 ```
+
+`kdv-optimizer` не публікує порт назовні. `kdv-api` звертається до нього як `http://kdv-optimizer:5001` через Docker network і передає тільки `job_id`; тимчасові PDF лежать у shared volume `kdv_optimize_data`.
 
 ---
 
@@ -254,6 +285,21 @@ kdv-integrator-event/
 - `KDV_IMAGE_REPOSITORY` (наприклад, `ghcr.io/pinokew/kdv-integrator-event`)
 - `KDV_IMAGE_VERSION` (наприклад, `dev`, `main`, `v1.2.3`, `latest`, `sha-...`)
 - опційно `KDV_IMAGE` (повний image reference), якщо треба явно зафіксувати digest/tag одним значенням
+- `KDV_OPTIMIZER_IMAGE_REPOSITORY`, `KDV_OPTIMIZER_VERSION`, опційно `KDV_OPTIMIZER_IMAGE` для `kdv-optimizer`
+
+Основні ENV для PDF optimizer:
+
+| Змінна | Default | Призначення |
+|---|---|---|
+| `OPTIMIZER_URL` | `http://kdv-optimizer:5001` | Internal URL для `kdv-api` |
+| `OPTIMIZER_TIMEOUT` | `130` | HTTP timeout клієнта, має бути > `GS_TIMEOUT` |
+| `DATA_DIR` | `/data/kdv_optimize` | Shared volume root всередині контейнерів |
+| `INPUT_DIR` | `/data/kdv_optimize/input` | Tmp input PDF для optimizer jobs |
+| `OUTPUT_DIR` | `/data/kdv_optimize/output` | Tmp optimized PDF |
+| `GS_TIMEOUT` | `120` | Timeout Ghostscript process |
+| `TMP_TTL_SECONDS` | `86400` | TTL cleanup orphan temp-файлів |
+
+Деталі: [`docs/RUNBOOK_PDF_OPTIMIZER.md`](docs/RUNBOOK_PDF_OPTIMIZER.md).
 
 ---
 
@@ -284,7 +330,7 @@ Internet → Cloudflare Access (JWT) → Tailscale VPN → KDV Integrator → Ko
 |---|---|---|
 | `ruff` | SAST / Linting | CI (PR) + pre-push |
 | `pip-audit` | SCA (залежності) | CI (кожен build) |
-| `trivy` | Container scan | CI (docker image build) |
+| `trivy` | Container scan | CI (docker image build), включно з `kdv-optimizer` image |
 
 **Incident Response:** [`docs/RUNBOOK_MAYDAY.md`](docs/RUNBOOK_MAYDAY.md)
 
@@ -305,31 +351,37 @@ Internet → Cloudflare Access (JWT) → Tailscale VPN → KDV Integrator → Ko
 # 1. Налаштування змінних середовища
 cp .env.example .env
 # Заповніть: KOHA_*, DSPACE_*, KDV_API_TOKEN, RCLONE_REMOTE_NAME
+# Для optimizer перевірте: OPTIMIZER_URL, DATA_DIR, INPUT_DIR, OUTPUT_DIR
 
-# 2. Завантаження потрібного образу з GHCR і запуск сервісу
+# 2. Завантаження потрібних образів і запуск сервісів
 docker compose pull
 docker compose up -d
 
 # 3. Перевірка
 curl http://localhost:5000/kdv/api/health
 curl http://localhost:5000/kdv/api/readiness
+
+# 4. Перевірка optimizer-а через Docker network
+docker exec kdv-api curl -fsS http://kdv-optimizer:5001/health
+docker exec kdv-api curl -fsS http://kdv-optimizer:5001/ready
 ```
 
 ### Запуск тестів
 
 ```bash
 # В контейнері (рекомендовано — всі залежності вже є)
-docker exec -e PYTHONPATH=/app kdv-api pytest -q
+docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest -q
 
 # Конкретний рівень
-docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_contracts.py -q   # contract
-docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_core.py -q        # unit
+docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest tests/test_contracts.py -q   # contract
+docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest tests/test_core.py -q        # core
+docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest tests/test_services.py -q    # optimizer/service
 
 # Локально (pip + pytest)
-PYTHONPATH=$(pwd) pytest -q
+PYTHONPATH=$(pwd):$(pwd)/kdv-optimizer pytest -q
 ```
 
-Поточний baseline: **22 passed**. Деталі по написанню тестів із моками → [`docs/RUNBOOK_TESTING.md`](docs/RUNBOOK_TESTING.md).
+Поточний baseline перевіряється через `pytest -q`; focused optimizer checks описані в [`docs/RUNBOOK_TESTING.md`](docs/RUNBOOK_TESTING.md).
 
 ### Типові проблеми
 
@@ -348,7 +400,7 @@ rclone listremotes | grep "^${RCLONE_REMOTE_NAME}:$"
 
 ```bash
 # Обов'язково задайте PYTHONPATH
-PYTHONPATH=$(pwd) pytest -q
+PYTHONPATH=$(pwd):$(pwd)/kdv-optimizer pytest -q
 ```
 </details>
 
@@ -359,7 +411,7 @@ PYTHONPATH=$(pwd) pytest -q
 ### CI/CD Пайплайн
 
 ```
-Push / PR → ruff (lint) → pytest (22 tests) → pip-audit → trivy (docker scan)
+Push / PR → ruff (lint) → pytest → pip-audit → trivy (api + optimizer images)
                                                                    │
                                                          Push image to registry
                                                                    │
@@ -384,6 +436,7 @@ docker compose up -d --remove-orphans
 
 # Через digest
 export KDV_IMAGE=ghcr.io/pinokew/kdv-integrator-event@sha256:<prev-digest>
+export KDV_OPTIMIZER_IMAGE=ghcr.io/OWNER/kdv-optimizer@sha256:<prev-digest>
 docker compose pull
 docker compose up -d --remove-orphans
 ```
@@ -412,12 +465,13 @@ docker compose up -d --remove-orphans
 | Koha ILS | REST API + CGI emulation | `KOHA_API_URL`, `KOHA_OPAC_URL` |
 | DSpace 7/8 | REST API (JSON Patch) | `DSPACE_API_URL`, `DSPACE_UI_URL` |
 | Cloudflare Access | JWT RS256 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` |
+| PDF Optimizer | Internal HTTP + shared volume | `OPTIMIZER_URL`, `OPTIMIZER_TIMEOUT`, `/data/kdv_optimize` |
 
 ### Batch-утиліти
 
 | Скрипт | Призначення | Інструкція |
 |---|---|---|
-| `scripts/robot.py` | Масова архівація зі списку `candidates.txt` | [`docs/RUNBOOK_ROBOT.md`](docs/RUNBOOK_ROBOT.md) |
+| `scripts/robot.py` | Масова архівація зі списку `candidates.txt`, підтримує `--skip-optimization` | [`docs/RUNBOOK_ROBOT.md`](docs/RUNBOOK_ROBOT.md) |
 | `scripts/nightwalker.py` | Аудит: пошук файлів без посилань | [`docs/RUNBOOK_NIGHTWALKER.md`](docs/RUNBOOK_NIGHTWALKER.md) |
 
 **Batch controls (ENV):**
@@ -440,18 +494,24 @@ docker compose up -d --remove-orphans
 | Endpoint | Призначення | Очікувана відповідь |
 |---|---|---|
 | `GET /kdv/api/health` | Liveness (сервіс живий?) | `200 {"status": "ok"}` |
-| `GET /kdv/api/ready` / `GET /kdv/api/readiness` | Readiness (можна приймати трафік?) | `200` / `503` якщо mount недоступний |
+| `GET /kdv/api/ready` / `GET /kdv/api/readiness` | Readiness `kdv-api` (можна приймати трафік?) | `200` / `503` якщо mount недоступний |
+| `GET http://kdv-optimizer:5001/health` | Liveness optimizer-а всередині Docker network | `200 {"status":"ok"}` |
+| `GET http://kdv-optimizer:5001/ready` | Readiness optimizer-а: volume, write access, `gs`, `pdfinfo` | `200 {"status":"ready"}` або `503` з причиною |
 
 ### Structured Logs
 
 Кожен запит логує: `task_id`, `biblionumber`, `status`, `elapsed_ms`. Лог-файли в `logs/`.
+
+Для PDF optimizer у `task.result` додаються поля `pdf_optimized`, `pdf_fallback_reason`, `pdf_original_mb`, `pdf_final_mb`, `pdf_optimization_time_ms`, `pdf_thread_wait_ms`, `pdf_disk_free_mb`.
 
 ### Ключові SLI/SLO (цільові, M8)
 
 | Метрика | SLO |
 |---|---|
 | API Availability | ≥ 99% |
-| P95 Integration Time | ≤ 60s |
+| P95 Integration Time без оптимізації | ≤ 60s |
+| P95 Integration Time з оптимізацією | ≤ 240s |
+| Optimizer fallback rate | ≤ 10% за добу |
 | Error Rate | ≤ 5% |
 
 **On-call / Incident Response:** [`docs/RUNBOOK_MAYDAY.md`](docs/RUNBOOK_MAYDAY.md)
@@ -460,7 +520,14 @@ docker compose up -d --remove-orphans
 
 ## 📜 Ченджлог
 
-> Детальний ченджлог (Context / Change / Verification / Risks / Rollback): [`CHANGELOGS/CHANGELOG_2026_VOL_01.md`](CHANGELOGS/CHANGELOG_2026_VOL_01.md)
+> Детальний ченджлог (Context / Change / Verification / Risks / Rollback): [`CHANGELOG.md`](CHANGELOG.md), активний том [`docs/changelogs/CHANGELOG_2026_VOL_03.md`](docs/changelogs/CHANGELOG_2026_VOL_03.md)
+
+### v0.4.0-m8 — 2026-05-17 (PDF optimizer)
+- ✅ Ізольований `kdv-optimizer`: Flask mini-API, Ghostscript, ProcessPoolExecutor(1), TTL cleanup
+- ✅ `kdv-api` інтегрує optimizer перед DSpace upload і завжди fallback-ить на original PDF
+- ✅ Compose/Swarm: shared volume `kdv_optimize_data`, local image build, verification обох сервісів
+- ✅ Koha UI/API/Robot: `skip_optimization` controls
+- ✅ Runbook: [`docs/RUNBOOK_PDF_OPTIMIZER.md`](docs/RUNBOOK_PDF_OPTIMIZER.md)
 
 ### v0.3.0 — 2026-03-05 (M5–M7)
 - ✅ M5: Health/readiness probes, structured logs, RUNBOOK_MAYDAY + RUNBOOK_TESTING
@@ -487,4 +554,5 @@ docker compose up -d --remove-orphans
 | [docs/RUNBOOK_TESTING.md](docs/RUNBOOK_TESTING.md) | Тестування: моки, DI, порядок запуску |
 | [docs/RUNBOOK_MAYDAY.md](docs/RUNBOOK_MAYDAY.md) | Incident response (production) |
 | [docs/RUNBOOK_ROBOT.md](docs/RUNBOOK_ROBOT.md) | Масова архівація: robot.py |
+| [docs/RUNBOOK_PDF_OPTIMIZER.md](docs/RUNBOOK_PDF_OPTIMIZER.md) | PDF optimizer: конфігурація, використання, health/readiness, rollback |
 | [docs/RUNBOOK_NIGHTWALKER.md](docs/RUNBOOK_NIGHTWALKER.md) | Аудит каталогу: nightwalker.py |

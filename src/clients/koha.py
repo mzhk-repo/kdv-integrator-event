@@ -28,9 +28,20 @@ class KohaClientWrapper:
     def set_status(self, biblio_id, status, msg=None):
         return self._client.set_status(biblio_id, status, msg)
 
-    def set_success(self, biblio_id, handle_url, item_uuid=None, cover_url=None):
+    def set_success(
+        self,
+        biblio_id,
+        handle_url,
+        item_uuid=None,
+        cover_url=None,
+        primary_download_url=None,
+    ):
         return self._client.set_success(
-            biblio_id, handle_url, item_uuid=item_uuid, cover_url=cover_url
+            biblio_id,
+            handle_url,
+            item_uuid=item_uuid,
+            cover_url=cover_url,
+            primary_download_url=primary_download_url,
         )
 
     def get_cover_image_url(self, biblionumber):

@@ -11,10 +11,11 @@
 - Код ядра: [src/core.py](../src/core.py)
 - Менеджер задач: [src/tasks.py](../src/tasks.py)
 - Клієнти‑обгортки: [src/clients/koha.py](../src/clients/koha.py), [src/clients/dspace.py](../src/clients/dspace.py)
-- Сервіси: [src/services/files.py](../src/services/files.py), [src/services/covers.py](../src/services/covers.py)
-- Тести: [tests/test_core.py](../tests/test_core.py), [tests/test_services.py](../tests/test_services.py), [tests/test_contracts.py](../tests/test_contracts.py)
+- Сервіси: [src/services/files.py](../src/services/files.py), [src/services/covers.py](../src/services/covers.py), [src/services/pdf.py](../src/services/pdf.py)
+- PDF optimizer service: [kdv-optimizer/kdv_optimizer/services/pdf.py](../kdv-optimizer/kdv_optimizer/services/pdf.py)
+- Тести: [tests/test_core.py](../tests/test_core.py), [tests/test_services.py](../tests/test_services.py), [tests/test_pdf_optimizer_client.py](../tests/test_pdf_optimizer_client.py), [tests/test_contracts.py](../tests/test_contracts.py)
 - Ops runbook (інциденти): [docs/RUNBOOK_MAYDAY.md](RUNBOOK_MAYDAY.md)
-- Активний changelog: [CHANGELOGS/CHANGELOG_2026_VOL_01.md](../CHANGELOGS/CHANGELOG_2026_VOL_01.md)
+- Активний changelog: [docs/changelogs/CHANGELOG_2026_VOL_02.md](changelogs/CHANGELOG_2026_VOL_02.md)
 
 **1) Запуск середовища (контейнер)**
 
@@ -37,6 +38,9 @@ docker exec -e PYTHONPATH=/app kdv-api pytest -q
 # запуск тільки contract-тестів (M6)
 docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_contracts.py -q
 
+# запуск optimizer unit-тестів (Фаза 7.1)
+docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest tests/test_services.py -q
+
 # або окремий тест
 docker exec -e PYTHONPATH=/app kdv-api pytest tests/test_core.py::test_parse_marc_rules_basic -q
 ```
@@ -54,7 +58,7 @@ docker compose up -d
 
 ```bash
 python3 -m pip install -r requirements.txt
-PYTHONPATH=$(pwd) pytest -q
+PYTHONPATH=$(pwd):$(pwd)/kdv-optimizer pytest -q
 ```
 
 > Примітка: на деяких хостах краще використовувати віртуальне середовище.
@@ -102,6 +106,29 @@ assert 'handle' in res
     - `_step2_process_attach`: payload поля (`op=cud-process`, `uploadedfileid`, `csrf_token`, `replace`).
     - `_ensure_cgi_login`: ключові назви полів (`login_userid`, `login_password`, `koha_login_context`, `csrf_token`).
 
+**4.2) PDF optimizer unit-тести (Фаза 7.1)**
+
+`tests/test_services.py` містить focused unit-тести для `kdv-optimizer` і `kdv-api` PDF-клієнта. Ці тести не запускають реальний Ghostscript і не роблять HTTP-виклики до optimizer-а: `subprocess.run`, `run_ghostscript`, disk usage і HTTP session мокаються у тестах.
+
+Швидкий запуск:
+
+```bash
+PYTHONPATH=$(pwd):$(pwd)/kdv-optimizer pytest tests/test_services.py -q
+```
+
+У контейнері `kdv-api`:
+
+```bash
+docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest tests/test_services.py -q
+```
+
+Очікувані сценарії:
+- threshold-евристика `needs_optimization()`;
+- conservative fallback при `pdfinfo` timeout;
+- disk preflight fail без submit у process pool;
+- fallback на original path, якщо optimized output більший;
+- `PDFOptimizerClient` fallback при недоступному optimizer HTTP API.
+
 **5) Інтеграційні перевірки API**
 
 Щоб симулювати виклик з Koha UI, виконайте запит у контейнері (використовуючи правильний `KDV_API_TOKEN`):
@@ -135,12 +162,15 @@ def test_http_flow(monkeypatch):
 - Запустіть `pytest` в контейнері або локально.
 - Для швидкого локального дебагу використовуйте `tests/manual_smoke.py`.
 
-Поточний орієнтир для повного прогону в контейнері:
-- `docker exec -e PYTHONPATH=/app kdv-api pytest -q` -> очікувано `22 passed` (станом на 2026-03-05).
+Поточний focused-орієнтир для optimizer unit-тестів:
+- `pytest tests/test_services.py -q` -> очікувано `8 passed` (станом на 2026-05-16).
+
+Для повного прогону в контейнері використовуйте:
+- `docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest -q`.
 
 **8) Оновлення CHANGELOG після суттєвих змін**
 
-Кожна суттєва зміна має записуватися у активний том у `CHANGELOGS/`. Використовуйте шаблон:
+Кожна суттєва зміна має записуватися у активний том у `docs/changelogs/`. Використовуйте шаблон:
 
 - **Context:** чому зміна потрібна
 - **Change:** що зроблено
@@ -148,12 +178,13 @@ def test_http_flow(monkeypatch):
 - **Risks:** можливі ризики
 - **Rollback:** як відкотити
 
-Файл активного тому: `CHANGELOGS/CHANGELOG_2026_VOL_01.md`.
+Файл активного тому: `docs/changelogs/CHANGELOG_2026_VOL_02.md`.
 
 **9) Типові помилки та як їх вирішувати**
 - `run_dspace_workflow() got an unexpected keyword argument 'koha_client'` — означає, що контейнер працює зі старою версією image. Рішення: оновити `KDV_IMAGE_VERSION` (або `KDV_IMAGE`) і виконати `docker compose pull && docker compose up -d`.
 - `Invalid Token` від API — перевірити `KDV_API_TOKEN` у `.env` та середовищі контейнера.
 - Проблеми з PDF/Poppler — переконатися, що `poppler-utils` встановлені у образі (включено в Dockerfile), `RCLONE_REMOTE_NAME` вказує на наявний remote з `rclone config`, а файл існує на підмонтованому в контейнері шляху `INTEGRATOR_MOUNT_PATH`.
+- `ModuleNotFoundError: kdv_optimizer` у optimizer-тестах — додати `kdv-optimizer` у `PYTHONPATH`: `PYTHONPATH=$(pwd):$(pwd)/kdv-optimizer pytest tests/test_services.py -q`.
 - Падає `tests/test_contracts.py::test_koha_cgi_login_contract_payload_field_names` через `login_userid`/`login_password` — тест має порівнюватися з фактичними значеннями `KOHA_USER`/`KOHA_PASS` з runtime env, а не з hardcoded рядками.
 
 **10) Best practices**

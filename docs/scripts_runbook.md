@@ -93,5 +93,5 @@ docker compose exec kdv-api python3 -m src.nightwalker 5000 5100
 
 ### Ручний запуск
 ```bash
-docker compose exec kdv-api python3 -m src.robot
+docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 ```

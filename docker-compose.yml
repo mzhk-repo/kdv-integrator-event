@@ -15,9 +15,12 @@ services:
     environment:
       - TZ=Europe/Kyiv
       - INTEGRATOR_MOUNT_PATH=/mnt/drive
+      - OPTIMIZER_URL=${OPTIMIZER_URL:-http://kdv-optimizer:5001}
+      - OPTIMIZER_TIMEOUT=${OPTIMIZER_TIMEOUT:-130}
     volumes:
       # 🟢 2. Обов'язково монтуємо rclone volume, інакше скрипт не знайде PDF файли
       - kdv-drive:/mnt/drive
+      - kdv_optimize_data:/data/kdv_optimize
       
     networks:
       - proxy-net
@@ -35,6 +38,42 @@ services:
 
         - "traefik.swarm.network=${EXTERNAL_NETWORK}"
       
+  kdv-optimizer:
+    image: ${KDV_OPTIMIZER_IMAGE:-${KDV_OPTIMIZER_IMAGE_REPOSITORY:-ghcr.io/OWNER/kdv-optimizer}:${KDV_OPTIMIZER_VERSION:-latest}}
+    container_name: kdv-optimizer
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TZ=Europe/Kyiv
+      - OPTIMIZER_PORT=${OPTIMIZER_PORT:-5001}
+      - DATA_DIR=${DATA_DIR:-/data/kdv_optimize}
+      - INPUT_DIR=${INPUT_DIR:-/data/kdv_optimize/input}
+      - OUTPUT_DIR=${OUTPUT_DIR:-/data/kdv_optimize/output}
+      - GS_TIMEOUT=${GS_TIMEOUT:-120}
+      - QPDF_ENABLED=${QPDF_ENABLED:-false}
+      - TMP_TTL_SECONDS=${TMP_TTL_SECONDS:-86400}
+      - TTL_CHECK_INTERVAL_SECONDS=${TTL_CHECK_INTERVAL_SECONDS:-3600}
+    volumes:
+      - kdv_optimize_data:/data/kdv_optimize
+    networks:
+      - proxy-net
+    expose:
+      - "5001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
 
 networks:
   proxy-net:
@@ -49,3 +88,5 @@ volumes:
       allow_other: "true"
       vfs_cache_mode: full
       poll_interval: "0"
+  kdv_optimize_data:
+    driver: local

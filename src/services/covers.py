@@ -40,29 +40,45 @@ class CoverService:
                 "⚠️ pdf2image not installed. Cover generation will be disabled."
             )
 
-    def process_book(self, biblionumber: str, pdf_path: str, output_base_dir: str):
+    def process_book(
+        self,
+        biblionumber: str,
+        pdf_path: str | None,
+        output_base_dir: str,
+        cover_source_path: str | None = None,
+    ):
         """
         Головний метод процесу.
-        1. Перевіряє наявність обкладинки в Koha (Strict Mode).
-        2. Генерує файл.
+        1. Перевіряє наявність обкладинки в Koha для автогенерації.
+        2. Бере готову обкладинку з cover_source_path або генерує файл з PDF.
         3. Завантажує в Koha (якщо клієнт підключено).
         """
-        if not PDF2IMAGE_AVAILABLE:
+        if not cover_source_path and not PDF2IMAGE_AVAILABLE:
             return {"status": "skipped", "reason": "missing_library"}
 
-        # 1. Strict Mode: Перевірка наявності (щоб не перезаписати ручну роботу)
-        if self.koha and self._check_if_cover_exists(biblionumber):
+        # 1. Strict Mode для автогенерації: не перезаписуємо ручну роботу.
+        if (
+            not cover_source_path
+            and self.koha
+            and self._check_if_cover_exists(biblionumber)
+        ):
             logger.info(
                 f"⏭️ [Cover] Skipped for #{biblionumber}: Cover already exists in Koha."
             )
             return {"status": "skipped", "reason": "exists_in_koha"}
 
-        # 2. Генерація файлу
+        # 2. Підготовка файлу
         try:
-            cover_path = self._generate_image(biblionumber, pdf_path, output_base_dir)
-            logger.info(f"✅ [Cover] Generated: {cover_path}")
+            if cover_source_path:
+                cover_path = self._prepare_external_cover(
+                    biblionumber, cover_source_path, output_base_dir
+                )
+                logger.info(f"✅ [Cover] Prepared external cover: {cover_path}")
+            else:
+                cover_path = self._generate_image(biblionumber, pdf_path, output_base_dir)
+                logger.info(f"✅ [Cover] Generated: {cover_path}")
         except Exception as e:
-            logger.error(f"❌ [Cover] Failed to generate for #{biblionumber}: {e}")
+            logger.error(f"❌ [Cover] Failed to prepare for #{biblionumber}: {e}")
             return {"status": "error", "reason": str(e)}
 
         # 3. Завантаження в Koha
@@ -81,6 +97,30 @@ class CoverService:
                 }
 
         return {"status": "generated_only", "file": cover_path}
+
+    def _prepare_external_cover(self, biblionumber, cover_source_path, output_base_dir):
+        """
+        Готує готову обкладинку до CGI upload.
+        JPEG лишаємо як є; інші формати конвертуємо в RGB JPEG.
+        """
+        source = Path(cover_source_path)
+        if not source.exists() or not source.is_file():
+            raise FileNotFoundError(f"Cover file not found: {cover_source_path}")
+
+        suffix = source.suffix.lower()
+        if suffix in {".jpg", ".jpeg"}:
+            return str(source)
+
+        save_dir = Path(output_base_dir) / "covers"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        full_path = save_dir / f"cover_{biblionumber}_external_v01.jpg"
+
+        with Image.open(source) as image:
+            if image.mode not in {"RGB", "L"}:
+                image = image.convert("RGB")
+            image.save(full_path, "JPEG", quality=self.JPEG_QUALITY, optimize=True)
+
+        return str(full_path)
 
     def _generate_image(self, biblionumber, pdf_path, output_base_dir):
         """

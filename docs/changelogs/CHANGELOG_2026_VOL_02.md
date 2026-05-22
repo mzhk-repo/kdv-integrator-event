@@ -166,3 +166,133 @@
 - **Verification:** `python3 -m py_compile src/dspace.py src/core.py tests/test_contracts.py`; `docker run --rm --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5624f13df5c5 -m pytest tests/test_contracts.py tests/test_core.py -q` -> `10 passed`.
 - **Risks:** Текст помилок у task logs зміниться з generic `Failed to create item in DSpace` на конкретний DSpace REST failure; успішний path не змінено.
 - **Rollback:** Прибрати `DSpaceRestError`/`_raise_rest_error()` і повернути попередні `return None`/`False` для non-2xx DSpace-відповідей.
+
+## 2026-05-13 — PDF optimizer PoC benchmark script (Фаза 0.1)
+
+- **Context:** Розпочато R&D release gate для модуля оптимізації PDF; потрібен ізольований benchmark-скрипт для ручного порівняння `ghostscript`, `pymupdf`, `pikepdf` і `qpdf` на еталонному dataset без впливу на production runtime.
+- **Change:** Додано `scripts/poc_optimizer.py`, який читає dataset з аргументу або `DATASET_DIR`, запускає 4 рушії для кожного PDF, рахує сторінки через `pdfinfo`, пише JSON-звіти у `scripts/benchmark_results/`, залишає `quality_ok: null` для ручної візуальної перевірки та зберігає оптимізовані PDF у `scripts/benchmark_results/outputs/` для аналізу. Додано `scripts/benchmark_results/.gitkeep`.
+- **Verification:** `python3 -m py_compile scripts/poc_optimizer.py`.
+- **Risks:** `pymupdf`, `pikepdf`, `ghostscript`, `qpdf` і `pdfinfo` є runtime-залежностями ручного benchmark-хоста; якщо вони відсутні або PDF пошкоджений, скрипт не падає на всьому прогоні, а записує `exception` у відповідний JSON.
+- **Rollback:** Видалити `scripts/poc_optimizer.py`, `scripts/benchmark_results/.gitkeep` і цей changelog-запис.
+
+## 2026-05-15 — PDF optimizer service scaffold (Фаза 1.1)
+
+- **Context:** Після R&D Фази 0 обрано `ghostscript_ebook` як основний і єдиний рушій оптимізації PDF; потрібно створити окремий каркас Flask-мінісервісу `kdv-optimizer` без змішування залежностей із основним `kdv-api`.
+- **Change:** Додано `kdv-optimizer/requirements.txt` з мінімальними залежностями (`flask`, `gunicorn`, `structlog`) і Python package `kdv_optimizer` з `OptimizerConfig`. Конфіг читає `OPTIMIZER_PORT`, `DATA_DIR`, `INPUT_DIR`, `OUTPUT_DIR`, `GS_TIMEOUT`, `QPDF_ENABLED`, `TMP_TTL_SECONDS` з ENV зі sensible defaults; `QPDF_ENABLED` залишено сумісним прапорцем, але дефолт встановлено `false` відповідно до рішення використовувати тільки Ghostscript.
+- **Verification:** `python3 -m py_compile kdv-optimizer/kdv_optimizer/config.py`; `PYTHONPATH=kdv-optimizer python3 -c "from kdv_optimizer.config import OptimizerConfig; cfg = OptimizerConfig(); print(cfg.INPUT_DIR, cfg.QPDF_ENABLED)"`.
+- **Risks:** Це лише каркас сервісу; Dockerfile, Flask endpoints, ProcessPoolExecutor і Ghostscript-виконання будуть додані наступними задачами Фази 1.
+- **Rollback:** Видалити директорію `kdv-optimizer/` і цей changelog-запис.
+
+## 2026-05-15 — PDFOptimizerService з Ghostscript-only engine (Фаза 1.2)
+
+- **Context:** Для production-path після R&D обрано лише `ghostscript_ebook`; `qpdf`, `pikepdf` і `pymupdf` не дали корисного стискання scan-like PDF у benchmark. Потрібно додати ядро сервісної логіки `kdv-optimizer` без інтеграції Flask endpoints.
+- **Change:** Додано `kdv-optimizer/kdv_optimizer/services/pdf.py` і package marker `services/__init__.py`. Реалізовано UUID-safe `build_job_paths()`, евристику `needs_optimization()` за size/page правилами, `pdfinfo` page count з timeout, disk pre-flight `2.5x`, top-level pickle-сумісний `run_ghostscript()` з `nice`, `ionice`, `-dPDFSETTINGS=/ebook`, `-dSAFER` і `GS_TIMEOUT`, а також `PDFOptimizerService` з глобальним `ProcessPoolExecutor(max_workers=1)`. `qpdf`-етап не реалізовано свідомо, бо production engine тепер тільки Ghostscript.
+- **Verification:** `python3 -m py_compile kdv-optimizer/kdv_optimizer/config.py kdv-optimizer/kdv_optimizer/services/pdf.py`; smoke-перевірки імпорту, `build_job_paths()` для валідного/невалідного UUID, `needs_optimization()` для порожнього та пошкодженого PDF, наявності `_optimizer_pool` на рівні модуля.
+- **Risks:** Фактичний запуск Ghostscript у сервісі буде покритий наступними задачами через Flask API/контейнерний runtime; поточна задача не додає endpoint-и і не змінює `docker-compose`.
+- **Rollback:** Видалити `kdv-optimizer/kdv_optimizer/services/` і цей changelog-запис.
+
+## 2026-05-16 — TTL Janitor для PDF optimizer temp-файлів (Фаза 1.3)
+
+- **Context:** `kdv-api` має прибирати shared-volume input/output файли через `finally`, але після падіння процесу або рестарту можуть залишатися orphan temp-файли. Для `kdv-optimizer` потрібен фоновий janitor без побічного старту при імпорті.
+- **Change:** Додано `kdv-optimizer/kdv_optimizer/services/janitor.py` з `TTLJanitor(threading.Thread, daemon=True)`, синхронним `cleanup_once()`, скануванням `INPUT_DIR`/`OUTPUT_DIR`, видаленням тільки файлів старших за `TMP_TTL_SECONDS` і `structlog` warning-логами для delete/delete_failed з полями `file`, `age_s`, `size_mb`. У `OptimizerConfig` додано `TTL_CHECK_INTERVAL_SECONDS=3600`. У `.env.example` додано блок PDF optimizer ENV (`OPTIMIZER_PORT`, `DATA_DIR`, `INPUT_DIR`, `OUTPUT_DIR`, `GS_TIMEOUT`, `QPDF_ENABLED=false`, `TMP_TTL_SECONDS`, `TTL_CHECK_INTERVAL_SECONDS`).
+- **Verification:** `python3 -m py_compile kdv-optimizer/kdv_optimizer/config.py kdv-optimizer/kdv_optimizer/services/pdf.py kdv-optimizer/kdv_optimizer/services/janitor.py`; smoke-перевірка `daemon=True`, синхронного `cleanup_once()`, видалення старого файлу і збереження молодого файлу.
+- **Risks:** `TTLJanitor` поки не стартує автоматично; підключення до lifecycle Flask-застосунку буде в задачі 1.4. TTL cleanup видаляє лише regular files у `INPUT_DIR`/`OUTPUT_DIR`, директорії і молоді файли не чіпає.
+- **Rollback:** Видалити `kdv-optimizer/kdv_optimizer/services/janitor.py`, прибрати `TTL_CHECK_INTERVAL_SECONDS` з `OptimizerConfig`, прибрати optimizer-блок із `.env.example` і цей changelog-запис.
+
+## 2026-05-16 — Flask API для kdv-optimizer (Фаза 1.4)
+
+- **Context:** Потрібно підключити ядро `PDFOptimizerService` до мінімального Flask API `kdv-optimizer`, зберігаючи production-path тільки для `ghostscript_ebook` і без перевірки `qpdf` у readiness.
+- **Change:** Додано `kdv-optimizer/optimizer_app.py` з `create_app()`, in-memory `_jobs`, endpoint-ами `POST /optimize`, `GET /optimize/<job_id>`, `GET /health`, `GET /ready`. `POST /optimize` валідовує UUID, перевіряє input-файл і submit-ить job у `PDFOptimizerService`; `GET /optimize/<job_id>` повертає `processing|done|error` і додатково валідовує `done` output на missing/empty/larger. На старті app синхронно виконується `TTLJanitor.cleanup_once()`, після чого janitor стартує daemon-thread. `GET /ready` перевіряє writable `INPUT_DIR`/`OUTPUT_DIR`, `gs --version` і `pdfinfo -v`; `qpdf` свідомо не перевіряється.
+- **Verification:** `python3 -m py_compile kdv-optimizer/optimizer_app.py kdv-optimizer/kdv_optimizer/config.py kdv-optimizer/kdv_optimizer/services/pdf.py kdv-optimizer/kdv_optimizer/services/janitor.py`; Flask test-client smoke: `GET /health -> 200`, bad UUID `POST /optimize -> 400`, missing input `POST /optimize -> 404`, unknown job `GET /optimize/<uuid> -> 404`, simulated missing `gs` `GET /ready -> 503`.
+- **Risks:** `_jobs` є in-memory store і підходить для `gunicorn -w 1`; при кількох worker-ах статус задач між процесами не шариться. Фактичний container/runtime build буде в наступній задачі.
+- **Rollback:** Видалити `kdv-optimizer/optimizer_app.py` і цей changelog-запис.
+
+## 2026-05-16 — Dockerfile для kdv-optimizer (Фаза 1.5)
+
+- **Context:** Для `kdv-optimizer` потрібен окремий non-root контейнер з pinned системними залежностями для Ghostscript-only PDF optimization path. Версії пакетів перевірено в base image `python:3.11-slim-bookworm` через `apt-cache policy`.
+- **Change:** Додано `kdv-optimizer/Dockerfile` на `python:3.11-slim-bookworm`, встановлено pinned `ghostscript=10.0.0~dfsg-11+deb12u8`, `poppler-utils=22.12.0-2+deb12u1`, `util-linux=2.38.1-5+deb12u3`, `curl=7.88.1-10+deb12u14`; створено non-root користувача `optimizer`, shared temp-директорії `/data/kdv_optimize/input` і `/data/kdv_optimize/output`, встановлення Python-залежностей у user-site і запуск `gunicorn` на `0.0.0.0:5001`.
+- **Verification:** `docker build -t kdv-optimizer:local ./kdv-optimizer`; `docker run --rm --entrypoint whoami kdv-optimizer:local` -> `optimizer`; `docker run --rm --entrypoint gs kdv-optimizer:local --version` -> `10.00.0`; `docker run -d -p 5001:5001 kdv-optimizer:local` + `curl http://127.0.0.1:5001/ready` -> `HTTP 200`.
+- **Risks:** Apt pins прив'язані до поточного Debian Bookworm repository стану для `python:3.11-slim-bookworm`; при зміні base image або repo snapshot може знадобитися оновлення pin-версій.
+- **Rollback:** Видалити `kdv-optimizer/Dockerfile` і цей changelog-запис.
+
+## 2026-05-16 — PDFOptimizerClient fallback HTTP-клієнт (Фаза 2.1)
+
+- **Context:** `kdv-api` має синхронно викликати окремий `kdv-optimizer` і ніколи не зривати архівацію через помилку оптимізатора. Потрібен HTTP-клієнт із повним fallback на original PDF, але без інтеграції в `core.py` на цьому кроці.
+- **Change:** Додано `src/services/pdf.py` з `OptimizeResult` dataclass і `PDFOptimizerClient` на `requests.Session`: `POST /optimize`, polling `GET /optimize/<job_id>`, валідація output-файлу, fallback reasons `optimizer_unavailable`, `timeout`, `larger_output`, `empty_output`, `exception`. Додано focused tests у `tests/test_pdf_optimizer_client.py`.
+- **Verification:** `python3 -m py_compile src/services/pdf.py tests/test_pdf_optimizer_client.py`; `pytest tests/test_pdf_optimizer_client.py -q`.
+- **Risks:** Клієнт ще не підключений до workflow архівації; інтеграція з `skip_optimization`, shared-volume copy/cleanup і telemetry буде в наступних задачах Фази 2.
+- **Rollback:** Видалити `src/services/pdf.py`, `tests/test_pdf_optimizer_client.py` і цей changelog-запис.
+
+## 2026-05-16 — `/integrate` skip_optimization payload (Фаза 2.2)
+
+- **Context:** Потрібно backward-compatible розширити `POST /kdv/api/integrate/<biblionumber>`, щоб старі клієнти без body продовжували працювати, а новий UI міг передати `skip_optimization=true`.
+- **Change:** У `src/app.py` додано `_parse_integrate_payload()` з safe `request.get_json(silent=True)` і default `skip_optimization=False`; `archive_record_async()` передає `skip_optimization` у `task_manager.start_task(... process_integration_logic ...)`. Додано тести на POST без body і POST з `{"skip_optimization": true}`.
+- **Verification:** `python3 -m py_compile src/app.py tests/test_app.py`; `pytest tests/test_app.py -q`.
+- **Risks:** `process_integration_logic` отримає новий kwarg до оновлення `core.py` у задачі 2.3; у тестах task start замокано. Runtime-сумісність буде повністю закрита в наступній задачі, де сигнатура `process_integration_logic` буде розширена.
+- **Rollback:** Відкотити зміни `src/app.py`, `tests/test_app.py` і цей changelog-запис.
+
+## 2026-05-16 — Інтеграція PDFOptimizerClient у core workflow (Фаза 2.3)
+
+- **Context:** Після додавання `skip_optimization` у `/integrate` потрібно було підключити optimizer до реального DSpace upload path, щоб `task.result` отримував telemetry, а помилки optimizer-а не зривали архівацію.
+- **Change:** У `src/services/pdf.py` додано `needs_optimization()` з `pdfinfo` timeout і disk pre-flight helper для shared volume. У `src/core.py` розширено `process_integration_logic()` і `run_dspace_workflow()` параметром `skip_optimization`, додано lazy `PDFOptimizerClient`, копію PDF у `/data/kdv_optimize/input/{job_id}.pdf`, вибір optimized/fallback `final_pdf_path`, гарантований cleanup input/output через `finally` і `pdf_*` telemetry у результаті задачі. Додано focused tests на `skipped_by_user`, успішну telemetry, fallback при exception optimizer-а і cleanup при падінні upload.
+- **Verification:** `python3 -m py_compile src/core.py src/services/pdf.py tests/test_core.py`; `docker run --rm --env-file .env.example --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5f50c2647018 -m pytest tests/test_core.py tests/test_pdf_optimizer_client.py tests/test_app.py -q` -> `22 passed`; `docker run --rm --env-file .env.example --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5f50c2647018 -m pytest tests -q` -> `34 passed`.
+- **Risks:** `OPTIMIZER_URL` і shared volume ще не додані у compose runtime у межах Фази 2.3; якщо файл потребує оптимізації до infra wiring, workflow безпечно завантажить оригінал з `pdf_fallback_reason=optimizer_unavailable` або `pdf_optimized=skipped_no_disk` при відсутньому/недоступному shared volume. Реальне wiring сервісів буде в наступних задачах roadmap.
+- **Rollback:** Відкотити зміни `src/core.py`, helper-и в `src/services/pdf.py`, нові тести в `tests/test_core.py`, roadmap-checkbox-и і цей changelog-запис через `git revert <commit_sha>` або вручну повернути upload напряму через original `file_path`.
+
+## 2026-05-16 — Koha UI skip optimization checkbox (Фаза 3.1)
+
+- **Context:** Після підтримки `skip_optimization` у `kdv-api` потрібно дати оператору Koha UI явний спосіб завантажити оригінальний PDF без оптимізації.
+- **Change:** У `/opt/Koha/koha-deploy/IntranetUserJS.js` для неархівованих записів додано checkbox `kdv-skip-optimization` поруч із кнопкою "Архівувати в DSpace". `POST /integrate/<biblionumber>` тепер надсилає JSON payload `skip_optimization` з failsafe `document.getElementById(...)?.checked ?? false`; `PUT`-path для оновлення metadata не змінюється.
+- **Verification:** Перевірено фрагмент `/opt/Koha/koha-deploy/IntranetUserJS.js`; `git -C /opt/Koha/koha-deploy diff -- IntranetUserJS.js`; `git -C /opt/Koha/koha-deploy diff --check -- IntranetUserJS.js`. `node --check` не запускався, бо `node` відсутній у поточному shell-оточенні.
+- **Risks:** Зміна живе у зовнішньому Koha UI файлі поза поточним репозиторієм; для застосування в браузері може знадобитися штатний Koha asset/cache refresh, але production reload/deploy не виконувався.
+- **Rollback:** Відкотити зміни `/opt/Koha/koha-deploy/IntranetUserJS.js`, прибравши `skipOptimizationHtml`, `contentType` і `data` з AJAX-виклику; у цьому repo відкотити roadmap-checkbox-и і цей changelog-запис.
+
+## 2026-05-16 — Robot CLI skip optimization support (Фаза 4.1)
+
+- **Context:** `scripts/robot.py` викликає `/integrate` напряму, тому після появи `skip_optimization` у Koha UI потрібен аналогічний batch-контроль для операторських запусків і явне попередження про чергу `kdv-optimizer` при паралелізмі.
+- **Change:** `scripts/robot.py` переведено на `argparse` з positional `candidates_file`, `--skip-optimization`, `--parallelism` і `--max-wait`; ENV `ROBOT_PARALLELISM`/`ROBOT_MAX_WAIT` лишаються fallback defaults. Кожен `POST /integrate/<biblionumber>` тепер надсилає JSON payload `skip_optimization`. Додано lazy `KDV_API_TOKEN` loading, щоб `python3 scripts/robot.py --help` працював без завантаженого runtime env, та warning при `parallelism > 1` без `--skip-optimization`. Оновлено `docs/RUNBOOK_ROBOT.md` і `docs/scripts_runbook.md`. Додано `tests/test_robot.py`.
+- **Verification:** `python3 -m py_compile scripts/robot.py tests/test_robot.py`; `python3 scripts/robot.py --help`; `docker run --rm --env-file .env.example --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5f50c2647018 -m pytest tests/test_robot.py -q` -> `5 passed`; `docker run --rm --env-file .env.example --entrypoint python -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:5f50c2647018 -m pytest tests -q` -> `39 passed`.
+- **Risks:** Старі імпортні виклики `run_batch("candidates.txt")` лишаються сумісними, але документація тепер рекомендує прямий script запуск `python3 scripts/robot.py candidates.txt`; для `parallelism > 1` з увімкненою оптимізацією batch може чекати довше через single-worker optimizer.
+- **Rollback:** Відкотити зміни `scripts/robot.py`, `tests/test_robot.py`, `docs/RUNBOOK_ROBOT.md`, `docs/scripts_runbook.md`, roadmap-checkbox-и і цей changelog-запис.
+
+## 2026-05-16 — Compose wiring для kdv-optimizer (Фаза 5.1)
+
+- **Context:** Після реалізації `kdv-optimizer`, інтеграції `kdv-api` і batch/UI skip-флагів потрібно підключити окремий optimizer service до Docker Compose без переписування існуючого rclone/Traefik/Swarm контракту.
+- **Change:** `docker-compose.yml` отримав shared volume `kdv_optimize_data`, mount цього volume в `kdv-api` і `kdv-optimizer`, runtime ENV `OPTIMIZER_URL=http://kdv-optimizer:5001`/`OPTIMIZER_TIMEOUT=130` для `kdv-api`, новий сервіс `kdv-optimizer` без published ports, з `expose: 5001`, healthcheck `/health` і resource limits. `docker-compose.swarm.yml` доповнено shared volume mount-ами, swarm-safe override для `kdv-optimizer` без `env_file`, replicas/restart/placement/resources. У `.env.example` додано placeholder `KDV_OPTIMIZER_IMAGE_REPOSITORY=ghcr.io/OWNER/kdv-optimizer`, `KDV_OPTIMIZER_VERSION`, optional `KDV_OPTIMIZER_IMAGE`, `OPTIMIZER_URL` і `OPTIMIZER_TIMEOUT`.
+- **Verification:** `docker compose --env-file .env.example -f docker-compose.yml config`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`. У rendered config перевірено, що `kdv-optimizer` не має `ports`, а `kdv_optimize_data` змонтований в обидва сервіси. `docker compose up` і live healthcheck не запускались, бо це може змінити локальні production-like контейнери; потрібне окреме підтвердження.
+- **Risks:** До задачі 5.2 локальний image tag для `kdv-optimizer` ще не генерується deploy orchestrator-ом автоматично; compose може спробувати pull з placeholder GHCR repository, якщо не задано `KDV_OPTIMIZER_IMAGE` або не зібрано локальний образ із відповідним тегом. Runtime health залежить від наявності `kdv_optimize_data` і системних залежностей в image.
+- **Rollback:** Відкотити зміни `docker-compose.yml`, `docker-compose.swarm.yml`, `.env.example`, roadmap-checkbox-и і цей changelog-запис; shared volume `kdv_optimize_data` не містить DSpace/Koha даних.
+
+## 2026-05-16 — Swarm orchestrator build/deploy для kdv-optimizer (Фаза 5.2)
+
+- **Context:** Після compose wiring для `kdv-optimizer` deploy orchestrator усе ще будував лише `kdv-api`, тому local-image Swarm deploy міг залишити optimizer на placeholder/registry image і post-deploy verification перевіряв тільки API service.
+- **Change:** `scripts/deploy-orchestrator-swarm.sh` розширено для `ORCHESTRATOR_IMAGE_MODE=local`: вводиться спільний `LOCAL_IMAGE_TAG` з git SHA fallback, збираються `kdv-integrator-event:<tag>` і `kdv-optimizer:<tag>`, експортуються `KDV_IMAGE` та `KDV_OPTIMIZER_IMAGE` перед render manifest. `verify_swarm_service()` параметризовано service-name і тепер після deploy перевіряє `${STACK_NAME}_kdv-api` та `${STACK_NAME}_kdv-optimizer`; при таймауті друкує `docker service ls/ps` і завершує скрипт з `exit 1`. Додано rollback-коментар без видалення DSpace/Koha даних.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`. Live `ORCHESTRATOR_MODE=swarm` deploy і реальний build обох images не запускались, щоб не змінювати production-like Swarm runtime без окремого підтвердження.
+- **Risks:** У local mode обидва образи мають існувати на Swarm node, де запускаються tasks; placement constraint на manager лишається важливим. Registry mode лишається залежним від валідних `KDV_IMAGE*`/`KDV_OPTIMIZER_IMAGE*` і доступу Docker host до registry.
+- **Rollback:** Відкотити зміни `scripts/deploy-orchestrator-swarm.sh`, roadmap-checkbox-и і цей changelog-запис; для тимчасового вимкнення оптимізації без code rollback можна оновити `${STACK_NAME}_kdv-api` з `OPTIMIZER_URL=disabled`, DSpace/Koha дані при цьому не зачіпаються.
+
+## 2026-05-16 — Swarm manifest sanitize для `deploy.resources.cpus`
+
+- **Context:** Під час redeploy після задачі 5.2 `docker stack deploy` зупинився з помилкою `services.kdv-optimizer.deploy.resources.limits.cpus must be a string`. Source compose містив `cpus` у лапках, але `docker compose config` нормалізував їх у numeric YAML (`cpus: 2`, `cpus: 0.5`).
+- **Change:** У `scripts/deploy-orchestrator-swarm.sh` розширено sanitize pipeline rendered manifest: після чинного виправлення `published` додано перетворення numeric `cpus` назад у string (`cpus: "2"`, `cpus: "0.5"`) перед `docker stack deploy`.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`; локальний render/sanitize pipeline у `/tmp` підтвердив `cpus: "2"` і `cpus: "0.5"` у deploy manifest.
+- **Risks:** Sanitize застосовується до всіх рядків `cpus:` у rendered manifest, що відповідає вимогам Swarm deploy для resource limits/reservations; інші numeric поля не змінюються.
+- **Rollback:** Прибрати другий `sed` з sanitize pipeline у `scripts/deploy-orchestrator-swarm.sh` і цей changelog-запис.
+
+## 2026-05-16 — Unit-тести PDFOptimizerService (Фаза 7.1)
+
+- **Context:** Після підключення `kdv-optimizer` до Swarm потрібно покрити бізнес-логіку optimizer-а unit-тестами без запуску реального Ghostscript або HTTP-сервісу.
+- **Change:** У `tests/test_services.py` додано 5 focused тестів для PDF optimizer: threshold-евристика `needs_optimization()`, conservative fallback при `pdfinfo` timeout, disk preflight fail без submit у process pool, fallback на original path при більшому output після mocked Ghostscript, а також `PDFOptimizerClient` fallback при `ConnectionError`. Тестовий файл отримав безпечні ENV-заглушки для імпортів `src.config` без реальних секретів.
+- **Verification:** `python3 -m py_compile tests/test_services.py`; `pytest tests/test_services.py -q` -> `8 passed`.
+- **Risks:** Disk preflight test фіксує поточний контракт `PDFOptimizerService.submit_job()` — контрольований `RuntimeError` і відсутність submit у pool; перетворення цього стану на `skipped_no_disk` telemetry виконується на рівні `kdv-api` workflow.
+- **Rollback:** Видалити нові optimizer-тести та тестові ENV-заглушки з `tests/test_services.py`, відкотити checkbox-и roadmap і цей changelog-запис.
+
+## 2026-05-16 — Testing runbook для PDF optimizer tests
+
+- **Context:** Після додавання unit-тестів Фази 7.1 потрібно оновити інструкцію запуску тестів, щоб зафіксувати `kdv-optimizer` у `PYTHONPATH` і актуальний active changelog path.
+- **Change:** Оновлено `docs/RUNBOOK_TESTING.md`: додано посилання на `src/services/pdf.py`, `kdv-optimizer/kdv_optimizer/services/pdf.py` і `tests/test_pdf_optimizer_client.py`; додано команди запуску optimizer unit-тестів локально та в контейнері; зафіксовано очікуваний focused result `8 passed`; оновлено active changelog path на `docs/changelogs/CHANGELOG_2026_VOL_02.md`; додано troubleshooting для `ModuleNotFoundError: kdv_optimizer`.
+- **Verification:** Переглянуто diff `docs/RUNBOOK_TESTING.md`; структура розділів збережена, optimizer unit-тести описані після contract-тестів.
+- **Risks:** Команда з контейнером використовує імʼя `kdv-api`, як і попередній runbook; у Swarm runtime може знадобитися підставити актуальний container id/name з `docker ps`.
+- **Rollback:** Відкотити зміни `docs/RUNBOOK_TESTING.md` і цей changelog-запис.
+
+нові записи вносити в НОВИЙ ТОМ: docs/changelogs/CHANGELOG_2026_VOL_03.md

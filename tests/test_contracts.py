@@ -88,6 +88,113 @@ def test_dspace_update_metadata_contract_builds_json_patch(monkeypatch):
     ]
 
 
+def test_dspace_get_primary_bitstream_reads_first_original_bitstream(monkeypatch):
+    client = DSpaceClient()
+    calls = []
+
+    def fake_request(method, endpoint, **kwargs):
+        calls.append((method, endpoint))
+        if endpoint == "/core/items/item-uuid/bundles":
+            return _Resp(
+                status_code=200,
+                payload={
+                    "_embedded": {
+                        "bundles": [{"name": "ORIGINAL", "uuid": "bundle-uuid"}]
+                    }
+                },
+            )
+        if endpoint == "/core/bundles/bundle-uuid/bitstreams":
+            return _Resp(
+                status_code=200,
+                payload={"_embedded": {"bitstreams": [{"uuid": "bitstream-uuid"}]}},
+            )
+        return _Resp(status_code=404)
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    bitstream = client.get_primary_bitstream("item-uuid")
+
+    assert bitstream == {"uuid": "bitstream-uuid"}
+    assert calls == [
+        ("GET", "/core/items/item-uuid/bundles"),
+        ("GET", "/core/bundles/bundle-uuid/bitstreams"),
+    ]
+
+
+def test_dspace_upload_to_item_uses_explicit_upload_name(monkeypatch, tmp_path):
+    client = DSpaceClient()
+    pdf = tmp_path / "11111111-1111-4111-8111-111111111111.pdf"
+    pdf.write_bytes(b"pdf-bytes")
+    captured = {}
+
+    def fake_request(method, endpoint, **kwargs):
+        if method == "GET" and endpoint == "/core/items/item-uuid/bundles":
+            return _Resp(
+                status_code=200,
+                payload={
+                    "_embedded": {
+                        "bundles": [{"name": "ORIGINAL", "uuid": "bundle-uuid"}]
+                    }
+                },
+            )
+        captured["method"] = method
+        captured["endpoint"] = endpoint
+        captured["files"] = kwargs["files"]
+        return _Resp(status_code=201, payload={"uuid": "bitstream-uuid"})
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    ok = client.upload_to_item(
+        "item-uuid", str(pdf), upload_name="Processed/biblio_73_v01.pdf"
+    )
+
+    assert ok == {"uuid": "bitstream-uuid"}
+    assert captured["method"] == "POST"
+    assert captured["endpoint"] == "/core/bundles/bundle-uuid/bitstreams"
+    upload_field = captured["files"]["file"]
+    assert upload_field[0] == "biblio_73_v01.pdf"
+    assert upload_field[2] == "application/pdf"
+
+
+def test_koha_success_writes_file_856_before_handle_856(monkeypatch):
+    client = KohaClient()
+    captured = {}
+    xml = (
+        '<record><datafield tag="956" ind1=" " ind2=" ">'
+        '<subfield code="u">books/book.pdf</subfield>'
+        '</datafield>'
+        '<datafield tag="856" ind1="4" ind2="0">'
+        '<subfield code="u">old</subfield>'
+        '</datafield></record>'
+    )
+
+    monkeypatch.setattr(client, "_get_biblio_xml", lambda _biblio_id: xml)
+
+    def fake_put(url, data=None, headers=None):
+        captured["data"] = data.decode("utf-8")
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    ok = client.set_success(
+        42,
+        "https://repo.pinokew.buzz/handle/123/456",
+        item_uuid="item-uuid",
+        primary_download_url=(
+            "https://repo.pinokew.buzz/bitstreams/bitstream-uuid/download"
+        ),
+    )
+
+    assert ok is True
+    updated = client._parse_marc(captured["data"])
+    fields_856 = updated.get_fields("856")
+    assert len(fields_856) == 2
+    assert fields_856[0]["u"] == "https://repo.pinokew.buzz/bitstreams/bitstream-uuid/download"
+    assert fields_856[0]["y"] == "Файл"
+    assert fields_856[1]["u"] == "https://repo.pinokew.buzz/handle/123/456"
+    assert fields_856[1]["y"] == "Запис в репозиторії"
+
+
 def test_dspace_create_item_error_is_diagnostic(monkeypatch):
     client = DSpaceClient()
 
