@@ -126,3 +126,12 @@
 - **Verification:** Перевірено релевантні README-згадки через `rg` і перегляд diff; `git diff --check -- README.md docs/changelogs/CHANGELOG_2026_VOL_03.md`.
 - **Risks:** README лишається high-level входом; детальні команди, dry-run, troubleshooting і rollback описані в `docs/RUNBOOK_ROBOT.md` та `docs/scripts_runbook.md`.
 - **Rollback:** Відкотити зміни `README.md` і цей changelog-запис.
+
+
+## 2026-05-23 — ARCHITECTURE update для Swarm Robot wrapper
+
+- **Context:** Після впровадження `scripts/run-robot-swarm.sh` архітектурний документ ще описував старий M7/Compose-oriented runtime і не фіксував SOPS/age env resolution, `docker exec --env-file`, передачу `candidates.txt` у Swarm container та синхронізацію `robot_batch.log`.
+- **Change:** `docs/ARCHITECTURE.md` точково оновлено: шапка версії до `v0.4.0-M8 + Swarm Robot wrapper`, CD/deploy path під `deploy-orchestrator-swarm.sh`, ops invariants для `env.dev.enc`/`env.prod.enc`, batch/Robot invariants для wrapper-а, а також code organization для `scripts/run-robot-swarm.sh`.
+- **Verification:** Переглянуто релевантні секції через `rg`/`sed`; `git diff --check -- docs/ARCHITECTURE.md docs/changelogs/CHANGELOG_2026_VOL_03.md`.
+- **Risks:** Документ лишається high-level описом; покрокові операторські команди збережені в `docs/RUNBOOK_ROBOT.md` і `docs/scripts_runbook.md`.
+- **Rollback:** Відкотити зміни `docs/ARCHITECTURE.md` і цей changelog-запис.

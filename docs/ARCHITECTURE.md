@@ -1,6 +1,6 @@
-Архітектура та Workflow (v0.3.0-M7 + 2026-03-13 hotfix)
+Архітектура та Workflow (v0.4.0-M8 + Swarm Robot wrapper)
 
-Цей документ описує логіку роботи KDV Integrator v0.3.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests) та M7 (release canary + rollback + batch controls).
+Цей документ описує логіку роботи KDV Integrator v0.4.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests), M7 (release canary + rollback + batch controls) та M8 (PDF optimizer + Swarm runtime wrapper для Robot).
 
 🔄 Загальний Workflow (Fork-Join Pattern)
 
@@ -203,8 +203,9 @@ REST API Koha не дозволяє повноцінно працювати з �
 - Перед SSH використовується `tailscale/github-action@v4`.
 - Авторизація: `TAILSCALE_AUTHKEY` (GitHub Secret).
 - Обов'язкові secrets для deploy: `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`, `DEPLOY_PROJECT_DIR`, `TAILSCALE_AUTHKEY`.
-- На сервері деплой виконує: `git fetch`, checkout потрібного ref, `docker compose pull`, `docker compose up -d --remove-orphans`, `ps/logs`.
-- Сервіс у `docker-compose.yml` запускається з GHCR image; версія керується через env (`KDV_IMAGE_VERSION`, опційно `KDV_IMAGE` для повного override).
+- На сервері deploy path для Swarm виконує `scripts/deploy-orchestrator-swarm.sh`: render manifest через `docker compose --env-file ... config`, створення versioned runtime env secret і `docker stack deploy`.
+- У default local-image режимі збираються `kdv-integrator-event:<git-sha>` та `kdv-optimizer:<git-sha>`, після чого Swarm service spec оновлюється без залежності від registry pull.
+- Runtime secrets надходять у контейнер через Swarm secret payload і `scripts/entrypoint.sh`; окремі `docker exec` процеси не успадковують env PID1, тому manual wrappers мають явно передавати env через `docker exec --env-file`.
 
 ### 10. API Security Path (M4 implemented)
 
@@ -247,7 +248,9 @@ Koha JS для browser-flow:
 
 ### 11. Ops/Docs Invariants
 
-- `.env` з секретами не комітиться; для CI використовується `.env.example` + CI mock values.
+- Plaintext `.env` з секретами не комітиться; штатний runtime/deploy контекст зберігається в `env.dev.enc`/`env.prod.enc` через SOPS/age.
+- Для CI використовується `.env.example` + CI mock values.
+- Manual/deploy скрипти резолвлять env у пріоритеті `ORCHESTRATOR_ENV_FILE` → `SERVER_ENV`/`ENVIRONMENT_NAME` → `env.<env>.enc` → `.env` fallback тільки для локального dev.
 - Release Gate синхронізований з `docs/ROADMAP.md` (M3 секція).
 - Зміни в CI/deploy мають відображатися в `CHANGELOGS/` і, за потреби, у runbooks.
 
@@ -276,6 +279,12 @@ Koha JS для browser-flow:
 - Batch rate limiting / parallelism контрольовані env-параметрами:
     - `ROBOT_PARALLELISM`, `ROBOT_BATCH_DELAY`, `ROBOT_POLL_INTERVAL`, `ROBOT_MAX_WAIT`
     - `NIGHTWALKER_AUTO_DELAY`, `NIGHTWALKER_RANGE_DELAY`
+- У Swarm manual runtime оператор запускає Robot через `scripts/run-robot-swarm.sh`, а не напряму через `docker compose exec` або `docker exec scripts/robot.py`. Wrapper:
+    - резолвить SOPS/age env-контекст;
+    - знаходить локальний task-контейнер `kdv-api` через label `com.docker.swarm.service.name`;
+    - передає env у `docker exec --env-file`, щоб `robot.py` бачив `KDV_API_TOKEN`;
+    - копіює host `candidates.txt` у контейнер як `/tmp/kdv-candidates.txt`;
+    - після завершення синхронізує `/app/logs/robot_batch.log` у host `logs/robot_batch.log`.
 
 ---
 
@@ -286,7 +295,7 @@ src/
 ├── app.py                    # Flask + фабрика _make_clients + ендпоінти
 ├── tasks.py                  # TaskManager (in-memory queue) + kwargs support
 ├── core.py                   # Оркестратор (process_integration_logic, run_dspace_workflow)
-├── config.py                 # Env vars + validation
+├── config.py                 # Env bootstrap: ORCHESTRATOR_ENV_FILE / SERVER_ENV / SOPS env.*.enc / .env fallback
 ├── mapping.py                # MARC → Dublin Core rules
 ├── koha.py                   # KohaClient (реальна реалізація)
 ├── dspace.py                 # DSpaceClient (реальна реалізація)
@@ -296,6 +305,13 @@ src/
 └── services/
     ├── covers.py            # CoverService (self-contained)
     └── files.py             # FileService (versioning, error-move)
+
+scripts/
+├── deploy-orchestrator-swarm.sh # Swarm deploy orchestration + versioned env secret
+├── run-robot-swarm.sh           # Manual Swarm wrapper для Robot: env/container/candidates/log sync
+├── robot.py                     # Batch logic, викликається wrapper-ом у Swarm
+├── healthcheck.sh               # Pre-deploy/runtime health validation
+└── render-versioned-env-secret.sh
 ```
 
 **Принципи:**
