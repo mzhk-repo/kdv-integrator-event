@@ -170,6 +170,7 @@ def test_optimizer_client_unavailable(tmp_path):
     assert result.fallback_reason == "optimizer_unavailable"
 
 from src.services.files import FileService
+from src.services.sources import SourceResolutionError, SourceResolver
 from src.services.covers import CoverService
 
 
@@ -206,6 +207,40 @@ def test_files_move_to_error(tmp_path):
     assert error_dir.exists()
     moved = error_dir / "biblio_1_v01.pdf"
     assert moved.exists()
+
+
+
+def test_source_resolver_primary_local_path(tmp_path):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    resolver = SourceResolver(str(mount))
+
+    resolved = resolver.resolve_primary("books/book.pdf")
+
+    assert resolved.local_path == str(mount / "books" / "book.pdf")
+    assert resolved.source_type == "local"
+    assert resolved.original_name == "book.pdf"
+    assert resolved.temporary is False
+    assert resolved.cleanup_paths == ()
+    assert resolved.lifecycle_policy == "local_managed"
+
+
+def test_source_resolver_additional_local_path_is_unmanaged(tmp_path):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    resolver = SourceResolver(str(mount))
+
+    resolved = resolver.resolve_additional("extra/additional.pdf")
+
+    assert resolved.local_path == str(mount / "extra" / "additional.pdf")
+    assert resolved.lifecycle_policy == "local_unmanaged"
+
+
+def test_source_resolver_rejects_path_escape(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    with pytest.raises(SourceResolutionError, match=r"Invalid relative path in 956\$u"):
+        resolver.resolve_primary("../secret.pdf")
 
 
 class FakeCoverKoha:

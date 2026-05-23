@@ -173,6 +173,14 @@ python3 -m pytest tests/test_core.py -q
 - Local `956$q` additional файли працюють як раніше: без rename, без optimizer, non-fatal при помилці.
 - Жодного Google dependency ще не додано.
 
+### Статус 2026-05-23
+
+- Додано `src/services/sources.py` з `ResolvedSource`, `SourceResolver`, `LocalMountSource` і `SourceResolutionError`.
+- `src/core.py` використовує `SourceResolver` для primary `956$u`, cover `956$p` і additional `956$q`, але старий `_resolve_mount_relative_path()` лишено як compatibility wrapper.
+- Local primary `956$u` зберігає `local_managed` lifecycle і поточний `version_and_move()` path.
+- Local additional `956$q` використовує `local_unmanaged` lifecycle: без rename, без optimizer, non-fatal при missing/invalid/upload failure.
+- Google URL parsing/download ще не додавалися; Google dependencies не додавалися.
+
 ## Ітерація 3: Google Drive URL parser для `956$u` і `956$q`
 
 ### Завдання

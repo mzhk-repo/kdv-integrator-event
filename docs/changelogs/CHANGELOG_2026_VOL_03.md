@@ -167,3 +167,11 @@
 - **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; `bash -n scripts/render-versioned-gdrive-secret.sh`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`; `python3 -c "import yaml"`; `git diff --check` для tracked файлів; `git diff --no-index --check` для нових untracked docs/helper файлів без whitespace warning-ів.
 - **Risks:** Реальний deploy і створення Swarm secret не запускалися; перший запуск helper-а створить Docker secret з реального Vault payload, тому його треба виконувати тільки на цільовій Swarm node після підтвердження середовища. `kdv-api` ще не використовує secret у коді до наступних ітерацій.
 - **Rollback:** Видалити `scripts/render-versioned-gdrive-secret.sh`, прибрати виклик helper-а з `scripts/deploy-orchestrator-swarm.sh`, прибрати `gdrive_service_account_json` з `docker-compose.swarm.yml`, видалити GDRIVE non-secret ENV з `.env.example` і цей changelog-запис.
+
+## 2026-05-23 — Source abstraction без Google API (Ітерація 2)
+
+- **Context:** Перед Google Drive parser/download потрібно винести локальне резолвлення `956$u`/`956$q` з `core.py` у окремий source layer без зміни поточної поведінки local files.
+- **Change:** Додано `src/services/sources.py` з `ResolvedSource`, `SourceResolver`, `LocalMountSource` і `SourceResolutionError`. `src/core.py` тепер резолвить primary `956$u`, cover `956$p` і additional `956$q` через `SourceResolver`; `_resolve_mount_relative_path()` лишено compatibility wrapper. Додано focused тести SourceResolver у `tests/test_services.py`.
+- **Verification:** `python3 -m py_compile src/core.py src/services/sources.py tests/test_core.py tests/test_services.py`; host pytest для `tests/test_core.py` не запустився через відсутній `pymarc`; Docker focused pytest для SourceResolver -> `3 passed`; Docker focused core regression -> `4 passed`; Docker `pytest tests/test_core.py tests/test_services.py -q` -> `35 passed`; Docker `pytest tests -q` -> `66 passed`.
+- **Risks:** Ітерація не додає Google URL support; `956$q` поки підтримує тільки local paths, але тепер має окремий `local_unmanaged` lifecycle для наступного розширення.
+- **Rollback:** Видалити `src/services/sources.py`, повернути inline path resolution у `src/core.py`, прибрати нові SourceResolver тести й цей changelog-запис.

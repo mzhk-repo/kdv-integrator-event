@@ -14,6 +14,7 @@ from .koha import KohaClient
 from .dspace import DSpaceClient
 from .services.covers import CoverService
 from .services.files import FileService
+from .services.sources import SourceResolutionError, SourceResolver
 from .services.pdf import (
     PDFOptimizerClient,
     has_optimizer_disk_space,
@@ -213,14 +214,20 @@ def _parse_additional_file_paths(raw_paths: str | None) -> list[str]:
     return [part.strip() for part in raw_paths.split("|") if part.strip()]
 
 
+def _source_resolver() -> SourceResolver:
+    return SourceResolver(INTEGRATOR_MOUNT_PATH)
+
+
 def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) -> dict:
     uploaded = []
     failed = []
 
+    resolver = _source_resolver()
+
     for relative_path in _parse_additional_file_paths(raw_paths):
         try:
-            full_path = _resolve_mount_relative_path(relative_path, "956$q")
-        except ValueError as exc:
+            resolved_source = resolver.resolve_additional(relative_path)
+        except SourceResolutionError as exc:
             logger.warning(
                 "Additional DSpace file path rejected: item_uuid=%s relative_path=%s error=%s",
                 item_uuid,
@@ -230,6 +237,7 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
             failed.append({"path": relative_path, "reason": "invalid_path"})
             continue
 
+        full_path = resolved_source.local_path if resolved_source else None
         if not full_path or not os.path.exists(full_path):
             logger.warning(
                 "Additional DSpace file missing: item_uuid=%s relative_path=%s full_path=%s",
@@ -243,10 +251,12 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
         try:
             if dspace_client.upload_to_item(item_uuid, full_path):
                 logger.info(
-                    "Additional DSpace file uploaded: item_uuid=%s relative_path=%s full_path=%s",
+                    "Additional DSpace file uploaded: item_uuid=%s relative_path=%s full_path=%s source_type=%s lifecycle_policy=%s",
                     item_uuid,
                     relative_path,
                     full_path,
+                    resolved_source.source_type,
+                    resolved_source.lifecycle_policy,
                 )
                 uploaded.append(relative_path)
             else:
@@ -274,23 +284,7 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
 def _resolve_mount_relative_path(
     relative_path: str | None, field_name: str
 ) -> str | None:
-    if not relative_path:
-        return None
-
-    clean_path = relative_path.strip()
-    if not clean_path:
-        return None
-
-    candidate = os.path.normpath(clean_path)
-    if os.path.isabs(candidate) or candidate.startswith("..") or "/.." in candidate:
-        raise ValueError(f"Invalid relative path in {field_name}: {relative_path}")
-
-    mount_root = os.path.abspath(INTEGRATOR_MOUNT_PATH)
-    full_path = os.path.abspath(os.path.join(mount_root, candidate))
-    if os.path.commonpath([mount_root, full_path]) != mount_root:
-        raise ValueError(f"Path escapes mount root in {field_name}: {relative_path}")
-
-    return full_path
+    return _source_resolver().resolve_local_path(relative_path, field_name)
 
 
 def parse_marc_details(xml_data):
@@ -475,8 +469,11 @@ def process_integration_logic(
 
         file_rel_path = meta["file_path"]
         cover_rel_path = meta.get("cover_path")
-        cover_source_path = _resolve_mount_relative_path(cover_rel_path, "956$p")
-        original_full_path = _resolve_mount_relative_path(file_rel_path, "956$u")
+        source_resolver = _source_resolver()
+        cover_source = source_resolver.resolve_cover(cover_rel_path)
+        primary_source = source_resolver.resolve_primary(file_rel_path)
+        cover_source_path = cover_source.local_path if cover_source else None
+        original_full_path = primary_source.local_path if primary_source else None
 
         if not original_full_path or not os.path.exists(original_full_path):
             if cover_source_path:
