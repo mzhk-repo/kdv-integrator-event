@@ -175,3 +175,11 @@
 - **Verification:** `python3 -m py_compile src/core.py src/services/sources.py tests/test_core.py tests/test_services.py`; host pytest для `tests/test_core.py` не запустився через відсутній `pymarc`; Docker focused pytest для SourceResolver -> `3 passed`; Docker focused core regression -> `4 passed`; Docker `pytest tests/test_core.py tests/test_services.py -q` -> `35 passed`; Docker `pytest tests -q` -> `66 passed`.
 - **Risks:** Ітерація не додає Google URL support; `956$q` поки підтримує тільки local paths, але тепер має окремий `local_unmanaged` lifecycle для наступного розширення.
 - **Rollback:** Видалити `src/services/sources.py`, повернути inline path resolution у `src/core.py`, прибрати нові SourceResolver тести й цей changelog-запис.
+
+## 2026-05-23 — Google Drive URL parser для `956$u` і `956$q` (Ітерація 3)
+
+- **Context:** Після source abstraction потрібно розпізнавати Google Drive URL у `956$u` і змішаному списку `956$q`, але ще без Google API, credentials або download-логіки.
+- **Change:** У `src/services/sources.py` додано pure `GoogleDriveUrlParser` і `GoogleDriveFileRef`. Parser підтримує `drive.google.com/file/d/<file_id>/view`, `drive.google.com/open?id=<file_id>`, `drive.google.com/uc?id=<file_id>` і `resourcekey`. `SourceResolver.resolve_primary()` та `resolve_additional()` повертають `ResolvedSource` з `source_type="gdrive"`, `temporary=True`, `lifecycle_policy="remote_ephemeral"` і diagnostics для `file_id`/`resource_key`; local paths зберігають попередню поведінку. Folder links і сторонні HTTP/HTTPS URL явно відхиляються.
+- **Verification:** `python3 -m py_compile src/services/sources.py tests/test_services.py`; `python3 -m pytest tests/test_services.py -q` -> `19 passed`. Parser-тести не виконують мережевих викликів і не потребують Google credentials.
+- **Risks:** Ітерація тільки парсить Google Drive URL; primary Google URL поки не створює локальний файл для архівації, а additional Google URL поки не завантажується у DSpace. Download/read-only Google API лишається межами Ітерації 4.
+- **Rollback:** Прибрати `GoogleDriveUrlParser`/`GoogleDriveFileRef` і gdrive-гілки з `SourceResolver`, видалити додані parser-тести, прибрати статус Ітерації 3 з `docs/url-parcer-roadmap.md` і цей changelog-запис.

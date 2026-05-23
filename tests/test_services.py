@@ -170,7 +170,11 @@ def test_optimizer_client_unavailable(tmp_path):
     assert result.fallback_reason == "optimizer_unavailable"
 
 from src.services.files import FileService
-from src.services.sources import SourceResolutionError, SourceResolver
+from src.services.sources import (
+    GoogleDriveUrlParser,
+    SourceResolutionError,
+    SourceResolver,
+)
 from src.services.covers import CoverService
 
 
@@ -241,6 +245,81 @@ def test_source_resolver_rejects_path_escape(tmp_path):
 
     with pytest.raises(SourceResolutionError, match=r"Invalid relative path in 956\$u"):
         resolver.resolve_primary("../secret.pdf")
+
+
+def test_gdrive_parser_supports_file_d_view_url():
+    parser = GoogleDriveUrlParser()
+
+    parsed = parser.parse(
+        "https://drive.google.com/file/d/abc123/view?usp=sharing",
+        "956$u",
+    )
+
+    assert parsed.file_id == "abc123"
+    assert parsed.resource_key is None
+
+
+def test_gdrive_parser_supports_open_and_uc_urls_with_resourcekey():
+    parser = GoogleDriveUrlParser()
+
+    open_url = parser.parse(
+        "https://drive.google.com/open?id=file-open&resourcekey=resource-open",
+        "956$u",
+    )
+    uc_url = parser.parse(
+        "https://drive.google.com/uc?export=download&id=file-uc",
+        "956$q",
+    )
+
+    assert open_url.file_id == "file-open"
+    assert open_url.resource_key == "resource-open"
+    assert uc_url.file_id == "file-uc"
+    assert uc_url.resource_key is None
+
+
+def test_gdrive_parser_rejects_folder_links():
+    parser = GoogleDriveUrlParser()
+
+    with pytest.raises(SourceResolutionError, match="folder URL is not supported"):
+        parser.parse("https://drive.google.com/drive/folders/folder-id", "956$u")
+
+
+def test_source_resolver_rejects_non_google_urls(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    with pytest.raises(SourceResolutionError, match="only Google Drive file URLs"):
+        resolver.resolve_primary("https://example.com/book.pdf")
+
+
+def test_source_resolver_primary_gdrive_url_is_remote_ephemeral(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    resolved = resolver.resolve_primary(
+        "https://drive.google.com/file/d/primary-id/view?resourcekey=primary-key"
+    )
+
+    assert resolved.local_path == ""
+    assert resolved.source_type == "gdrive"
+    assert resolved.original_name == "primary-id"
+    assert resolved.temporary is True
+    assert resolved.lifecycle_policy == "remote_ephemeral"
+    assert resolved.diagnostics["field_name"] == "956$u"
+    assert resolved.diagnostics["file_id"] == "primary-id"
+    assert resolved.diagnostics["resource_key"] == "primary-key"
+
+
+def test_source_resolver_additional_gdrive_url_is_remote_ephemeral(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    resolved = resolver.resolve_additional(
+        "https://drive.google.com/open?id=additional-id&resourcekey=additional-key"
+    )
+
+    assert resolved.source_type == "gdrive"
+    assert resolved.lifecycle_policy == "remote_ephemeral"
+    assert resolved.diagnostics["field_name"] == "956$q"
+    assert resolved.diagnostics["file_id"] == "additional-id"
+    assert resolved.diagnostics["resource_key"] == "additional-key"
 
 
 class FakeCoverKoha:

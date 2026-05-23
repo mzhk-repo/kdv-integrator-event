@@ -208,6 +208,15 @@ python3 -m pytest tests/test_services.py -q
 - Немає мережевих викликів у parser-тестах.
 - `resourcekey` зберігається в parsed result.
 
+### Статус 2026-05-23
+
+- Додано pure parser `GoogleDriveUrlParser` у `src/services/sources.py` без Google dependencies і без мережевих викликів.
+- Підтримано `drive.google.com/file/d/<file_id>/view`, `drive.google.com/open?id=<file_id>` і `drive.google.com/uc?id=<file_id>`.
+- `resourcekey` зберігається у parsed result і `ResolvedSource.diagnostics`.
+- Folder links `drive.google.com/drive/folders/...` і сторонні HTTP/HTTPS URL явно відхиляються через `SourceResolutionError`.
+- `SourceResolver.resolve_primary()` і `SourceResolver.resolve_additional()` повертають `source_type="gdrive"` та `lifecycle_policy="remote_ephemeral"` для Google Drive URL; локальні шляхи лишилися backward-compatible.
+- Download/read-only Google API ще не реалізовано; це межа Ітерації 4.
+
 ## Ітерація 4: GoogleDriveSource read-only download для primary/additional
 
 ### Завдання
