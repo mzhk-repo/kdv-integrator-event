@@ -28,6 +28,8 @@ services:
     secrets:
       - source: app_env_payload
         target: app_env_payload
+      - source: gdrive_service_account_json
+        target: gdrive_service_account_json
     deploy:
       replicas: 1
       restart_policy:
@@ -81,3 +83,6 @@ secrets:
   app_env_payload:
     external: true
     name: ${KDV_APP_ENV_PAYLOAD_SECRET_NAME}
+  gdrive_service_account_json:
+    external: true
+    name: ${GDRIVE_SERVICE_ACCOUNT_SECRET_NAME}

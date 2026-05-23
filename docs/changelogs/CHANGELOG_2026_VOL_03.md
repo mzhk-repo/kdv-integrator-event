@@ -135,3 +135,35 @@
 - **Verification:** Переглянуто релевантні секції через `rg`/`sed`; `git diff --check -- docs/ARCHITECTURE.md docs/changelogs/CHANGELOG_2026_VOL_03.md`.
 - **Risks:** Документ лишається high-level описом; покрокові операторські команди збережені в `docs/RUNBOOK_ROBOT.md` і `docs/scripts_runbook.md`.
 - **Rollback:** Відкотити зміни `docs/ARCHITECTURE.md` і цей changelog-запис.
+
+## 2026-05-23 — Roadmap Google Drive source для `956$u`
+
+- **Context:** Потрібно підготувати впровадження завантаження primary PDF за Google Drive URL з MARC `956$u`, не дублюючи service account secrets у KDV env-файлах і не змінюючи файл на Google Drive.
+- **Change:** `docs/url-parcer-roadmap.md` переписано у Codex-friendly контрольований roadmap: зафіксовано read-only/no-writeback policy, runtime secret contract `Ansible Vault -> Swarm secret -> /run/secrets/gdrive_service_account_json`, інтеграцію через `scripts/deploy-orchestrator-swarm.sh`, SourceResolver/GoogleDriveSource архітектуру, ітерації з перевірками та DoD.
+- **Verification:** Документ оновлено без додавання реальних secret values; `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md`; `git diff --no-index --check /dev/null docs/url-parcer-roadmap.md` без whitespace warning-ів.
+- **Risks:** Roadmap описує майбутні зміни, але ще не змінює deploy/code runtime; перед реалізацією потрібно підтвердити фактичну структуру ключів у Ansible Vault без виводу значень.
+- **Rollback:** Відкотити `docs/url-parcer-roadmap.md` до попередньої концептуальної версії і видалити цей changelog-запис.
+
+## 2026-05-23 — Roadmap Google Drive: `956$q` і ephemeral lifecycle
+
+- **Context:** Після первинного roadmap потрібно уточнити, що Google Drive URL мають підтримуватися не тільки в primary `956$u`, а й у additional списку `956$q`; для файлів, завантажених з Google Drive, не потрібні локальні переміщення в `Processed` або `Error`.
+- **Change:** `docs/url-parcer-roadmap.md` оновлено: `956$q` описано як змішаний список local/GDrive джерел через `|`; lifecycle Google Drive файлів змінено на ephemeral у `GDRIVE_TMP_DIR` без `version_and_move()` і без `FileService.move_to_error()`; помилки Google Drive primary логуються через існуючі Koha `956$y`/`956$z`, а помилки additional файлів лишаються non-fatal через `additional_files_failed`.
+- **Verification:** `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md`; `git diff --no-index --check /dev/null docs/url-parcer-roadmap.md` без whitespace warning-ів.
+- **Risks:** Roadmap змінює майбутній дизайн, але ще не змінює runtime-код; під час реалізації потрібно розділити lifecycle local-managed і remote-ephemeral у тестах.
+- **Rollback:** Відкотити уточнення `docs/url-parcer-roadmap.md` про `956$q`/ephemeral lifecycle і видалити цей changelog-запис.
+
+## 2026-05-23 — Google Drive roadmap: завершення Ітерації 0
+
+- **Context:** Перед змінами deploy/code потрібно підтвердити, що Ansible Vault уже містить Google service account JSON для dev/prod і що секрети можна використати як source of truth для майбутнього Swarm secret.
+- **Change:** У `docs/url-parcer-roadmap.md` додано статус Ітерації 0: підтверджено наявність dev/prod `rclone.vault.yml`, ключ `vault_rclone_service_account_json`, валідний повний service account JSON у dev/prod, і вимогу запускати `ansible-vault` з `ANSIBLE_CONFIG=/opt/Ansible/ansible/ansible.cfg` поза Ansible repo.
+- **Verification:** `test -f` для dev/prod Vault; `command -v ansible-vault`; filtered `ansible-vault view` з виводом тільки top-level key names; JSON parse з виводом тільки назв JSON-полів; secret values не друкувалися.
+- **Risks:** Ітерація 0 не змінює runtime; наступна ітерація має акуратно інтегрувати versioned Swarm secret у `scripts/deploy-orchestrator-swarm.sh` і `docker-compose.swarm.yml` без передачі secret у `kdv-optimizer`.
+- **Rollback:** Видалити статус Ітерації 0 з `docs/url-parcer-roadmap.md` і цей changelog-запис.
+
+## 2026-05-23 — Google Drive Swarm secret deploy contract (Ітерація 1)
+
+- **Context:** Після підтвердження Ansible Vault source of truth потрібно підготувати deploy path, який створює versioned Swarm secret для Google service account і монтує його тільки в `kdv-api` без дублювання secret payload у env.
+- **Change:** Додано `scripts/render-versioned-gdrive-secret.sh`; `scripts/deploy-orchestrator-swarm.sh` викликає helper перед render Swarm manifest і експортує `GDRIVE_SERVICE_ACCOUNT_SECRET_NAME`; `docker-compose.swarm.yml` монтує external secret `gdrive_service_account_json` тільки в `kdv-api`; `.env.example` доповнено non-secret GDRIVE контрактом.
+- **Verification:** `bash -n scripts/deploy-orchestrator-swarm.sh`; `bash -n scripts/render-versioned-gdrive-secret.sh`; `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.swarm.yml config`; `python3 -c "import yaml"`; `git diff --check` для tracked файлів; `git diff --no-index --check` для нових untracked docs/helper файлів без whitespace warning-ів.
+- **Risks:** Реальний deploy і створення Swarm secret не запускалися; перший запуск helper-а створить Docker secret з реального Vault payload, тому його треба виконувати тільки на цільовій Swarm node після підтвердження середовища. `kdv-api` ще не використовує secret у коді до наступних ітерацій.
+- **Rollback:** Видалити `scripts/render-versioned-gdrive-secret.sh`, прибрати виклик helper-а з `scripts/deploy-orchestrator-swarm.sh`, прибрати `gdrive_service_account_json` з `docker-compose.swarm.yml`, видалити GDRIVE non-secret ENV з `.env.example` і цей changelog-запис.
