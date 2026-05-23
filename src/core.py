@@ -14,7 +14,10 @@ from .koha import KohaClient
 from .dspace import DSpaceClient
 from .services.covers import CoverService
 from .services.files import FileService
-from .services.sources import SourceResolutionError, SourceResolver
+from .services.sources import (
+    SourceResolutionError,
+    SourceResolver,
+)
 from .services.pdf import (
     PDFOptimizerClient,
     has_optimizer_disk_space,
@@ -218,6 +221,10 @@ def _source_resolver() -> SourceResolver:
     return SourceResolver(INTEGRATOR_MOUNT_PATH)
 
 
+def _looks_like_gdrive_url(raw_path: str | None) -> bool:
+    return bool(raw_path and "drive.google.com" in raw_path)
+
+
 def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) -> dict:
     uploaded = []
     failed = []
@@ -227,7 +234,17 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
     for relative_path in _parse_additional_file_paths(raw_paths):
         try:
             resolved_source = resolver.resolve_additional(relative_path)
+            resolved_source = resolver.materialize(resolved_source)
         except SourceResolutionError as exc:
+            if _looks_like_gdrive_url(relative_path):
+                logger.warning(
+                    "Additional Google Drive file download failed: item_uuid=%s path=%s error=%s",
+                    item_uuid,
+                    relative_path,
+                    exc,
+                )
+                failed.append({"path": relative_path, "reason": str(exc)})
+                continue
             logger.warning(
                 "Additional DSpace file path rejected: item_uuid=%s relative_path=%s error=%s",
                 item_uuid,
@@ -236,6 +253,17 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
             )
             failed.append({"path": relative_path, "reason": "invalid_path"})
             continue
+        except Exception as exc:
+            if _looks_like_gdrive_url(relative_path):
+                logger.warning(
+                    "Additional Google Drive file download failed: item_uuid=%s path=%s error=%s",
+                    item_uuid,
+                    relative_path,
+                    exc,
+                )
+                failed.append({"path": relative_path, "reason": str(exc)})
+                continue
+            raise
 
         full_path = resolved_source.local_path if resolved_source else None
         if not full_path or not os.path.exists(full_path):
@@ -248,8 +276,13 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
             failed.append({"path": relative_path, "reason": "missing"})
             continue
 
+        upload_name = (
+            resolved_source.original_name
+            if resolved_source.source_type == "gdrive"
+            else None
+        )
         try:
-            if dspace_client.upload_to_item(item_uuid, full_path):
+            if dspace_client.upload_to_item(item_uuid, full_path, upload_name=upload_name):
                 logger.info(
                     "Additional DSpace file uploaded: item_uuid=%s relative_path=%s full_path=%s source_type=%s lifecycle_policy=%s",
                     item_uuid,
@@ -348,6 +381,7 @@ def run_dspace_workflow(
     dspace_client=None,
     skip_optimization: bool = False,
     optimizer_client: PDFOptimizerClient | None = None,
+    upload_name: str | None = None,
 ):
     """Execute metadata extraction and file upload to DSpace.
 
@@ -411,15 +445,15 @@ def run_dspace_workflow(
             skip_optimization=skip_optimization,
             optimizer_client=optimizer_client,
         )
-        upload_name = os.path.basename(file_path)
+        primary_upload_name = upload_name or os.path.basename(file_path)
         logger.info(
             "📤 [DSpace-Thread] Uploading file to Item %s upload_path=%s upload_name=%s",
             item_uuid,
             final_pdf_path,
-            upload_name,
+            primary_upload_name,
         )
         primary_bitstream = local_dspace.upload_to_item(
-            item_uuid, final_pdf_path, upload_name=upload_name
+            item_uuid, final_pdf_path, upload_name=primary_upload_name
         )
         if not primary_bitstream:
             raise Exception("Failed to upload file")
@@ -457,6 +491,7 @@ def process_integration_logic(
     koha = koha_client or KohaClient()
     cover_service = CoverService(koha_client=koha)
     current_active_path = None
+    current_lifecycle_policy = None
 
     LIMIT_WARNING = 150 * 1024 * 1024
     LIMIT_ERROR = 250 * 1024 * 1024
@@ -472,6 +507,7 @@ def process_integration_logic(
         source_resolver = _source_resolver()
         cover_source = source_resolver.resolve_cover(cover_rel_path)
         primary_source = source_resolver.resolve_primary(file_rel_path)
+        primary_source = source_resolver.materialize(primary_source)
         cover_source_path = cover_source.local_path if cover_source else None
         original_full_path = primary_source.local_path if primary_source else None
 
@@ -496,10 +532,14 @@ def process_integration_logic(
                 biblionumber, None, f"Warning: {round(file_size / 1024 / 1024)} MB"
             )
 
-        # create file service for rename/versioning
-        file_service = FileService()
-        versioned_path = file_service.version_and_move(original_full_path, biblionumber)
-        current_active_path = versioned_path
+        if primary_source.lifecycle_policy == "local_managed":
+            file_service = FileService()
+            current_active_path = file_service.version_and_move(
+                original_full_path, biblionumber
+            )
+        else:
+            current_active_path = original_full_path
+        current_lifecycle_policy = primary_source.lifecycle_policy
 
         # --- ⚡ 2. PARALLEL PHASE: DSpace + Cover ---
         dspace_result = None
@@ -526,6 +566,7 @@ def process_integration_logic(
                 dspace_client=dspace_client,
                 skip_optimization=skip_optimization,
                 optimizer_client=optimizer_client,
+                upload_name=primary_source.original_name,
             )
 
             logger.info("⚡ [Core] Parallel tasks started: Cover + DSpace")
@@ -578,8 +619,11 @@ def process_integration_logic(
         except Exception:
             pass
 
-        if current_active_path and os.path.exists(current_active_path):
-            # delegate error move to FileService
+        if (
+            current_lifecycle_policy == "local_managed"
+            and current_active_path
+            and os.path.exists(current_active_path)
+        ):
             file_service = FileService()
             file_service.move_to_error(current_active_path)
         raise e

@@ -251,6 +251,16 @@ python3 -m pytest tests/test_services.py tests/test_core.py -q
 - При помилці `.part` прибирається або лишається тільки для TTL cleanup з безпечною назвою.
 - У логах немає секретів.
 
+### Статус 2026-05-23
+
+- Додано Google dependencies у `requirements.txt`: `google-api-python-client`, `google-auth`, `google-auth-httplib2`.
+- Реалізовано `GoogleDriveSource` у `src/services/sources.py`: lazy readonly Drive client, service account тільки з `GDRIVE_SERVICE_ACCOUNT_FILE`, metadata checks, allowed MIME, max bytes, `capabilities.canDownload`, `resourcekey`, download у `.part` і atomic rename у `.pdf`.
+- `GoogleDriveSource` підтримує stub client у тестах, тому parser/download тести не використовують реальний Google API і credentials.
+- `process_integration_logic()` materialize-ить Google primary до локального temp PDF, не викликає `FileService.version_and_move()` для `remote_ephemeral` і не переміщує Google temp file у `Error` при критичній помилці.
+- `run_dspace_workflow()` отримав `upload_name`, щоб DSpace bitstream для Google primary/additional використовував metadata name, а не temp basename.
+- `956$q` Google additional скачується і upload-иться в ORIGINAL; download/upload помилки additional лишаються non-fatal через `additional_files_failed`.
+- Cleanup старих final temp-файлів у `GDRIVE_TMP_DIR` ще не реалізовано; це межа Ітерації 5.
+
 ## Ітерація 5: Lifecycle, cleanup і error handling
 
 ### Завдання

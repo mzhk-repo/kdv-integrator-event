@@ -1,5 +1,6 @@
 import logging
 import uuid
+from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from src.core import parse_marc_details, run_dspace_workflow, process_integration_logic
 from src.tasks import task_manager
 from src.services.pdf import OptimizeResult
+from src.services.sources import GoogleDriveSource, SourceResolver
 from src.koha import KohaClient, KohaRestError
 
 
@@ -692,5 +694,180 @@ def test_hard_limit_does_not_prevent_optimization_path(tmp_path, monkeypatch):
         )
 
     run_dspace.assert_not_called()
-    assert any(status == "error" and "FILE TOO LARGE" in msg for _, status, msg in koha.status_log)
+    assert any(
+        status == "error" and "FILE TOO LARGE" in msg
+        for _, status, msg in koha.status_log
+    )
+
+
+
+class CoreFakeDriveClient:
+    def __init__(self, content=b"%PDF-1.4\ncontent", error=None):
+        self.content = content
+        self.error = error
+        self.metadata_calls = []
+        self.download_calls = []
+
+    def get_metadata(self, file_id, resource_key):
+        self.metadata_calls.append((file_id, resource_key))
+        return {
+            "name": f"{file_id}.pdf",
+            "mimeType": "application/pdf",
+            "size": str(len(self.content)),
+            "capabilities": {"canDownload": True},
+        }
+
+    def download_to_file(self, file_id, resource_key, destination_path, timeout):
+        self.download_calls.append((file_id, resource_key, destination_path, timeout))
+        if self.error:
+            raise self.error
+        with open(destination_path, "wb") as stream:
+            stream.write(self.content)
+
+
+def _install_gdrive_resolver(monkeypatch, mount, tmp_path, drive_client):
+    gdrive_source = GoogleDriveSource(
+        enabled=True,
+        tmp_dir=str(tmp_path / "gdrive"),
+        drive_client=drive_client,
+    )
+    resolver = SourceResolver(str(mount), gdrive_source=gdrive_source)
+    monkeypatch.setattr("src.core._source_resolver", lambda: resolver)
+    return resolver
+
+
+def test_process_integration_google_primary_skips_local_file_lifecycle(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    koha = StubKoha()
+    koha.metadata = {
+        "file_path": "https://drive.google.com/file/d/primary-id/view?resourcekey=rk",
+        "collection_uuid": "coll",
+    }
+    dspace = StubDSpace()
+    drive_client = CoreFakeDriveClient()
+    _install_gdrive_resolver(monkeypatch, mount, tmp_path, drive_client)
+    version_and_move = Mock()
+    move_to_error = Mock()
+    monkeypatch.setattr("src.core.FileService.version_and_move", version_and_move)
+    monkeypatch.setattr("src.core.FileService.move_to_error", move_to_error)
+    monkeypatch.setattr(
+        "src.core.CoverService.process_book",
+        lambda *args, **kwargs: {"status": "skipped"},
+    )
+
+    result = process_integration_logic(
+        "task-id",
+        5,
+        koha_client=koha,
+        dspace_client=dspace,
+        skip_optimization=True,
+    )
+
+    assert result["handle"].endswith("/handle/1/2")
+    assert drive_client.metadata_calls == [("primary-id", "rk")]
+    assert dspace.uploaded[0][2] == "primary-id.pdf"
+    assert dspace.uploaded[0][1].endswith(".pdf")
+    assert "gdrive" in dspace.uploaded[0][1]
+    version_and_move.assert_not_called()
+    move_to_error.assert_not_called()
+
+
+def test_process_integration_google_primary_does_not_move_to_error_on_dspace_failure(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    koha = StubKoha()
+    koha.metadata = {
+        "file_path": "https://drive.google.com/open?id=primary-id",
+        "collection_uuid": "coll",
+    }
+    drive_client = CoreFakeDriveClient()
+    _install_gdrive_resolver(monkeypatch, mount, tmp_path, drive_client)
+    move_to_error = Mock()
+    monkeypatch.setattr("src.core.FileService.move_to_error", move_to_error)
+    monkeypatch.setattr(
+        "src.core.CoverService.process_book",
+        lambda *args, **kwargs: {"status": "skipped"},
+    )
+
+    with pytest.raises(Exception, match="upload exploded"):
+        process_integration_logic(
+            "task-id",
+            5,
+            koha_client=koha,
+            dspace_client=FailingUploadDSpace(),
+            skip_optimization=True,
+        )
+
+    move_to_error.assert_not_called()
+
+
+def test_run_dspace_uploads_google_additional_with_original_name(tmp_path, monkeypatch):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    primary = tmp_path / "biblio_77_v01.pdf"
+    primary.write_bytes(b"primary")
+    drive_client = CoreFakeDriveClient(content=b"additional")
+    _install_gdrive_resolver(monkeypatch, mount, tmp_path, drive_client)
+    koha = StubKoha()
+    dspace = StubDSpace()
+
+    res = run_dspace_workflow(
+        77,
+        str(primary),
+        {
+            "collection_uuid": "coll",
+            "additional_files": "https://drive.google.com/uc?id=additional-id&resourcekey=ark",
+        },
+        koha_client=koha,
+        dspace_client=dspace,
+        skip_optimization=True,
+    )
+
+    assert res["additional_files_uploaded"] == [
+        "https://drive.google.com/uc?id=additional-id&resourcekey=ark"
+    ]
+    assert res["additional_files_failed"] == []
+    assert dspace.uploaded[0] == ("u1", str(primary), "biblio_77_v01.pdf")
+    assert dspace.uploaded[1][2] == "additional-id.pdf"
+    assert Path(dspace.uploaded[1][1]).read_bytes() == b"additional"
+
+
+def test_run_dspace_google_additional_download_error_is_non_fatal(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    primary = tmp_path / "biblio_78_v01.pdf"
+    primary.write_bytes(b"primary")
+    drive_client = CoreFakeDriveClient(error=RuntimeError("download failed"))
+    _install_gdrive_resolver(monkeypatch, mount, tmp_path, drive_client)
+    koha = StubKoha()
+    dspace = StubDSpace()
+
+    res = run_dspace_workflow(
+        78,
+        str(primary),
+        {
+            "collection_uuid": "coll",
+            "additional_files": "https://drive.google.com/open?id=additional-id",
+        },
+        koha_client=koha,
+        dspace_client=dspace,
+        skip_optimization=True,
+    )
+
+    assert res["handle"].endswith("/handle/1/2")
+    assert res["additional_files_uploaded"] == []
+    assert res["additional_files_failed"] == [
+        {
+            "path": "https://drive.google.com/open?id=additional-id",
+            "reason": "download failed",
+        }
+    ]
+    assert dspace.uploaded == [("u1", str(primary), "biblio_78_v01.pdf")]
 

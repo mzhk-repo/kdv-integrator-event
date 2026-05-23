@@ -1,9 +1,15 @@
 import os
+from contextlib import suppress
+import uuid
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
 
 class SourceResolutionError(ValueError):
+    pass
+
+
+class GoogleDriveDownloadError(SourceResolutionError):
     pass
 
 
@@ -82,6 +88,193 @@ class GoogleDriveUrlParser:
         return value or None
 
 
+class GoogleDriveSource:
+    DEFAULT_SCOPES = ("https://www.googleapis.com/auth/drive.readonly",)
+
+    def __init__(
+        self,
+        enabled: bool | None = None,
+        service_account_file: str | None = None,
+        tmp_dir: str | None = None,
+        allowed_mime_types: set[str] | None = None,
+        max_bytes: int | None = None,
+        timeout: int | None = None,
+        drive_client=None,
+    ):
+        self.enabled = self._env_bool("GDRIVE_ENABLED") if enabled is None else enabled
+        self.service_account_file = service_account_file or os.environ.get(
+            "GDRIVE_SERVICE_ACCOUNT_FILE", "/run/secrets/gdrive_service_account_json"
+        )
+        self.tmp_dir = tmp_dir or os.environ.get(
+            "GDRIVE_TMP_DIR", "/data/kdv_sources/gdrive"
+        )
+        self.allowed_mime_types = allowed_mime_types or self._env_set(
+            "GDRIVE_ALLOWED_MIME_TYPES", {"application/pdf"}
+        )
+        self.max_bytes = max_bytes if max_bytes is not None else int(
+            os.environ.get("GDRIVE_MAX_BYTES", "262144000")
+        )
+        self.timeout = timeout if timeout is not None else int(
+            os.environ.get("GDRIVE_DOWNLOAD_TIMEOUT", "300")
+        )
+        self.drive_client = drive_client
+
+    def materialize(self, source: ResolvedSource) -> ResolvedSource:
+        if source.source_type != "gdrive":
+            return source
+
+        if not self.enabled:
+            raise GoogleDriveDownloadError("Google Drive source is disabled")
+        if not self.drive_client and not os.path.isfile(self.service_account_file):
+            raise GoogleDriveDownloadError("Google Drive service account file is missing")
+
+        file_id = source.diagnostics.get("file_id")
+        resource_key = source.diagnostics.get("resource_key")
+        if not file_id:
+            raise GoogleDriveDownloadError("Google Drive file_id is missing")
+
+        client = self.drive_client or self._build_google_drive_client()
+        metadata = self._get_metadata(client, file_id, resource_key)
+        self._validate_metadata(metadata)
+
+        original_name = self._safe_original_name(metadata.get("name") or file_id)
+        os.makedirs(self.tmp_dir, exist_ok=True)
+        final_path = os.path.join(
+            self.tmp_dir,
+            f"{self._safe_token(file_id)}-{uuid.uuid4().hex}.pdf",
+        )
+        part_path = f"{final_path}.part"
+
+        try:
+            self._download_to_file(client, file_id, resource_key, part_path)
+            if not os.path.exists(part_path) or os.path.getsize(part_path) == 0:
+                raise GoogleDriveDownloadError("Google Drive download produced empty file")
+            os.replace(part_path, final_path)
+        except Exception:
+            with suppress(FileNotFoundError):
+                os.remove(part_path)
+            raise
+
+        diagnostics = dict(source.diagnostics)
+        diagnostics.update(
+            {
+                "name": metadata.get("name"),
+                "mime_type": metadata.get("mimeType"),
+                "size": metadata.get("size"),
+            }
+        )
+        return ResolvedSource(
+            local_path=final_path,
+            source_type="gdrive",
+            original_name=original_name,
+            temporary=True,
+            cleanup_paths=(final_path,),
+            diagnostics=diagnostics,
+            lifecycle_policy="remote_ephemeral",
+        )
+
+    def _build_google_drive_client(self):
+        try:
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
+        except ImportError as exc:
+            raise GoogleDriveDownloadError(
+                "Google Drive dependencies are not installed"
+            ) from exc
+
+        credentials = service_account.Credentials.from_service_account_file(
+            self.service_account_file,
+            scopes=self.DEFAULT_SCOPES,
+        )
+        return build(
+            "drive",
+            "v3",
+            credentials=credentials,
+            cache_discovery=False,
+        )
+
+    def _get_metadata(self, client, file_id: str, resource_key: str | None) -> dict:
+        if hasattr(client, "get_metadata"):
+            return client.get_metadata(file_id=file_id, resource_key=resource_key)
+
+        params = {
+            "fileId": file_id,
+            "fields": "id,name,mimeType,size,capabilities/canDownload",
+            "supportsAllDrives": True,
+        }
+        if resource_key:
+            params["resourceKey"] = resource_key
+        return client.files().get(**params).execute()
+
+    def _download_to_file(
+        self, client, file_id: str, resource_key: str | None, part_path: str
+    ) -> None:
+        if hasattr(client, "download_to_file"):
+            client.download_to_file(
+                file_id=file_id,
+                resource_key=resource_key,
+                destination_path=part_path,
+                timeout=self.timeout,
+            )
+            return
+
+        try:
+            from googleapiclient.http import MediaIoBaseDownload
+        except ImportError as exc:
+            raise GoogleDriveDownloadError(
+                "Google Drive dependencies are not installed"
+            ) from exc
+
+        params = {"fileId": file_id, "supportsAllDrives": True}
+        if resource_key:
+            params["resourceKey"] = resource_key
+        request = client.files().get_media(**params)
+        with open(part_path, "wb") as stream:
+            downloader = MediaIoBaseDownload(stream, request)
+            done = False
+            while not done:
+                _status, done = downloader.next_chunk()
+
+    def _validate_metadata(self, metadata: dict) -> None:
+        mime_type = metadata.get("mimeType")
+        if mime_type not in self.allowed_mime_types:
+            raise GoogleDriveDownloadError("Google Drive file mime type is not allowed")
+
+        can_download = metadata.get("capabilities", {}).get("canDownload", True)
+        if can_download is False:
+            raise GoogleDriveDownloadError("Google Drive file cannot be downloaded")
+
+        raw_size = metadata.get("size")
+        if raw_size not in (None, "") and int(raw_size) > self.max_bytes:
+            raise GoogleDriveDownloadError("Google Drive file is too large")
+
+    @staticmethod
+    def _env_bool(key: str) -> bool:
+        return os.environ.get(key, "false").strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _env_set(key: str, default: set[str]) -> set[str]:
+        raw = os.environ.get(key, "").strip()
+        if not raw:
+            return default
+        return {part.strip() for part in raw.split(",") if part.strip()}
+
+    @staticmethod
+    def _safe_token(value: str) -> str:
+        return "".join(
+            ch if ch.isalnum() or ch in {"-", "_", "."} else "_"
+            for ch in value
+        )
+
+    @classmethod
+    def _safe_original_name(cls, value: str) -> str:
+        name = os.path.basename(value.strip()) or "download.pdf"
+        safe_name = cls._safe_token(name)
+        if not safe_name.lower().endswith(".pdf"):
+            safe_name = f"{safe_name}.pdf"
+        return safe_name
+
+
 class LocalMountSource:
     def __init__(self, base_mount_path: str):
         self.base_mount_path = base_mount_path
@@ -124,9 +317,12 @@ class LocalMountSource:
 
 
 class SourceResolver:
-    def __init__(self, base_mount_path: str):
+    def __init__(
+        self, base_mount_path: str, gdrive_source: GoogleDriveSource | None = None
+    ):
         self.local_source = LocalMountSource(base_mount_path)
         self.gdrive_parser = GoogleDriveUrlParser()
+        self.gdrive_source = gdrive_source or GoogleDriveSource()
 
     def resolve_primary(self, raw_path: str | None) -> ResolvedSource | None:
         gdrive_ref = self.gdrive_parser.parse(raw_path, "956$u")
@@ -160,6 +356,13 @@ class SourceResolver:
     def resolve_local_path(self, raw_path: str | None, field_name: str) -> str | None:
         resolved = self.local_source.resolve(raw_path, field_name)
         return resolved.local_path if resolved else None
+
+    def materialize(self, source: ResolvedSource | None) -> ResolvedSource | None:
+        if source is None:
+            return None
+        if source.source_type == "gdrive":
+            return self.gdrive_source.materialize(source)
+        return source
 
     def _resolve_gdrive(
         self, gdrive_ref: GoogleDriveFileRef, field_name: str

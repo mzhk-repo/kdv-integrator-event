@@ -171,6 +171,8 @@ def test_optimizer_client_unavailable(tmp_path):
 
 from src.services.files import FileService
 from src.services.sources import (
+    GoogleDriveDownloadError,
+    GoogleDriveSource,
     GoogleDriveUrlParser,
     SourceResolutionError,
     SourceResolver,
@@ -320,6 +322,127 @@ def test_source_resolver_additional_gdrive_url_is_remote_ephemeral(tmp_path):
     assert resolved.diagnostics["field_name"] == "956$q"
     assert resolved.diagnostics["file_id"] == "additional-id"
     assert resolved.diagnostics["resource_key"] == "additional-key"
+
+
+class FakeDriveClient:
+    def __init__(self, metadata=None, content=b"%PDF-1.4\ncontent", error=None):
+        self.metadata = metadata or {
+            "name": "Book.pdf",
+            "mimeType": "application/pdf",
+            "size": str(len(content)),
+            "capabilities": {"canDownload": True},
+        }
+        self.content = content
+        self.error = error
+        self.metadata_calls = []
+        self.download_calls = []
+
+    def get_metadata(self, file_id, resource_key):
+        self.metadata_calls.append((file_id, resource_key))
+        return self.metadata
+
+    def download_to_file(self, file_id, resource_key, destination_path, timeout):
+        self.download_calls.append((file_id, resource_key, destination_path, timeout))
+        if self.error:
+            Path(destination_path).write_bytes(b"partial")
+            raise self.error
+        Path(destination_path).write_bytes(self.content)
+
+
+def _gdrive_resolved_source(tmp_path, url=None, drive_client=None, **source_kwargs):
+    source = GoogleDriveSource(
+        enabled=True,
+        tmp_dir=str(tmp_path),
+        drive_client=drive_client or FakeDriveClient(),
+        **source_kwargs,
+    )
+    resolver = SourceResolver(str(tmp_path), gdrive_source=source)
+    return resolver, resolver.resolve_primary(
+        url or "https://drive.google.com/file/d/file-id/view?resourcekey=res-key"
+    )
+
+
+def test_gdrive_source_downloads_pdf_with_atomic_rename(tmp_path):
+    drive_client = FakeDriveClient()
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    resolved = resolver.materialize(parsed)
+
+    assert resolved.source_type == "gdrive"
+    assert resolved.lifecycle_policy == "remote_ephemeral"
+    assert resolved.temporary is True
+    assert resolved.original_name == "Book.pdf"
+    assert Path(resolved.local_path).read_bytes() == b"%PDF-1.4\ncontent"
+    assert resolved.local_path.endswith(".pdf")
+    assert not list(tmp_path.glob("*.part"))
+    assert drive_client.metadata_calls == [("file-id", "res-key")]
+    assert drive_client.download_calls[0][0:2] == ("file-id", "res-key")
+    assert resolved.diagnostics["mime_type"] == "application/pdf"
+
+
+def test_gdrive_source_rejects_unsupported_mime_type(tmp_path):
+    drive_client = FakeDriveClient(metadata={
+        "name": "Doc",
+        "mimeType": "application/vnd.google-apps.document",
+        "size": "10",
+        "capabilities": {"canDownload": True},
+    })
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    with pytest.raises(GoogleDriveDownloadError, match="mime type is not allowed"):
+        resolver.materialize(parsed)
+
+    assert drive_client.download_calls == []
+
+
+def test_gdrive_source_rejects_too_large_and_cannot_download(tmp_path):
+    too_large = FakeDriveClient(metadata={
+        "name": "Large.pdf",
+        "mimeType": "application/pdf",
+        "size": "11",
+        "capabilities": {"canDownload": True},
+    })
+    resolver, parsed = _gdrive_resolved_source(
+        tmp_path, drive_client=too_large, max_bytes=10
+    )
+
+    with pytest.raises(GoogleDriveDownloadError, match="too large"):
+        resolver.materialize(parsed)
+
+    cannot_download = FakeDriveClient(metadata={
+        "name": "Locked.pdf",
+        "mimeType": "application/pdf",
+        "size": "10",
+        "capabilities": {"canDownload": False},
+    })
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=cannot_download)
+
+    with pytest.raises(GoogleDriveDownloadError, match="cannot be downloaded"):
+        resolver.materialize(parsed)
+
+
+def test_gdrive_source_cleans_part_file_on_download_error(tmp_path):
+    drive_client = FakeDriveClient(error=RuntimeError("network exploded"))
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    with pytest.raises(RuntimeError, match="network exploded"):
+        resolver.materialize(parsed)
+
+    assert not list(tmp_path.glob("*.part"))
+    assert not list(tmp_path.glob("*.pdf"))
+
+
+def test_gdrive_source_requires_enabled_flag(tmp_path):
+    source = GoogleDriveSource(
+        enabled=False,
+        tmp_dir=str(tmp_path),
+        drive_client=FakeDriveClient(),
+    )
+    resolver = SourceResolver(str(tmp_path), gdrive_source=source)
+    parsed = resolver.resolve_primary("https://drive.google.com/open?id=file-id")
+
+    with pytest.raises(GoogleDriveDownloadError, match="disabled"):
+        resolver.materialize(parsed)
 
 
 class FakeCoverKoha:
