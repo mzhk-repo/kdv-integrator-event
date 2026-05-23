@@ -393,6 +393,31 @@ def test_gdrive_source_reuses_completed_temp_file_when_metadata_matches(tmp_path
     assert len(drive_client.download_calls) == 1
 
 
+def test_gdrive_source_logs_safe_observability_without_url_or_resourcekey(
+    tmp_path, caplog
+):
+    file_id = "very-long-google-drive-file-id"
+    resource_key = "secret-resource-key"
+    url = f"https://drive.google.com/file/d/{file_id}/view?resourcekey={resource_key}"
+    drive_client = FakeDriveClient()
+    resolver, parsed = _gdrive_resolved_source(
+        tmp_path,
+        url=url,
+        drive_client=drive_client,
+    )
+
+    with caplog.at_level(logging.INFO, logger="KDV-Sources"):
+        resolver.materialize(parsed)
+
+    assert "source_type=gdrive" in caplog.text
+    assert "mime_type=application/pdf" in caplog.text
+    assert "duration_ms=" in caplog.text
+    assert "very-l" in caplog.text
+    assert file_id not in caplog.text
+    assert resource_key not in caplog.text
+    assert url not in caplog.text
+
+
 def test_gdrive_source_ignores_existing_part_file(tmp_path):
     drive_client = FakeDriveClient(content=b"complete-download")
     resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)

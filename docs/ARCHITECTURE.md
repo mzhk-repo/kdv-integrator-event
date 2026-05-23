@@ -1,6 +1,6 @@
-Архітектура та Workflow (v0.4.0-M8 + Swarm Robot wrapper)
+Архітектура та Workflow (v0.4.0-M8 + Swarm Robot wrapper + Google Drive source)
 
-Цей документ описує логіку роботи KDV Integrator v0.4.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests), M7 (release canary + rollback + batch controls) та M8 (PDF optimizer + Swarm runtime wrapper для Robot).
+Цей документ описує логіку роботи KDV Integrator v0.4.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests), M7 (release canary + rollback + batch controls) та M8 (PDF optimizer + Swarm runtime wrapper для Robot + read-only Google Drive source).
 
 🔄 Загальний Workflow (Fork-Join Pattern)
 
@@ -12,9 +12,12 @@ graph TD
     API -->|Start Thread| Core[Async Core Logic]
     
     subgraph "Serial Phase (Blocking)"
-        Core -->|Check 956$u| FileCheck{File Exists?}
+        Core -->|Resolve 956$u| SourceResolver{Local path or Google Drive URL?}
+        SourceResolver -->|Local| FileCheck{File Exists?}
+        SourceResolver -->|Google Drive| GDriveDownload[Read-only download to GDRIVE_TMP_DIR]
         FileCheck -->|No| Error[Exit & Log Error]
         FileCheck -->|Yes| Rename[Rename & Move to /Processed]
+        GDriveDownload --> Fork
     end
 
     subgraph "Parallel Phase (ThreadPoolExecutor)"
@@ -57,7 +60,7 @@ graph TD
 **src/core.py > process_integration_logic() використовує ThreadPoolExecutor(max_workers=2)**
 
 - **Task A (best-effort):** CoverService.process_book() (генерація JPG). Якщо впада → WARNING, але весь процес не зупиняється.
-- **Task B (critical):** run_dspace_workflow() (метадані, Item, PDF upload). Якщо впада → ERROR, файл в Error folder.
+- **Task B (critical):** run_dspace_workflow() (метадані, Item, PDF upload). Якщо впада → ERROR; local primary переходить в Error folder, Google Drive temp-файл не рухається з `GDRIVE_TMP_DIR`.
 
 **Обидва потоки отримують ті самі залежності (koha_client, dspace_client) через DI.**
 
@@ -140,7 +143,7 @@ task_manager.start_task(
 
 956$p — Відносний шлях до готової обкладинки; якщо заданий, cover workflow завантажує цей файл і не генерує JPG з PDF.
 
-956$q — Відносні шляхи additional файлів через `|`; вони завантажуються в ORIGINAL без rename і без `kdv-optimizer`.
+956$q — Змішаний список additional джерел через `|`: локальні відносні шляхи або Google Drive URL. Вони завантажуються в ORIGINAL без rename і без `kdv-optimizer`; помилки additional лишаються non-fatal через `additional_files_failed`.
 
 856 #1 `$u` — Пряме посилання на primary bitstream download, `$y` = `Файл`.
 
@@ -154,6 +157,27 @@ REST API Koha не дозволяє повноцінно працювати з �
 - **AJAX Spoofing:** Завантаження файлу на upload-file.pl з заголовком `X-Requested-With: XMLHttpRequest` (інакше Koha не віддасть JSON).
 - **Scraping:** Парсинг HTML сторінки інструментів для знаходження `imagenumber`, щоб сформувати публічне посилання.
 - **External cover path:** якщо в `956$p` є відносний шлях до зображення, `CoverService` завантажує цей файл напряму; наявність PDF книги не є передумовою для цієї спроби upload.
+
+### 8. SourceResolver і Google Drive source
+
+`src/services/sources.py` ізолює джерела файлів від `core.py`:
+
+- `LocalMountSource` приймає тільки відносні шляхи всередині `INTEGRATOR_MOUNT_PATH`; absolute path і `..` відхиляються.
+- `GoogleDriveUrlParser` підтримує `drive.google.com/file/d/<id>/view`, `open?id=<id>`, `uc?id=<id>` і `resourcekey`; folder links і сторонні HTTP/HTTPS URL відхиляються.
+- `GoogleDriveSource` працює read-only: читає service account тільки з `GDRIVE_SERVICE_ACCOUNT_FILE`, перевіряє metadata, скачує PDF у `GDRIVE_TMP_DIR` через `.part` і atomic rename, не виконує write/update/delete у Google Drive.
+- Deterministic cache path базується на `file_id`, `resourcekey`, `name`, `mimeType`, `size`; якщо завершений `.pdf` валідний, повторний download не виконується.
+- Cleanup видаляє тільки старі regular files `.pdf`/`.part` всередині `GDRIVE_TMP_DIR`; інші директорії та suffix-и не чіпає.
+
+Lifecycle:
+
+- local primary `956$u`: `version_and_move()` у `Processed`, при критичній помилці `move_to_error()` у `Error`;
+- Google Drive primary `956$u`: temp PDF лишається у `GDRIVE_TMP_DIR`, не переміщується в `Processed/Error`;
+- local/GDrive additional `956$q`: без rename, без optimizer, upload у DSpace ORIGINAL; Google additional errors non-fatal.
+
+Observability:
+
+- logs містять `source_type=gdrive`, safe `file_id`, `mime_type`, `size`, `duration_ms`, cache hit/miss або failure reason;
+- logs не містять service account JSON, OAuth token, повний Google Drive URL або `resourcekey`.
 
 🛡 Безпека та Відмовостійкість (M2/M3)
 
@@ -178,7 +202,7 @@ REST API Koha не дозволяє повноцінно працювати з �
 - Дивіться [docs/RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) для прикладів.
 - Непотрібно мережевих викликів, тести швидкі та ізольовані.
 
-### 8. CI/CD Архітектура (M3)
+### 9. CI/CD Архітектура (M3)
 
 Після M3 у проєкті діє workflow `.github/workflows/main.yml`, який викликає reusable pipeline `shared-ci-cd.yml` з двома шарами: `ci-checks` і `cd-deploy`.
 
@@ -196,7 +220,7 @@ REST API Koha не дозволяє повноцінно працювати з �
     - `vMAJOR.MINOR.PATCH` -> production path (semver tag)
 - Deploy transport: SSH over Tailscale.
 
-### 9. Zero Trust Deploy Path (Tailscale)
+### 10. Zero Trust Deploy Path (Tailscale)
 
 Деплой працює через tailnet і не покладається на публічний доступ до сервера.
 
@@ -206,8 +230,9 @@ REST API Koha не дозволяє повноцінно працювати з �
 - На сервері deploy path для Swarm виконує `scripts/deploy-orchestrator-swarm.sh`: render manifest через `docker compose --env-file ... config`, створення versioned runtime env secret і `docker stack deploy`.
 - У default local-image режимі збираються `kdv-integrator-event:<git-sha>` та `kdv-optimizer:<git-sha>`, після чого Swarm service spec оновлюється без залежності від registry pull.
 - Runtime secrets надходять у контейнер через Swarm secret payload і `scripts/entrypoint.sh`; окремі `docker exec` процеси не успадковують env PID1, тому manual wrappers мають явно передавати env через `docker exec --env-file`.
+- Google Drive service account монтується тільки в `kdv-api` як `/run/secrets/gdrive_service_account_json`; `kdv-optimizer` цей secret не отримує. Перевірка виконується через `test -s`, без `cat` або виводу payload.
 
-### 10. API Security Path (M4 implemented)
+### 11. API Security Path (M4 implemented)
 
 Після M4 в API використовується керований режим авторизації:
 
@@ -246,15 +271,16 @@ Koha JS для browser-flow:
 
 Це дозволяє прибирати токен із Koha JS без різкого відключення server-to-server сценаріїв.
 
-### 11. Ops/Docs Invariants
+### 12. Ops/Docs Invariants
 
 - Plaintext `.env` з секретами не комітиться; штатний runtime/deploy контекст зберігається в `env.dev.enc`/`env.prod.enc` через SOPS/age.
 - Для CI використовується `.env.example` + CI mock values.
 - Manual/deploy скрипти резолвлять env у пріоритеті `ORCHESTRATOR_ENV_FILE` → `SERVER_ENV`/`ENVIRONMENT_NAME` → `env.<env>.enc` → `.env` fallback тільки для локального dev.
 - Release Gate синхронізований з `docs/ROADMAP.md` (M3 секція).
 - Зміни в CI/deploy мають відображатися в `CHANGELOGS/` і, за потреби, у runbooks.
+- Google Drive source має залишатися read-only/no-writeback: жодних upload/update/delete до Drive API.
 
-### 12. Ops readiness (M5)
+### 13. Ops readiness (M5)
 
 - Публічні probes:
     - `GET /kdv/api/health` (liveness)
@@ -262,15 +288,16 @@ Koha JS для browser-flow:
 - Runbooks:
     - `docs/RUNBOOK_TESTING.md` (dev/testing flow)
     - `docs/RUNBOOK_MAYDAY.md` (production incidents + recovery)
+    - `docs/RUNBOOK_GDRIVE_SOURCE.md` (Google Drive source smoke, troubleshooting, rollback)
 
-### 13. Test strategy (M6)
+### 14. Test strategy (M6)
 
 - Unit + integration тести працюють у контейнері через `pytest -q`.
 - Contract рівень зафіксований у `tests/test_contracts.py`:
     - Koha CGI: exact field/header names для login/upload/attach.
     - DSpace: `/pid/find` params і JSON Patch contract для metadata update.
 
-### 14. Release and rollback (M7)
+### 15. Release and rollback (M7)
 
 - Canary flow і release discipline описані в `docs/RELEASE.md`.
 - Rollback підтримує два сценарії:

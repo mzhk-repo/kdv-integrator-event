@@ -331,6 +331,14 @@ git diff --check -- README.md docs .env.example docker-compose.swarm.yml scripts
 - Описано rollback.
 - Описано no-writeback policy.
 
+### Статус 2026-05-23
+
+- `GoogleDriveSource` логує безпечні events: metadata accepted, cache hit, downloaded, failed. Поля: `source_type=gdrive`, safe `file_id`, `mime_type`, `size`, `duration_ms`, failure `reason`; повний URL, `resourcekey`, OAuth token і service account JSON не логуються.
+- README оновлено як high-level entrypoint: Google Drive source capabilities, ENV, lifecycle, logs і runbook link.
+- `docs/ARCHITECTURE.md` оновлено: SourceResolver/GoogleDriveSource architecture, local vs remote lifecycle, no-writeback policy і Swarm secret boundary.
+- Додано `docs/RUNBOOK_GDRIVE_SOURCE.md`: secret check через `test -s`, dev manual smoke, troubleshooting, rollback, no-writeback policy.
+- Реальний dev smoke/deploy не виконувався; це межа Ітерації 7.
+
 ## Ітерація 7: Dev smoke без витоку секретів
 
 ### Завдання

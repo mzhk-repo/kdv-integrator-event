@@ -38,7 +38,13 @@
 | **Відомі критичні баги** | `0` |
 | **Технічний борг** | 🟢 Низький |
 
-### Останні зміни (2026-05-17)
+### Останні зміни (2026-05-23)
+- Додано read-only Google Drive source support для primary PDF у `956$u` і additional файлів у `956$q`: URL скачуються в `GDRIVE_TMP_DIR`, не змінюють Google Drive і не потрапляють у локальні `Processed/Error`.
+- Додано versioned Swarm secret contract для `/run/secrets/gdrive_service_account_json`; перевірка secret виконується тільки через `test -s`, без `cat`.
+- Додано deterministic cache, TTL cleanup і safe logs для Google Drive downloads: source type, safe file id, mime/size, duration/failure reason без URL/resourcekey/secrets.
+- Додано [RUNBOOK_GDRIVE_SOURCE.md](docs/RUNBOOK_GDRIVE_SOURCE.md) для конфігурації, dev smoke, troubleshooting і rollback Google Drive source.
+
+### Попередні зміни (2026-05-17)
 - Додано ізольований сервіс `kdv-optimizer` для автоматичної оптимізації важких PDF перед upload у DSpace.
 - `docker-compose.yml`/Swarm deploy тепер піднімають два сервіси: `kdv-api` та внутрішній `kdv-optimizer` зі shared volume `kdv_optimize_data`.
 - `/integrate` backward-compatible: старі клієнти без JSON body працюють, новий payload підтримує `skip_optimization`.
@@ -72,6 +78,7 @@
 - **PDF Optimizer** — ізольований `kdv-optimizer` стискає важкі scan-like PDF через Ghostscript перед DSpace upload, із fallback на оригінал
 - **CGI Protocol Bypass** — завантаження обкладинок через емуляцію браузерної сесії (обхід обмежень Koha REST API)
 - **MARC Enrichment** — зворотній запис двох `856`: прямий download primary bitstream (`$y Файл`) і Handle DSpace (`$y Запис в репозиторії`); `956$p` задає готову обкладинку, `956$q` — additional файли для ORIGINAL
+- **Google Drive Source** — read-only support для PDF URL у `956$u` і змішаного `956$q`: local paths або Google Drive links через `|`; service account приходить тільки як Swarm secret
 - **Batch & Audit** — `robot.py` для масової архівації, `nightwalker.py` для пошуку "зомбі" (файли без посилань)
 
 ### Що НЕ входить у скоуп
@@ -171,6 +178,7 @@ kdv-integrator-event/
 │   └── services/
 │       ├── covers.py               # CoverService: pdf2image → JPG, retry policy
 │       ├── files.py                # FileService: versioning, Processed/Error folders
+│       ├── sources.py              # SourceResolver: local mount + read-only Google Drive source
 │       └── pdf.py                  # PDFOptimizerClient + size/page/disk heuristics
 │
 ├── 📁 kdv-optimizer/               # Ізольований PDF optimizer mini-service
@@ -226,6 +234,7 @@ kdv-integrator-event/
 | `src/mapping.py` | Контракт MARC → Dublin Core (змінювати обережно) |
 | `docs/RUNBOOK_MAYDAY.md` | Першочергово при production-інциденті |
 | `docs/RUNBOOK_PDF_OPTIMIZER.md` | Використання, конфігурація, health/readiness, rollback `kdv-optimizer` |
+| `docs/RUNBOOK_GDRIVE_SOURCE.md` | Google Drive source: secret check без виводу, dev smoke, troubleshooting, rollback |
 | `docs/RELEASE.md` | Обов'язково перед будь-яким деплоєм |
 | `.env.example` | Документація всіх ENV змінних |
 | `candidates.txt` | Host-вхідні дані для batch robot; у Swarm wrapper копіює файл у контейнер як `/tmp/kdv-candidates.txt` |
@@ -270,6 +279,8 @@ kdv-integrator-event/
 
 `kdv-optimizer` не публікує порт назовні. `kdv-api` звертається до нього як `http://kdv-optimizer:5001` через Docker network і передає тільки `job_id`; тимчасові PDF лежать у shared volume `kdv_optimize_data`.
 
+Google Drive source працює тільки в `kdv-api`: service account монтується як `/run/secrets/gdrive_service_account_json`, файли скачуються read-only у `GDRIVE_TMP_DIR`, а `kdv-optimizer` не отримує Google credentials. Local primary PDF зберігає lifecycle `Processed/Error`; Google Drive temp PDF лишається ephemeral у `GDRIVE_TMP_DIR` до TTL cleanup.
+
 ---
 
 ## 🌍 Середовища
@@ -287,6 +298,20 @@ kdv-integrator-event/
 - `KDV_IMAGE_VERSION` (наприклад, `dev`, `main`, `v1.2.3`, `latest`, `sha-...`)
 - опційно `KDV_IMAGE` (повний image reference), якщо треба явно зафіксувати digest/tag одним значенням
 - `KDV_OPTIMIZER_IMAGE_REPOSITORY`, `KDV_OPTIMIZER_VERSION`, опційно `KDV_OPTIMIZER_IMAGE` для `kdv-optimizer`
+
+Основні ENV для Google Drive source:
+
+| Змінна | Default | Призначення |
+|---|---|---|
+| `GDRIVE_ENABLED` | `false` | Вмикає Google Drive URL у `956$u`/`956$q` |
+| `GDRIVE_SERVICE_ACCOUNT_FILE` | `/run/secrets/gdrive_service_account_json` | Runtime path Swarm secret, не друкувати payload |
+| `GDRIVE_TMP_DIR` | `/data/kdv_sources/gdrive` | Temp/cache директорія в `kdv-api` |
+| `GDRIVE_ALLOWED_MIME_TYPES` | `application/pdf` | Підтримуються тільки PDF blob-файли |
+| `GDRIVE_MAX_BYTES` | `262144000` | Max download size |
+| `GDRIVE_DOWNLOAD_TIMEOUT` | `300` | Download timeout |
+| `GDRIVE_TMP_TTL_SECONDS` | `86400` | TTL cleanup `.pdf`/`.part` у `GDRIVE_TMP_DIR` |
+
+Деталі: [`docs/RUNBOOK_GDRIVE_SOURCE.md`](docs/RUNBOOK_GDRIVE_SOURCE.md).
 
 Основні ENV для PDF optimizer:
 
@@ -467,6 +492,7 @@ docker compose up -d --remove-orphans
 | DSpace 7/8 | REST API (JSON Patch) | `DSPACE_API_URL`, `DSPACE_UI_URL` |
 | Cloudflare Access | JWT RS256 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` |
 | PDF Optimizer | Internal HTTP + shared volume | `OPTIMIZER_URL`, `OPTIMIZER_TIMEOUT`, `/data/kdv_optimize` |
+| Google Drive Source | Read-only Drive API + Swarm secret | `GDRIVE_ENABLED`, `GDRIVE_SERVICE_ACCOUNT_FILE`, `GDRIVE_TMP_DIR` |
 
 ### Batch-утиліти
 
@@ -505,6 +531,8 @@ docker compose up -d --remove-orphans
 Кожен запит логує: `task_id`, `biblionumber`, `status`, `elapsed_ms`. Лог-файли в `logs/`.
 
 Для PDF optimizer у `task.result` додаються поля `pdf_optimized`, `pdf_fallback_reason`, `pdf_original_mb`, `pdf_final_mb`, `pdf_optimization_time_ms`, `pdf_thread_wait_ms`, `pdf_disk_free_mb`.
+
+Google Drive source логує безпечні події без secrets: `source_type=gdrive`, safe `file_id`, `mime_type`, `size`, `duration_ms`, cache hit/miss і failure reason. Повний URL, `resourcekey`, OAuth token і service account JSON не логуються.
 
 ### Ключові SLI/SLO (цільові, M8)
 
@@ -557,4 +585,5 @@ docker compose up -d --remove-orphans
 | [docs/RUNBOOK_MAYDAY.md](docs/RUNBOOK_MAYDAY.md) | Incident response (production) |
 | [docs/RUNBOOK_ROBOT.md](docs/RUNBOOK_ROBOT.md) | Масова архівація: robot.py |
 | [docs/RUNBOOK_PDF_OPTIMIZER.md](docs/RUNBOOK_PDF_OPTIMIZER.md) | PDF optimizer: конфігурація, використання, health/readiness, rollback |
+| [docs/RUNBOOK_GDRIVE_SOURCE.md](docs/RUNBOOK_GDRIVE_SOURCE.md) | Google Drive source: secret check, dev smoke, troubleshooting, rollback |
 | [docs/RUNBOOK_NIGHTWALKER.md](docs/RUNBOOK_NIGHTWALKER.md) | Аудит каталогу: nightwalker.py |

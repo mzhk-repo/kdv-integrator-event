@@ -1,10 +1,14 @@
 import hashlib
+import logging
 import os
 import time
 from contextlib import suppress
 from pathlib import Path
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
+
+
+logger = logging.getLogger("KDV-Sources")
 
 
 class SourceResolutionError(ValueError):
@@ -129,43 +133,81 @@ class GoogleDriveSource:
         if source.source_type != "gdrive":
             return source
 
-        if not self.enabled:
-            raise GoogleDriveDownloadError("Google Drive source is disabled")
-        if not self.drive_client and not os.path.isfile(self.service_account_file):
-            raise GoogleDriveDownloadError("Google Drive service account file is missing")
-
+        started_at = time.monotonic()
         file_id = source.diagnostics.get("file_id")
         resource_key = source.diagnostics.get("resource_key")
-        if not file_id:
-            raise GoogleDriveDownloadError("Google Drive file_id is missing")
-
-        client = self.drive_client or self._build_google_drive_client()
-        metadata = self._get_metadata(client, file_id, resource_key)
-        self._validate_metadata(metadata)
-
-        original_name = self._safe_original_name(metadata.get("name") or file_id)
-        self.cleanup_stale_files()
-        os.makedirs(self.tmp_dir, exist_ok=True)
-        final_path = self._cached_file_path(file_id, resource_key, metadata)
-        part_path = f"{final_path}.part"
-
-        if self._is_valid_completed_file(final_path):
-            return self._resolved_download(source, final_path, original_name, metadata)
-
-        with suppress(FileNotFoundError):
-            os.remove(part_path)
+        safe_file_id = self._safe_file_id(file_id)
 
         try:
+            if not self.enabled:
+                raise GoogleDriveDownloadError("Google Drive source is disabled")
+            if not self.drive_client and not os.path.isfile(self.service_account_file):
+                raise GoogleDriveDownloadError(
+                    "Google Drive service account file is missing"
+                )
+            if not file_id:
+                raise GoogleDriveDownloadError("Google Drive file_id is missing")
+
+            client = self.drive_client or self._build_google_drive_client()
+            metadata = self._get_metadata(client, file_id, resource_key)
+            self._validate_metadata(metadata)
+
+            original_name = self._safe_original_name(metadata.get("name") or file_id)
+            deleted = self.cleanup_stale_files()
+            os.makedirs(self.tmp_dir, exist_ok=True)
+            final_path = self._cached_file_path(file_id, resource_key, metadata)
+            part_path = f"{final_path}.part"
+
+            logger.info(
+                "Google Drive source metadata accepted: source_type=gdrive file_id=%s "
+                "mime_type=%s size=%s cleanup_deleted=%s",
+                safe_file_id,
+                metadata.get("mimeType"),
+                metadata.get("size"),
+                len(deleted),
+            )
+
+            if self._is_valid_completed_file(final_path):
+                duration_ms = self._duration_ms(started_at)
+                logger.info(
+                    "Google Drive source cache hit: source_type=gdrive file_id=%s "
+                    "duration_ms=%s",
+                    safe_file_id,
+                    duration_ms,
+                )
+                return self._resolved_download(source, final_path, original_name, metadata)
+
+            with suppress(FileNotFoundError):
+                os.remove(part_path)
+
             self._download_to_file(client, file_id, resource_key, part_path)
             if not self._is_valid_part_file(part_path):
                 raise GoogleDriveDownloadError("Google Drive download produced empty file")
             os.replace(part_path, final_path)
-        except Exception:
-            with suppress(FileNotFoundError):
-                os.remove(part_path)
+            duration_ms = self._duration_ms(started_at)
+            logger.info(
+                "Google Drive source downloaded: source_type=gdrive file_id=%s "
+                "mime_type=%s size=%s duration_ms=%s",
+                safe_file_id,
+                metadata.get("mimeType"),
+                metadata.get("size"),
+                duration_ms,
+            )
+            return self._resolved_download(source, final_path, original_name, metadata)
+        except Exception as exc:
+            if file_id:
+                logger.warning(
+                    "Google Drive source failed: source_type=gdrive file_id=%s "
+                    "reason=%s duration_ms=%s",
+                    safe_file_id,
+                    type(exc).__name__,
+                    self._duration_ms(started_at),
+                )
+            part_path = locals().get("part_path")
+            if part_path:
+                with suppress(FileNotFoundError):
+                    os.remove(part_path)
             raise
-
-        return self._resolved_download(source, final_path, original_name, metadata)
 
     def cleanup_stale_files(self, now: float | None = None) -> list[str]:
         tmp_root = Path(self.tmp_dir).resolve()
@@ -239,11 +281,19 @@ class GoogleDriveSource:
 
     @staticmethod
     def _is_valid_completed_file(path: str) -> bool:
-        return path.endswith(".pdf") and os.path.isfile(path) and os.path.getsize(path) > 0
+        return (
+            path.endswith(".pdf")
+            and os.path.isfile(path)
+            and os.path.getsize(path) > 0
+        )
 
     @staticmethod
     def _is_valid_part_file(path: str) -> bool:
-        return path.endswith(".part") and os.path.isfile(path) and os.path.getsize(path) > 0
+        return (
+            path.endswith(".part")
+            and os.path.isfile(path)
+            and os.path.getsize(path) > 0
+        )
 
     def _build_google_drive_client(self):
         try:
@@ -319,6 +369,20 @@ class GoogleDriveSource:
         raw_size = metadata.get("size")
         if raw_size not in (None, "") and int(raw_size) > self.max_bytes:
             raise GoogleDriveDownloadError("Google Drive file is too large")
+
+    @staticmethod
+    def _safe_file_id(file_id: str | None) -> str:
+        if not file_id:
+            return "missing"
+        safe = GoogleDriveSource._safe_token(file_id)
+        if len(safe) <= 12:
+            return safe
+        digest = hashlib.sha256(file_id.encode("utf-8")).hexdigest()[:8]
+        return f"{safe[:6]}...{digest}"
+
+    @staticmethod
+    def _duration_ms(started_at: float) -> int:
+        return int((time.monotonic() - started_at) * 1000)
 
     @staticmethod
     def _env_bool(key: str) -> bool:
