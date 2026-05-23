@@ -296,6 +296,15 @@ Focused сценарії:
 - Cleanup не чіпає файли поза `GDRIVE_TMP_DIR`.
 - Google Drive files ніколи не переміщуються у локальні `Processed` або `Error` папки.
 
+### Статус 2026-05-23
+
+- `GoogleDriveSource` використовує deterministic cache path у `GDRIVE_TMP_DIR` на основі `file_id`, `resourcekey`, `name`, `mimeType` і `size`; якщо завершений `.pdf` валідний, повторний download не виконується.
+- `.part` перед download прибирається і ніколи не вважається готовим PDF; при помилці download `.part` видаляється.
+- Додано `GDRIVE_TMP_TTL_SECONDS=86400` у `.env.example`.
+- Додано `GoogleDriveSource.cleanup_stale_files()`: видаляє лише старі regular files з suffix `.pdf`/`.part` всередині `GDRIVE_TMP_DIR`; файли поза директорією і сторонні suffix-и не чіпає.
+- Core regression тести підтверджують: primary download failure/too-large не створює DSpace item, не викликає `move_to_error`; local primary lifecycle продовжує переносити файл у `Error` при критичній DSpace помилці.
+- Google Drive final temp PDF лишається в `GDRIVE_TMP_DIR` до TTL cleanup і не переміщується в `Processed/Error`.
+
 ## Ітерація 6: Observability і runbooks
 
 ### Завдання

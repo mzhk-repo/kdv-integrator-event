@@ -1,6 +1,8 @@
+import hashlib
 import os
+import time
 from contextlib import suppress
-import uuid
+from pathlib import Path
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
@@ -99,6 +101,7 @@ class GoogleDriveSource:
         allowed_mime_types: set[str] | None = None,
         max_bytes: int | None = None,
         timeout: int | None = None,
+        tmp_ttl_seconds: int | None = None,
         drive_client=None,
     ):
         self.enabled = self._env_bool("GDRIVE_ENABLED") if enabled is None else enabled
@@ -116,6 +119,9 @@ class GoogleDriveSource:
         )
         self.timeout = timeout if timeout is not None else int(
             os.environ.get("GDRIVE_DOWNLOAD_TIMEOUT", "300")
+        )
+        self.tmp_ttl_seconds = tmp_ttl_seconds if tmp_ttl_seconds is not None else int(
+            os.environ.get("GDRIVE_TMP_TTL_SECONDS", "86400")
         )
         self.drive_client = drive_client
 
@@ -138,16 +144,20 @@ class GoogleDriveSource:
         self._validate_metadata(metadata)
 
         original_name = self._safe_original_name(metadata.get("name") or file_id)
+        self.cleanup_stale_files()
         os.makedirs(self.tmp_dir, exist_ok=True)
-        final_path = os.path.join(
-            self.tmp_dir,
-            f"{self._safe_token(file_id)}-{uuid.uuid4().hex}.pdf",
-        )
+        final_path = self._cached_file_path(file_id, resource_key, metadata)
         part_path = f"{final_path}.part"
+
+        if self._is_valid_completed_file(final_path):
+            return self._resolved_download(source, final_path, original_name, metadata)
+
+        with suppress(FileNotFoundError):
+            os.remove(part_path)
 
         try:
             self._download_to_file(client, file_id, resource_key, part_path)
-            if not os.path.exists(part_path) or os.path.getsize(part_path) == 0:
+            if not self._is_valid_part_file(part_path):
                 raise GoogleDriveDownloadError("Google Drive download produced empty file")
             os.replace(part_path, final_path)
         except Exception:
@@ -155,6 +165,36 @@ class GoogleDriveSource:
                 os.remove(part_path)
             raise
 
+        return self._resolved_download(source, final_path, original_name, metadata)
+
+    def cleanup_stale_files(self, now: float | None = None) -> list[str]:
+        tmp_root = Path(self.tmp_dir).resolve()
+        if not tmp_root.exists() or not tmp_root.is_dir():
+            return []
+
+        now_ts = time.time() if now is None else now
+        deleted = []
+        for path in tmp_root.iterdir():
+            if not path.is_file() or path.suffix not in {".pdf", ".part"}:
+                continue
+            try:
+                resolved_path = path.resolve()
+                if resolved_path.parent != tmp_root:
+                    continue
+                age_s = now_ts - path.stat().st_mtime
+                if age_s < self.tmp_ttl_seconds:
+                    continue
+                path.unlink()
+                deleted.append(str(path))
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+        return deleted
+
+    def _resolved_download(
+        self, source: ResolvedSource, final_path: str, original_name: str, metadata: dict
+    ) -> ResolvedSource:
         diagnostics = dict(source.diagnostics)
         diagnostics.update(
             {
@@ -172,6 +212,38 @@ class GoogleDriveSource:
             diagnostics=diagnostics,
             lifecycle_policy="remote_ephemeral",
         )
+
+    def _cached_file_path(
+        self, file_id: str, resource_key: str | None, metadata: dict
+    ) -> str:
+        fingerprint = self._metadata_fingerprint(file_id, resource_key, metadata)
+        return os.path.join(
+            self.tmp_dir,
+            f"{self._safe_token(file_id)}-{fingerprint}.pdf",
+        )
+
+    @staticmethod
+    def _metadata_fingerprint(
+        file_id: str, resource_key: str | None, metadata: dict
+    ) -> str:
+        raw = "|".join(
+            [
+                file_id,
+                resource_key or "",
+                str(metadata.get("name") or ""),
+                str(metadata.get("mimeType") or ""),
+                str(metadata.get("size") or ""),
+            ]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _is_valid_completed_file(path: str) -> bool:
+        return path.endswith(".pdf") and os.path.isfile(path) and os.path.getsize(path) > 0
+
+    @staticmethod
+    def _is_valid_part_file(path: str) -> bool:
+        return path.endswith(".part") and os.path.isfile(path) and os.path.getsize(path) > 0
 
     def _build_google_drive_client(self):
         try:

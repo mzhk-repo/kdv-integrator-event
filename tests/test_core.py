@@ -701,15 +701,28 @@ def test_hard_limit_does_not_prevent_optimization_path(tmp_path, monkeypatch):
 
 
 
+class TrackingDSpace(StubDSpace):
+    def __init__(self):
+        super().__init__()
+        self.created_items = []
+
+    def create_item_direct(self, uuid, md):
+        self.created_items.append((uuid, md))
+        return super().create_item_direct(uuid, md)
+
+
 class CoreFakeDriveClient:
-    def __init__(self, content=b"%PDF-1.4\ncontent", error=None):
+    def __init__(self, content=b"%PDF-1.4\ncontent", error=None, metadata=None):
         self.content = content
         self.error = error
+        self.metadata = metadata
         self.metadata_calls = []
         self.download_calls = []
 
     def get_metadata(self, file_id, resource_key):
         self.metadata_calls.append((file_id, resource_key))
+        if self.metadata is not None:
+            return self.metadata
         return {
             "name": f"{file_id}.pdf",
             "mimeType": "application/pdf",
@@ -870,4 +883,101 @@ def test_run_dspace_google_additional_download_error_is_non_fatal(
         }
     ]
     assert dspace.uploaded == [("u1", str(primary), "biblio_78_v01.pdf")]
+
+
+def test_process_integration_google_primary_download_failure_does_not_create_item(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    koha = StubKoha()
+    koha.metadata = {
+        "file_path": "https://drive.google.com/open?id=primary-id",
+        "collection_uuid": "coll",
+    }
+    dspace = TrackingDSpace()
+    drive_client = CoreFakeDriveClient(error=RuntimeError("download failed"))
+    _install_gdrive_resolver(monkeypatch, mount, tmp_path, drive_client)
+    move_to_error = Mock()
+    monkeypatch.setattr("src.core.FileService.move_to_error", move_to_error)
+
+    with pytest.raises(RuntimeError, match="download failed"):
+        process_integration_logic(
+            "task-id",
+            5,
+            koha_client=koha,
+            dspace_client=dspace,
+            skip_optimization=True,
+        )
+
+    assert dspace.created_items == []
+    assert dspace.uploaded == []
+    move_to_error.assert_not_called()
+    assert any(
+        status == "error" and "download failed" in msg
+        for _, status, msg in koha.status_log
+    )
+
+
+def test_process_integration_google_primary_too_large_does_not_move_to_error(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    koha = StubKoha()
+    koha.metadata = {
+        "file_path": "https://drive.google.com/open?id=primary-id",
+        "collection_uuid": "coll",
+    }
+    dspace = TrackingDSpace()
+    drive_client = CoreFakeDriveClient(metadata={
+        "name": "primary-id.pdf",
+        "mimeType": "application/pdf",
+        "size": str(300 * 1024 * 1024),
+        "capabilities": {"canDownload": True},
+    })
+    _install_gdrive_resolver(monkeypatch, mount, tmp_path, drive_client)
+    move_to_error = Mock()
+    monkeypatch.setattr("src.core.FileService.move_to_error", move_to_error)
+
+    with pytest.raises(Exception, match="too large"):
+        process_integration_logic(
+            "task-id",
+            5,
+            koha_client=koha,
+            dspace_client=dspace,
+            skip_optimization=True,
+        )
+
+    assert dspace.created_items == []
+    assert dspace.uploaded == []
+    assert drive_client.download_calls == []
+    move_to_error.assert_not_called()
+
+
+def test_process_integration_local_primary_still_moves_to_error_on_failure(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    local_pdf = mount / "book.pdf"
+    local_pdf.write_bytes(b"local")
+    koha = StubKoha()
+    koha.metadata = {"file_path": "book.pdf", "collection_uuid": "coll"}
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(mount))
+    monkeypatch.setattr(
+        "src.core.CoverService.process_book",
+        lambda *args, **kwargs: {"status": "skipped"},
+    )
+
+    with pytest.raises(Exception, match="upload exploded"):
+        process_integration_logic(
+            "task-id",
+            5,
+            koha_client=koha,
+            dspace_client=FailingUploadDSpace(),
+            skip_optimization=True,
+        )
+
+    assert (mount / "Error" / "biblio_5_v01.pdf").exists()
 

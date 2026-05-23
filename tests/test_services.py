@@ -380,6 +380,70 @@ def test_gdrive_source_downloads_pdf_with_atomic_rename(tmp_path):
     assert resolved.diagnostics["mime_type"] == "application/pdf"
 
 
+def test_gdrive_source_reuses_completed_temp_file_when_metadata_matches(tmp_path):
+    drive_client = FakeDriveClient(content=b"first-download")
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    first = resolver.materialize(parsed)
+    second = resolver.materialize(parsed)
+
+    assert first.local_path == second.local_path
+    assert Path(second.local_path).read_bytes() == b"first-download"
+    assert len(drive_client.metadata_calls) == 2
+    assert len(drive_client.download_calls) == 1
+
+
+def test_gdrive_source_ignores_existing_part_file(tmp_path):
+    drive_client = FakeDriveClient(content=b"complete-download")
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+    final_path = resolver.gdrive_source._cached_file_path(
+        "file-id",
+        "res-key",
+        drive_client.metadata,
+    )
+    Path(f"{final_path}.part").write_bytes(b"stale-part")
+
+    resolved = resolver.materialize(parsed)
+
+    assert Path(resolved.local_path).read_bytes() == b"complete-download"
+    assert not Path(f"{final_path}.part").exists()
+    assert len(drive_client.download_calls) == 1
+
+
+def test_gdrive_source_cleanup_stale_files_only_inside_tmp_dir(tmp_path):
+    tmp_dir = tmp_path / "gdrive"
+    tmp_dir.mkdir()
+    old_pdf = tmp_dir / "old.pdf"
+    old_part = tmp_dir / "old.part"
+    fresh_pdf = tmp_dir / "fresh.pdf"
+    ignored_txt = tmp_dir / "old.txt"
+    outside_pdf = tmp_path / "outside.pdf"
+    for file_path in (old_pdf, old_part, fresh_pdf, ignored_txt, outside_pdf):
+        file_path.write_bytes(b"x")
+    now = 1_700_000_000
+    old_ts = now - 100
+    fresh_ts = now - 1
+    for file_path in (old_pdf, old_part, ignored_txt, outside_pdf):
+        os.utime(file_path, (old_ts, old_ts))
+    os.utime(fresh_pdf, (fresh_ts, fresh_ts))
+
+    source = GoogleDriveSource(
+        enabled=True,
+        tmp_dir=str(tmp_dir),
+        tmp_ttl_seconds=10,
+        drive_client=FakeDriveClient(),
+    )
+
+    deleted = source.cleanup_stale_files(now=now)
+
+    assert sorted(Path(path).name for path in deleted) == ["old.part", "old.pdf"]
+    assert not old_pdf.exists()
+    assert not old_part.exists()
+    assert fresh_pdf.exists()
+    assert ignored_txt.exists()
+    assert outside_pdf.exists()
+
+
 def test_gdrive_source_rejects_unsupported_mime_type(tmp_path):
     drive_client = FakeDriveClient(metadata={
         "name": "Doc",
