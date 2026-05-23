@@ -72,3 +72,57 @@
 - **Verification:** `python3 -m py_compile src/core.py src/dspace.py src/clients/dspace.py src/koha.py src/clients/koha.py tests/test_core.py tests/test_contracts.py tests/manual_smoke.py`; focused Docker pytest для primary download URL, existing item, DSpace upload payload і двох `856` -> `5 passed`; `docker run --rm --env-file .env.example --entrypoint python -e PYTHONPATH=/work:/work/kdv-optimizer -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:a9f2b98131cb -m pytest tests/test_core.py tests/test_contracts.py -q` -> `31 passed`; `docker run --rm --env-file .env.example --entrypoint python -e PYTHONPATH=/work:/work/kdv-optimizer -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:a9f2b98131cb -m pytest tests -q` -> `63 passed`; `git diff --check -- src/core.py src/dspace.py src/clients/dspace.py src/koha.py src/clients/koha.py tests/test_core.py tests/test_contracts.py tests/manual_smoke.py`.
 - **Risks:** Для нового upload direct URL зʼявляється тільки якщо DSpace повертає `uuid` uploaded bitstream. Для `linked_existing` береться перший bitstream з ORIGINAL bundle; якщо в item уже кілька файлів і перший не primary, може знадобитися окреме правило вибору primary.
 - **Rollback:** Відкотити зміни у `src/core.py`, `src/dspace.py`, `src/clients/dspace.py`, `src/koha.py`, `src/clients/koha.py`, `tests/test_core.py`, `tests/test_contracts.py`, `tests/manual_smoke.py`, `README.md`, `docs/ARCHITECTURE.md` і цей changelog-запис.
+
+
+## 2026-05-23 — RUNBOOK_ROBOT: запуск через SOPS/age env-контекст
+
+- **Context:** Ручний запуск `docker compose exec kdv-api python3 scripts/robot.py candidates.txt` падав до старту `robot.py`, бо Docker Compose інтерполює `docker-compose.yml` до `exec` і не отримував `RCLONE_REMOTE_NAME` для `kdv-drive` rclone volume. У репозиторії штатний env-контракт уже переведений на `env.dev.enc`/`env.prod.enc` через SOPS/age та `ORCHESTRATOR_ENV_FILE`, тому fallback на plaintext `.env` не має бути основним шляхом для оператора.
+- **Change:** `docs/RUNBOOK_ROBOT.md` доповнено кроком підготовки env-контексту: ручна розшифровка `env.dev.enc` або `env.prod.enc` у тимчасовий файл у `/dev/shm`, запуск `docker compose --env-file "${ENV_TMP}" exec ...`, варіант з готовим `ORCHESTRATOR_ENV_FILE`, preflight `docker compose --env-file "${ENV_TMP}" config`, і пояснення помилки `RCLONE_REMOTE_NAME is required`. Приклади з `ROBOT_*` переведено на CLI flags та `docker compose exec -e`, щоб параметри гарантовано потрапляли у процес всередині контейнера.
+- **Verification:** Переглянуто оновлений фрагмент `docs/RUNBOOK_ROBOT.md`; перевірка Compose-контракту виконувалась через `docker compose --env-file .env.example config`, що проходить без помилки `RCLONE_REMOTE_NAME`.
+- **Risks:** Команди з `env.prod.enc` потрібно виконувати лише на відповідному production host з правильним AGE-ключем і після перевірки цільового середовища. Тимчасовий env-файл видаляється через `shred -u` або `rm -f`, plaintext env не додається в репозиторій.
+- **Rollback:** Відкотити зміни у `docs/RUNBOOK_ROBOT.md` і цей changelog-запис.
+
+
+## 2026-05-23 — RUNBOOK_ROBOT: Swarm runtime замість Compose exec
+
+- **Context:** Після переходу на Swarm команда `docker compose --env-file ... exec kdv-api ...` з ранбуку не запускала `robot.py`: локальний Compose-проєкт не має running service `kdv-api`, хоча Swarm-сервіс `kdv_integrator_event_kdv-api` працює `1/1`. Фактичний runtime-контейнер потрібно знаходити через Docker Swarm label.
+- **Change:** `docs/RUNBOOK_ROBOT.md` переведено на Swarm-підключення: `docker service ls --filter name=kdv_integrator_event`, пошук `KDV_API_CID` через `docker ps --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api`, запуск `robot.py` через `docker exec "${KDV_API_CID}" ...`. Уточнено, що SOPS/age env потрібен для deploy/render manifest, а для ручного запуску у вже запущеному Swarm-контейнері runtime env уже завантажений через Swarm secret/entrypoint.
+- **Verification:** `docker service ls` показав `kdv_integrator_event_kdv-api 1/1` і `kdv_integrator_event_kdv-optimizer 1/1`; `docker ps --format ...` знайшов локальний контейнер `kdv_integrator_event_kdv-api`; `docker exec <cid> python3 scripts/robot.py --help` успішно показав CLI; `docker exec <cid> curl -fsS http://localhost:5000/kdv/api/health` повернув `status=ok`.
+- **Risks:** Якщо task `kdv-api` запущений на іншій Swarm node, локальний `docker ps` не знайде контейнер; тоді команду треба виконувати на node, де розміщений task, або підключатися до тієї node.
+- **Rollback:** Повернути попередні Compose-команди в `docs/RUNBOOK_ROBOT.md` і видалити цей changelog-запис.
+
+
+## 2026-05-23 — Wrapper `run-robot-swarm.sh` для запуску Robot у Swarm
+
+- **Context:** Ручний запуск `robot.py` у Swarm вимагав кількох кроків: знайти runtime-контейнер `kdv-api`, перевірити health, передати host `candidates.txt` у контейнер, запустити `robot.py` з container path. Прямий `docker exec ... scripts/robot.py candidates.txt` падав, бо `candidates.txt` існує в host repo, але не монтується в `/app` Swarm-контейнера.
+- **Change:** Додано `scripts/run-robot-swarm.sh`: wrapper резолвить env-контекст (`ORCHESTRATOR_ENV_FILE` → `SERVER_ENV`/`ENVIRONMENT_NAME` → `env.dev.enc`/`env.prod.enc` → `.env`), читає `STACK_NAME`/`SWARM_SERVICE_NAME`, знаходить контейнер за Swarm label, перевіряє `/kdv/api/health`, копіює candidates-файл у `/tmp/kdv-candidates.txt`, валідовує parsing і запускає `scripts/robot.py`. Додано `--dry-run`, прокидання `ROBOT_*` env і підтримку CLI-прапорів `robot.py`. Оновлено `docs/RUNBOOK_ROBOT.md` і `docs/scripts_runbook.md` на запуск через wrapper.
+- **Verification:** `bash -n scripts/run-robot-swarm.sh`; `scripts/run-robot-swarm.sh --help`; `SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt` -> знайдено `kdv_integrator_event_kdv-api 1/1`, health пройшов, `candidates=2 list=['109', '110']`, batch не стартував.
+- **Risks:** Wrapper має запускатися на Swarm node, де локально присутній task `kdv-api`; якщо task переїхав на іншу node, скрипт покаже `container ... not found on this node` і `docker service ps` для діагностики.
+- **Rollback:** Видалити `scripts/run-robot-swarm.sh`, повернути ручні команди в `docs/RUNBOOK_ROBOT.md`/`docs/scripts_runbook.md` і видалити цей changelog-запис.
+
+
+## 2026-05-23 — `run-robot-swarm.sh`: передача env у `docker exec`
+
+- **Context:** Після запуску wrapper-а `robot.py` стартував у Swarm-контейнері, але падав на кожному ID з `KDV_API_TOKEN is missing`. Причина: `docker exec` створює новий процес і не успадковує env, який `entrypoint.sh` експортував для основного gunicorn-процесу.
+- **Change:** `scripts/run-robot-swarm.sh` тепер передає знайдений/розшифрований env-файл у процес `robot.py` через `docker exec --env-file`. Додано dry-run перевірку `KDV_API_TOKEN` без виводу значення токена. Оновлено `docs/RUNBOOK_ROBOT.md` і `docs/scripts_runbook.md`.
+- **Verification:** `bash -n scripts/run-robot-swarm.sh`; `SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt` -> health OK, candidates parse OK, `Validating robot auth env` OK, batch не стартував.
+- **Risks:** `docker exec --env-file` використовує тимчасовий розшифрований env-файл на host; wrapper видаляє його через `shred -u`/`rm -f` у `trap`.
+- **Rollback:** Прибрати `--env-file` передачу з `scripts/run-robot-swarm.sh` і цей changelog-запис.
+
+
+## 2026-05-23 — `run-robot-swarm.sh`: синхронізація Robot log на host
+
+- **Context:** Після успішного запуску `robot.py` лог писався у `/app/logs/robot_batch.log` всередині Swarm-контейнера, але host `logs/robot_batch.log` лишався порожнім, бо корінь репозиторію і `logs/` не змонтовані в service container.
+- **Change:** `scripts/run-robot-swarm.sh` після завершення реального batch копіює контейнерний `/app/logs/robot_batch.log` у host `logs/robot_batch.log` через `docker exec ... cat`. Додано `ROBOT_HOST_LOG_PATH` і `ROBOT_CONTAINER_LOG_PATH` для override. Оновлено `docs/RUNBOOK_ROBOT.md` і `docs/scripts_runbook.md`.
+- **Verification:** Поточний контейнерний log вручну синхронізовано у host `logs/robot_batch.log`; `tail -20 logs/robot_batch.log` показує успішний batch для `109` і `110`; `bash -n scripts/run-robot-swarm.sh`; `SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt`.
+- **Risks:** Host log є копією стану контейнерного log на момент завершення wrapper-а; для live-tail під час виконання все ще потрібно читати stdout wrapper-а або контейнерний log напряму.
+- **Rollback:** Прибрати sync-блок з `scripts/run-robot-swarm.sh`, оновлення документації і цей changelog-запис.
+
+
+## 2026-05-23 — README update для Swarm Robot wrapper
+
+- **Context:** Після додавання `scripts/run-robot-swarm.sh` головний README ще описував batch robot переважно як прямий `scripts/robot.py` workflow і не пояснював передачу `candidates.txt`/логів у Swarm runtime.
+- **Change:** `README.md` точково оновлено: статус останніх змін, topology `scripts/`, опис `candidates.txt` і таблицю Batch-утиліт. Рекомендований Swarm-шлях тепер `scripts/run-robot-swarm.sh`, а `scripts/robot.py` позначено як внутрішню batch-логіку.
+- **Verification:** Перевірено релевантні README-згадки через `rg` і перегляд diff; `git diff --check -- README.md docs/changelogs/CHANGELOG_2026_VOL_03.md`.
+- **Risks:** README лишається high-level входом; детальні команди, dry-run, troubleshooting і rollback описані в `docs/RUNBOOK_ROBOT.md` та `docs/scripts_runbook.md`.
+- **Rollback:** Відкотити зміни `README.md` і цей changelog-запис.

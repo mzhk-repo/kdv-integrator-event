@@ -58,94 +58,125 @@ Robot читає файл `candidates.txt` в корені проекту. Фо�
 
 ---
 
-## 🚀 Крок 2: Запустити robot
+## 🚀 Крок 2: Перевірити запуск без архівації
 
-### Простий запуск (за замовч. наслідування)
+У Swarm-середовищі не запускаємо `robot.py` напряму через `docker compose exec` або ручний `docker exec`. Для цього є wrapper:
 
 ```bash
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
+SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt
+```
+
+Що робить `--dry-run`:
+- знаходить env-контекст у стилі `src/config.py`: `ORCHESTRATOR_ENV_FILE` → `SERVER_ENV`/`ENVIRONMENT_NAME` → `env.dev.enc`/`env.prod.enc` → `.env`;
+- передає цей env у `docker exec` через `--env-file`, щоб `robot.py` бачив `KDV_API_TOKEN`;
+- визначає Swarm stack/service (`STACK_NAME`, `SWARM_SERVICE_NAME` або default `kdv_integrator_event_kdv-api`);
+- знаходить локальний runtime-контейнер `kdv-api` через Docker Swarm label;
+- перевіряє `/kdv/api/health` всередині контейнера;
+- копіює host `candidates.txt` у контейнер як `/tmp/kdv-candidates.txt`;
+- перевіряє, що `robot.py` бачить і парсить файл;
+- **не стартує batch**.
+
+Для production-контексту:
+
+```bash
+SERVER_ENV=prod scripts/run-robot-swarm.sh --dry-run candidates.txt
+```
+
+Якщо env уже розшифрований оркестратором:
+
+```bash
+ORCHESTRATOR_ENV_FILE=/path/to/env.decrypted scripts/run-robot-swarm.sh --dry-run candidates.txt
+```
+
+---
+
+## 🚀 Крок 3: Запустити robot
+
+### Простий запуск
+
+```bash
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt
+```
+
+Production запуск:
+
+```bash
+SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt
 ```
 
 **Що буде:**
-- Прочитає `candidates.txt`
-- Запустить архівацію **послідовно** (ID за ID, чекаючи результату)
-- За замовчуванням передасть `skip_optimization=false`, тобто PDF-оптимізація увімкнена
-- Показуватиме прогрес та результати на екран
-- Напишефуть подробиці в `logs/robot_batch.log`
+- wrapper знайде Swarm-контейнер `kdv-api`;
+- передасть `candidates.txt` у контейнер;
+- запустить `python3 scripts/robot.py /tmp/kdv-candidates.txt`;
+- архівація піде **послідовно** за замовчуванням;
+- за замовчуванням передасть `skip_optimization=false`, тобто PDF-оптимізація увімкнена;
+- подробиці будуть у `/app/logs/robot_batch.log` всередині контейнера;
+- після завершення wrapper синхронізує цей файл у host `logs/robot_batch.log`.
 
 ### CLI-параметри
 
 ```bash
-docker compose exec kdv-api python3 scripts/robot.py --help
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt --skip-optimization
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt --parallelism 1 --max-wait 900
+scripts/run-robot-swarm.sh --help
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --skip-optimization
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 1 --max-wait 900
 ```
 
 - `--skip-optimization` → передає `skip_optimization=true` для всього batch.
 - `--parallelism` → перекриває `ROBOT_PARALLELISM`.
 - `--max-wait` → перекриває `ROBOT_MAX_WAIT`.
 
-> ⚠️ Якщо `--parallelism > 1` без `--skip-optimization`, задачі можуть чекати чергу `kdv-optimizer`. Рекомендовано `--parallelism 1` або `--skip-optimization`; для паралелізму 2 збільшуйте `--max-wait` до 1200.
+> Якщо `--parallelism > 1` без `--skip-optimization`, задачі можуть чекати чергу `kdv-optimizer`. Рекомендовано `--parallelism 1` або `--skip-optimization`; для паралелізму 2 збільшуйте `--max-wait` до 1200.
 
-### Хочемо швидше? Паралелізм!
+### Хочемо швидше? Паралелізм
 
 ```bash
-# Запустити 4 архівації одночасно через CLI
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt --parallelism 4
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 4
 ```
 
 **Умовно:**
-- `ROBOT_PARALLELISM=1` → послідовно (за замовч., безпечно)
-- `ROBOT_PARALLELISM=4` → по 4 одночасно (швидше, але більше навантаження)
-- `ROBOT_PARALLELISM=8` → по 8 одночасно (для продакшену при малій базі)
-
-> ⚠️ **Порада:** На слабкому лічинному сервері залишайте 1-2, на потужному 4-8.
+- `--parallelism 1` → послідовно, найбезпечніше;
+- `--parallelism 4` → по 4 одночасно, швидше, але більше навантаження;
+- `--parallelism 8` → тільки після перевірки ресурсів і черги optimizer-а.
 
 ---
 
-## ⚙️ Налаштування (через .env)
+## ⚙️ Налаштування
+
+`ROBOT_*` можна передати в wrapper як env. Wrapper прокине їх у процес `robot.py` всередині контейнера:
 
 ```bash
-# Затримка між стартами завдань (сек)
-ROBOT_BATCH_DELAY=5.0              # за замовч. 5 сек
-
-# Як часто перевіряти статус завдання (сек)
-ROBOT_POLL_INTERVAL=3.0            # за замовч. 3 сек
-
-# Максимум часу чекати на завдання (сек)
-ROBOT_MAX_WAIT=900                 # за замовч. 15 хвилин (900 сек)
-
-# Скільки завдань паралельно (тільки якщо > 1)
-ROBOT_PARALLELISM=1                # за замовч. 1 (послідовно)
+ROBOT_BATCH_DELAY=1 ROBOT_POLL_INTERVAL=1 \
+  SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 2
 ```
-
-### Що означає кожна?
 
 | Параметр | За замовч. | Що робить | Коли змінювати |
 |----------|-----------|-----------|----------------|
-| `BATCH_DELAY` | 5 сек | Пауза між стартами завдань | Збільш якщо Koha повільна, зменш якщо потрібна швидкість |
-| `POLL_INTERVAL` | 3 сек | Як часто питати "готово?" | Збільш якщо архівація довга, зменш якщо важко дочекатись |
-| `MAX_WAIT` | 900 сек | Скільки геврив чекати | Збільш для великих фото, зменш якщо не хочеш лежатись довге |
-| `PARALLELISM` | 1 | Скільки одночасно | Збільш для прискорення; при оптимізації краще лишати 1 або збільшувати `MAX_WAIT` |
+| `ROBOT_BATCH_DELAY` | 5 сек | Пауза між стартами завдань | Збільш якщо Koha повільна, зменш якщо потрібна швидкість |
+| `ROBOT_POLL_INTERVAL` | 3 сек | Як часто питати статус задачі | Збільш якщо архівація довга |
+| `ROBOT_MAX_WAIT` | 900 сек | Максимальний час очікування задачі | Збільш для великих файлів |
+| `ROBOT_PARALLELISM` | 1 | Скільки задач одночасно | Краще задавати CLI-прапором `--parallelism` |
 
 ### Приклади налаштувань
 
-**Сценарій 1: Швидкий тест (10 книг)**
+**Сценарій 1: Швидкий тест**
+
 ```bash
-ROBOT_PARALLELISM=2 ROBOT_BATCH_DELAY=1 ROBOT_POLL_INTERVAL=1 \
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
+ROBOT_BATCH_DELAY=1 ROBOT_POLL_INTERVAL=1 \
+  SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 2
 ```
 
-**Сценарій 2: Виробничий пуск на ночі (1000+ книг)**
+**Сценарій 2: Виробничий пуск на ніч**
+
 ```bash
-ROBOT_PARALLELISM=4 ROBOT_BATCH_DELAY=2 ROBOT_POLL_INTERVAL=5 ROBOT_MAX_WAIT=1800 \
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
+ROBOT_BATCH_DELAY=2 ROBOT_POLL_INTERVAL=5 \
+  SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt --parallelism 4 --max-wait 1800
 ```
 
-**Сценарій 3: Консервативний (коли база дуже завантажена)**
+**Сценарій 3: Консервативний запуск**
+
 ```bash
-ROBOT_PARALLELISM=1 ROBOT_BATCH_DELAY=10 ROBOT_POLL_INTERVAL=10 ROBOT_MAX_WAIT=1200 \
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
+ROBOT_BATCH_DELAY=10 ROBOT_POLL_INTERVAL=10 \
+  SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt --parallelism 1 --max-wait 1200
 ```
 
 ---
@@ -207,44 +238,74 @@ docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 
 ## 🔴 Типові проблеми
 
-### Проблема: "ERROR_CONN — Connection Error"
+### Проблема: `container for ... not found on this node`
 
-**Причина:** API недіступна.
-
-**Що робити:**
-1. Перевіри статус контейнера: `docker compose ps kdv-api`
-2. Перезапустіти: `docker compose restart kdv-api`
-3. Гляй логи: `docker compose logs kdv-api --tail=50`
-
-### Проблема: "ERROR_CLIENT — Client Error"
-
-**Причина:** Невірний ID або інша помилка запiту.
+**Причина:** Swarm task `kdv-api` запущений на іншій node або сервіс не має running replica.
 
 **Що робити:**
-1. Перевір ID в `candidates.txt`:
+1. Перевір сервіс:
    ```bash
-   # Гляни перший лог рядок для ID
-   docker compose exec kdv-api tail -20 logs/robot_batch.log | grep "CLIENT"
+   docker service ls --filter name=kdv_integrator_event_kdv-api
+   docker service ps kdv_integrator_event_kdv-api --no-trunc
    ```
-2. Видали невірний ID з файлу, запустим знову
+2. Запускай wrapper на node, де реально працює task `kdv-api`.
+3. Якщо сервіс упав, дивись логи:
+   ```bash
+   docker service logs kdv_integrator_event_kdv-api --tail=100
+   ```
 
-### Проблема: "TIMEOUT — waited 900s"
+### Проблема: `candidates file not found on host`
 
-**Причина:** Завдання занадто довге (велики фоток, повільна DSpace).
-
-**Що робити:**
-1. Збільш `ROBOT_MAX_WAIT`: `ROBOT_MAX_WAIT=1800 docker compose exec kdv-api python3 scripts/robot.py candidates.txt`
-2. Або запусти той же ID окремо: `docker compose exec kdv-api python3 -c "from scripts.robot import process_single_biblio; print(process_single_biblio('123'))"`
-
-### Проблема: "FAILED — но error message"
-
-**Причина:** Помилка при архівації (Koha, DSpace або валідація).
+**Причина:** wrapper читає файл зі сторони host repo до копіювання в контейнер.
 
 **Що робити:**
-1. Гляй повний лог: `docker compose exec kdv-api grep "#123 FAILED" logs/robot_batch.log`
-2. Перевір status ID в системі
-3. Спробуй архівувати ID вручную для деталей
-4. Якщо повторне велике помилка → дивись RUNBOOK_MAYDAY.md
+1. Перевір шлях:
+   ```bash
+   ls -l candidates.txt
+   ```
+2. Передай явний файл:
+   ```bash
+   SERVER_ENV=dev scripts/run-robot-swarm.sh ./candidates.txt --dry-run
+   ```
+
+### Проблема: `ERROR_CONN — Connection Error`
+
+**Причина:** API всередині контейнера недоступне або health-check не проходить.
+
+**Що робити:**
+1. Перевір сервіс: `docker service ls --filter name=kdv_integrator_event_kdv-api`
+2. Глянь логи: `docker service logs kdv_integrator_event_kdv-api --tail=100`
+3. Якщо потрібен redeploy/restart, узгодь дію окремо: `docker service update --force kdv_integrator_event_kdv-api`
+
+### Проблема: `ERROR_CLIENT — Client Error`
+
+**Причина:** Невірний ID або інша помилка запиту.
+
+**Що робити:**
+1. Перевір ID в `candidates.txt`.
+2. Запусти dry-run, щоб переконатися, що список парситься:
+   ```bash
+   SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt
+   ```
+3. Глянь robot-log у контейнері:
+   ```bash
+   KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+   docker exec "${KDV_API_CID}" tail -50 logs/robot_batch.log
+   ```
+
+### Проблема: `TIMEOUT — waited 900s`
+
+**Причина:** Завдання занадто довге: великий файл, черга optimizer-а або повільна DSpace.
+
+**Що робити:**
+1. Збільш `--max-wait`:
+   ```bash
+   SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --max-wait 1800
+   ```
+2. Для важких PDF зменш паралелізм:
+   ```bash
+   SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 1 --max-wait 1800
+   ```
 
 ---
 
@@ -253,81 +314,57 @@ docker compose exec kdv-api python3 scripts/robot.py candidates.txt
 ### Рецепт 1: Тест з 10 книг перед великим пуском
 
 ```bash
-# Лізати candidates.txt, залишити тільки 10 рядків
 head -10 candidates.txt > candidates_test.txt
-
-# Запустити
-docker compose exec kdv-api python3 -c "from scripts.robot import run_batch; run_batch('candidates_test.txt')"
-
-# Гляти результати
-docker compose exec kdv-api tail -50 logs/robot_batch.log
+SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates_test.txt
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates_test.txt --parallelism 1
 ```
 
-### Рецепт 2: Запустити паралельно в фоні
+### Рецепт 2: Запустити паралельно в tmux
 
 ```bash
-# Запустити в tmux (якщо є)
 tmux new-session -d -s robot \
-  "cd /path/to/kdv && ROBOT_PARALLELISM=4 docker compose exec kdv-api python3 scripts/robot.py candidates.txt"
+  "cd /opt/kdv-integrator/kdv-integrator-event && SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 4"
 
-# Потім подивитись прогрес
 tmux attach -t robot
+```
 
-# Або просто redirect в файл:
-nohup docker compose exec kdv-api python3 scripts/robot.py candidates.txt > robot_run.log 2>&1 &
+### Рецепт 3: Запустити в фоні з логом host-сесії
+
+```bash
+nohup env SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 2 > robot_run.log 2>&1 &
 tail -f robot_run.log
 ```
 
-### Рецепт 3: Повторити тільки неудачі
+### Рецепт 4: Повторити тільки невдалі ID
 
 ```bash
-# Оригінальний lог
-docker compose exec kdv-api grep "FAILED\|TIMEOUT" logs/robot_batch.log | \
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "${KDV_API_CID}" grep "FAILED\|TIMEOUT" logs/robot_batch.log | \
   grep -oP "#\d+" | sed 's/#//' > candidates_retry.txt
 
-# Це дасть тільки ID які провалилась, потім:
-docker compose exec kdv-api python3 -c "from scripts.robot import run_batch; run_batch('candidates_retry.txt')"
-```
-
-### Рецепт 4: Під'їднання вставки з одного сеансу
-
-```bash
-# Запов'нити candidates.txt за запуском 1
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
-
-# Потім запов'нити FILE2:
-echo "
-500-600
-" >> candidates.txt
-
-# Запустити знову (буде нові + старі, але old дублі автоматично пропускаються)
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
+SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates_retry.txt
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates_retry.txt --parallelism 1 --max-wait 1800
 ```
 
 ---
 
 ## 🎯 Сценарії запуску
 
-### Сценарій 1: Канарійський пуск (10-50 книг)
+### Сценарій 1: Канарійський пуск
 
 ```bash
-# 1. Готуємо список
 cat > candidates.txt << EOF
 100-110
 200, 210, 220
 EOF
 
-# 2. Запускаємо послідовно, детальна спостереження
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
-
-# 3. Перевіряємо результати
-docker compose exec kdv-api tail -30 logs/robot_batch.log
+SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 1
 ```
 
-### Сценарій 2: Виробничий пуск (500-1000 книг, ночі)
+### Сценарій 2: Виробничий пуск на ніч
 
 ```bash
-# 1. Готуємо велику список
 cat > candidates.txt << EOF
 # Перша хвиля
 100-500
@@ -335,62 +372,40 @@ cat > candidates.txt << EOF
 600-1100
 EOF
 
-# 2. Запускаємо з паралелізмом, більш консервативним чекуванням
-ROBOT_PARALLELISM=4 ROBOT_BATCH_DELAY=2 ROBOT_POLL_INTERVAL=5 \
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
-
-# 3. Контролюємо вживання ресурсів
-docker stats kdv-api kdv-koha kdv-dspace
-
-# 4. На утро перевіряємо результати
-docker compose exec kdv-api grep "SUCCESS\|FAILED" logs/robot_batch.log | tail -20
+ROBOT_BATCH_DELAY=2 ROBOT_POLL_INTERVAL=5 \
+  SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt --parallelism 4 --max-wait 1800
 ```
 
-### Сценарій 3: Вручню вибіркова архівація (спеціальна колекція)
+### Сценарій 3: Вибіркова архівація важких файлів
 
 ```bash
-# 1. Готуємо специфічний список (напр., з певної категорії)
 cat > candidates.txt << EOF
-# Особливі видання
 2000, 2001, 2005, 2010-2020, 2030
-# З нової колекції
 3500-3510
 EOF
 
-# 2. Запускаємо з більш довгим MAX_WAIT (велики файли)
-ROBOT_PARALLELISM=2 ROBOT_MAX_WAIT=1800 \
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
-
-# 3. Перевіряємо, чи все OK
-docker compose exec kdv-api cat logs/robot_batch.log | tail -100
+SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt --parallelism 1 --max-wait 1800
 ```
 
 ---
 
 ## 🔗 Зв'язок з NightWalker
 
-Після великого robot пуску рекомендується запустити **NightWalker**, щоб перевірити синхронізацію:
-
-```bash
-# 1. Robot архівує
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
-
-# 2. Nightwalker перевіряє і виправляє (на ночі)
-NIGHTWALKER_AUTO_DELAY=0.05 \
-docker compose exec kdv-api python3 -m src.nightwalker
-```
-
-Дивись [RUNBOOK_NIGHTWALKER.md](RUNBOOK_NIGHTWALKER.md) для деталей.
+Після великого robot-пуску рекомендується запустити NightWalker, щоб перевірити синхронізацію. Дивись [RUNBOOK_NIGHTWALKER.md](RUNBOOK_NIGHTWALKER.md) для деталей.
 
 ---
 
 ## 📞 Що робити якщо щось зламалось?
 
-1. **Гляємо лог**: `docker compose logs kdv-api --tail=100`
-2. **Гляємо robot_batch.log**: `docker compose exec kdv-api tail -f logs/robot_batch.log`
-3. **Перезапускаємо контейнер**: `docker compose restart kdv-api`
-4. **Спробуємо запустити знову** (часто допомагає)
-5. **Якщо не допомогло** → дивись RUNBOOK_MAYDAY.md в розділі "Robot зависла"
+1. **Гляємо host robot log**: `tail -f logs/robot_batch.log`
+2. **Гляємо service log**: `docker service logs kdv_integrator_event_kdv-api --tail=100`
+3. **Гляємо robot log у контейнері напряму**:
+   ```bash
+   KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+   docker exec "${KDV_API_CID}" tail -f logs/robot_batch.log
+   ```
+4. **Перевіряємо candidates parsing**: `SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt`
+5. **Якщо не допомогло** → дивись RUNBOOK_MAYDAY.md в розділі "Robot зависла".
 
 ---
 

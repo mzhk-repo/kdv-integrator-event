@@ -42,7 +42,7 @@
 - Додано ізольований сервіс `kdv-optimizer` для автоматичної оптимізації важких PDF перед upload у DSpace.
 - `docker-compose.yml`/Swarm deploy тепер піднімають два сервіси: `kdv-api` та внутрішній `kdv-optimizer` зі shared volume `kdv_optimize_data`.
 - `/integrate` backward-compatible: старі клієнти без JSON body працюють, новий payload підтримує `skip_optimization`.
-- `scripts/robot.py` підтримує `--skip-optimization`, `--parallelism`, `--max-wait`.
+- Для Swarm-запуску batch robot додано `scripts/run-robot-swarm.sh`: wrapper сам резолвить SOPS/age env, знаходить `kdv-api` контейнер, копіює `candidates.txt`, запускає `robot.py` і синхронізує `logs/robot_batch.log` на host.
 - Додано [RUNBOOK_PDF_OPTIMIZER.md](docs/RUNBOOK_PDF_OPTIMIZER.md) для конфігурації, health/readiness, troubleshooting і rollback.
 
 ### Попередні помітні зміни (2026-03-13)
@@ -179,7 +179,8 @@ kdv-integrator-event/
 │   └── kdv_optimizer/              # OptimizerConfig, PDFOptimizerService, TTLJanitor
 │
 ├── 📁 scripts/                     # Утилітні скрипти
-│   ├── robot.py                    # Пакетна архівація (Batch Processing)
+│   ├── robot.py                    # Пакетна архівація (Batch Processing, викликається wrapper-ом у Swarm)
+│   ├── run-robot-swarm.sh           # Swarm wrapper: env, container lookup, candidates copy, log sync
 │   ├── nightwalker.py              # Аудит каталогу: пошук "зомбі", sync метаданих
 │   ├── healthcheck.sh              # Curl-перевірка /health для Docker HEALTHCHECK
 │   └── poc_optimizer.py            # R&D benchmark PDF рушіїв
@@ -227,7 +228,7 @@ kdv-integrator-event/
 | `docs/RUNBOOK_PDF_OPTIMIZER.md` | Використання, конфігурація, health/readiness, rollback `kdv-optimizer` |
 | `docs/RELEASE.md` | Обов'язково перед будь-яким деплоєм |
 | `.env.example` | Документація всіх ENV змінних |
-| `candidates.txt` | Вхідні дані для robot.py (biblionumber per line) |
+| `candidates.txt` | Host-вхідні дані для batch robot; у Swarm wrapper копіює файл у контейнер як `/tmp/kdv-candidates.txt` |
 | `kdv-optimizer/` | Ізольований сервіс оптимізації PDF |
 
 ---
@@ -471,7 +472,8 @@ docker compose up -d --remove-orphans
 
 | Скрипт | Призначення | Інструкція |
 |---|---|---|
-| `scripts/robot.py` | Масова архівація зі списку `candidates.txt`, підтримує `--skip-optimization` | [`docs/RUNBOOK_ROBOT.md`](docs/RUNBOOK_ROBOT.md) |
+| `scripts/run-robot-swarm.sh` | Рекомендований Swarm-запуск Robot: env resolution, пошук `kdv-api`, копіювання `candidates.txt`, log sync | [`docs/RUNBOOK_ROBOT.md`](docs/RUNBOOK_ROBOT.md) |
+| `scripts/robot.py` | Внутрішня batch-логіка: масова архівація, `--skip-optimization`, `--parallelism`, `--max-wait` | [`docs/RUNBOOK_ROBOT.md`](docs/RUNBOOK_ROBOT.md) |
 | `scripts/nightwalker.py` | Аудит: пошук файлів без посилань | [`docs/RUNBOOK_NIGHTWALKER.md`](docs/RUNBOOK_NIGHTWALKER.md) |
 
 **Batch controls (ENV):**
