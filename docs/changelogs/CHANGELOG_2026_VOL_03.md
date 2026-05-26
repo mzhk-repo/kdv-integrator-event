@@ -207,3 +207,51 @@
 - **Verification:** `python3 -m py_compile src/services/sources.py`; `python3 -m pytest tests/test_services.py -q` -> `28 passed`; Docker full `pytest tests -q` -> `88 passed`; `rg -n "GDRIVE|Google Drive|gdrive_service_account_json" README.md docs .env.example docker-compose.swarm.yml scripts/deploy-orchestrator-swarm.sh`; `git diff --check -- README.md docs src/services/sources.py tests/test_services.py`.
 - **Risks:** Observability описує runtime events, але реальний dev smoke з Google Drive service account ще не запускався; це межа Ітерації 7. Logs містять safe file id/hash і metadata size, але не повинні використовуватися як джерело secret або raw URL.
 - **Rollback:** Прибрати safe logging helpers з `GoogleDriveSource`, видалити `docs/RUNBOOK_GDRIVE_SOURCE.md`, повернути README/ARCHITECTURE до попереднього опису local/PDF optimizer flow, прибрати статус Ітерації 6 з `docs/url-parcer-roadmap.md` і цей changelog-запис.
+
+## 2026-05-25 — PRD Koha Export Module alignment з поточним стеком
+
+- **Context:** Після ревʼю `docs/koha-export/PRD_Koha_Export_Module.md` потрібно узгодити документ з фактичним стеком KDV Integrator: Flask/Gunicorn API для Koha → DSpace, read-only Google Drive source, Swarm secrets і відсутність export-specific залежностей у `requirements.txt`.
+- **Change:** PRD оновлено до v2.1: export описано як окремий CLI/batch-модуль, уточнено offset-based пагінацію Koha, розділено read-only `GoogleDriveSource` і майбутній `ExportGoogleDriveService`, замінено `GDRIVE_SERVICE_ACCOUNT_JSON` на `GDRIVE_SERVICE_ACCOUNT_FILE`, додано staged-idempotency для GDrive/SMTP side effects, оновлено SQLite schema/status-и, додано секцію узгодження з поточним репозиторієм.
+- **Verification:** Переглянуто цільові фрагменти PRD через `sed`; `rg` не знайшов старих формулювань `cursor-based`, `GDRIVE_SERVICE_ACCOUNT_JSON`, `Версія 2.0`; `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md`; `git diff --no-index --check /dev/null docs/koha-export/PRD_Koha_Export_Module.md` без whitespace-зауважень.
+- **Risks:** Це документаційна зміна без runtime-коду; перед реалізацією потрібно окремо погодити додавання залежностей, CLI entrypoint, SQLite migration і Swarm/cron спосіб запуску.
+- **Rollback:** Відкотити зміни в `docs/koha-export/PRD_Koha_Export_Module.md` і видалити цей changelog-запис.
+
+## 2026-05-25 — PRD Koha Export keyset pagination
+
+- **Context:** Після уточнення пагінації потрібно зафіксувати в PRD пріоритетний cursor-like підхід для великих Koha-каталогів, якщо endpoint підтримує фільтр за `biblionumber`.
+- **Change:** У `docs/koha-export/PRD_Koha_Export_Module.md` секцію 3.2 оновлено: keyset pagination по `biblionumber > last_seen_id` зі стабільним `biblionumber ASC` описано як пріоритетний варіант; offset-based `_per_page`/`_offset` лишено fallback-ом для endpoint-ів без keyset/cursor contract.
+- **Verification:** Переглянуто секцію 3.2 через `sed`; перевірено згадки `keyset`, `last_seen_id`, `offset-based` через `rg`; `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md`; `git diff --no-index --check /dev/null docs/koha-export/PRD_Koha_Export_Module.md` без whitespace-зауважень.
+- **Risks:** Синтаксис фільтра `biblionumber > last_seen_id` залежить від фактичного Koha endpoint; під час реалізації потрібно підтвердити підтримуваний формат на цільовій версії Koha і додати contract-тест.
+- **Rollback:** Повернути попередній offset-based опис секції 3.2 і видалити цей changelog-запис.
+
+## 2026-05-26 — PRD Koha Export: rclone mount і MS Graph email
+
+- **Context:** Потрібно узгодити PRD Koha Export з фактичним способом доступу до Google Drive: диск уже змонтований у контейнері через rclone як `/mnt/drive`, тому export-модулю не потрібен Google service account/API upload. Email transport також має бути через Microsoft Graph API, а dry-run не повинен керуватися env-змінною.
+- **Change:** `docs/koha-export/PRD_Koha_Export_Module.md` оновлено до v2.2: Google Drive export описано як atomic filesystem copy у `EXPORT_GDRIVE_ROOT_PATH` всередині `/mnt/drive`; Google API/service account upload прибрано з export contract; SMTP замінено на Microsoft Graph `sendMail`; `EXPORT_DRY_RUN=false` прибрано з ENV і dry-run описано тільки як CLI прапорець `--dry-run`; оновлено стек, retry-приклади, ENV, recovery, межі інтеграції й тестові сценарії.
+- **Verification:** Переглянуто змінені секції PRD через `sed`; перевірено ключові згадки через `rg` (`EXPORT_GDRIVE_ROOT_PATH`, `Microsoft Graph`, `--dry-run`, `/mnt/drive`); перевірено відсутність `EXPORT_DRY_RUN=false`, `SMTP_HOST`, `SMTP_PASSWORD`, `GDRIVE_SERVICE_ACCOUNT_FILE` у актуальному ENV-контракті; `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md`; `git diff --no-index --check /dev/null docs/koha-export/PRD_Koha_Export_Module.md` без whitespace-зауважень.
+- **Risks:** Це документаційна зміна без runtime-коду; під час реалізації потрібно уточнити Graph auth flow, mailbox access policy, фактичний каталог export у rclone mount і поведінку atomic rename на mounted volume.
+- **Rollback:** Повернути PRD v2.1 формулювання для Google API/SMTP/dry-run env і видалити цей changelog-запис.
+
+## 2026-05-26 — Roadmap Koha Export alignment з PRD v2.2
+
+- **Context:** Після оновлення PRD Koha Export до v2.2 roadmap лишався на старому дизайні v2.0: Google Drive API/service account upload, SMTP, `EXPORT_DRY_RUN`, offset pagination і спрощений двофазний commit. Також потрібно було закласти специфічні XLSX-колонки для downstream імпорту та словник перекодування Koha Authorized values.
+- **Change:** `docs/koha-export/ROADMAP_Koha_Export_Module.md` переписано до v1.1: roadmap синхронізовано з PRD v2.2, додано staged-idempotency schema/repository, `ExportDriveMountService` для atomic copy у `/mnt/drive`, `GraphEmailService` для MS Graph `sendMail`, keyset pagination, dry-run тільки через CLI `--dry-run`, оновлені requirements/runbook/checklist. У Завданні 1.1 додано static XLSX columns, `config/export_dictionaries.yaml`, Authorized values mapping (`BOOK -> Книга`) і правила синхронізації словників з основним mapping contract.
+- **Verification:** Переглянуто оновлені секції roadmap через `sed`; перевірено ключові згадки через `rg` (`v2.2`, `/mnt/drive`, `Microsoft Graph`, `--dry-run`, `Authorized values`, `static_columns`, `keyset`). Застарілі `SMTP_HOST`, `SMTP_PASSWORD`, `GDRIVE_SERVICE_ACCOUNT_FILE` лишилися тільки як явні заборони, не як active config contract; `EXPORT_DRY_RUN=true` відсутній. `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md`; `git diff --no-index --check /dev/null docs/koha-export/ROADMAP_Koha_Export_Module.md` без whitespace-зауважень.
+- **Risks:** Це документаційна зміна без runtime-коду; під час реалізації потрібно підтвердити фактичний Koha keyset filter syntax, MS Graph auth flow/mailbox policy, каталог export у rclone mount і список Authorized values у цільовій Koha.
+- **Rollback:** Повернути попередню roadmap v1.0 і видалити цей changelog-запис.
+
+## 2026-05-26 — Koha Export schema для staged-idempotency (Завдання 0.1)
+
+- **Context:** Для старту Фази 0 Koha Export потрібна SQLite-схема, яка дозволяє відновлювати batch pipeline після crash між XLSX generation, copy у `/mnt/drive`, MS Graph `sendMail` і final commit.
+- **Change:** Додано пакет `src/export_module/db/` і `SCHEMA_V1` у `schema.py`: таблиця `exported_records`, staged статуси `pending`, `xlsx_generated`, `gdrive_uploaded`, `email_sent`, `completed`, `failed`, індекс `idx_status_retry` і partial unique index `idx_biblionumber_completed`. `MigrationManager.migrate()` ідемпотентно створює schema через `sqlite3` без `DROP TABLE`. Додано focused тести `tests/test_export_schema.py`.
+- **Verification:** `python3 -m py_compile src/export_module/__init__.py src/export_module/db/__init__.py src/export_module/db/schema.py tests/test_export_schema.py`; `python3 -m pytest tests/test_export_schema.py -q` -> `3 passed`.
+- **Risks:** Це тільки schema layer для Завдання 0.1; repository methods, recovery queries і CLI інтеграція лишаються межами наступних задач 0.2/0.3.
+- **Rollback:** Видалити `src/export_module/`, `tests/test_export_schema.py` і цей changelog-запис.
+
+## 2026-05-26 — Koha ExportRepository для staged-idempotency (Завдання 0.2)
+
+- **Context:** Після SQLite-схеми Koha Export потрібен єдиний repository layer, щоб batch pipeline не звертався до `exported_records` напряму і міг відновлювати проміжні runs.
+- **Change:** Додано `src/export_module/db/repository.py` з `ExportRecord` і `ExportRepository`. Repository сам застосовує `MigrationManager`, підтримує idempotent `insert_pending()`, completed/retry/recoverable queries, staged переходи `pending -> xlsx_generated -> gdrive_uploaded -> email_sent -> completed`, `mark_failed()` з інкрементом `retry_count` і `reset_stuck_pending()` для pending recovery. Додано focused тести `tests/test_export_repository.py`.
+- **Verification:** `python3 -m py_compile src/export_module/db/repository.py tests/test_export_repository.py`; `python3 -m pytest tests/test_export_schema.py tests/test_export_repository.py -q` -> `8 passed`; `git diff --check -- src/export_module/db/repository.py tests/test_export_repository.py docs/changelogs/CHANGELOG_2026_VOL_03.md`; `git diff --no-index --check /dev/null src/export_module/db/repository.py`; `git diff --no-index --check /dev/null tests/test_export_repository.py` без whitespace-зауважень.
+- **Risks:** Repository оновлює всі записи одного `run_id` як batch; per-biblio partial progress або retry orchestration лишаються для наступних задач pipeline. `reset_stuck_pending()` позначає pending записи як `failed` з причиною `reset_stuck_pending`, щоб вони стали retry/recovery-кандидатами.
+- **Rollback:** Видалити `src/export_module/db/repository.py`, `tests/test_export_repository.py` і цей changelog-запис.
