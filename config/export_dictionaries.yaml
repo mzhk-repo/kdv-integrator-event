@@ -1,0 +1,14 @@
+version: 1
+authorized_values:
+  itemtypes:
+    BOOK: "Книга"
+    BK: "Книга"
+    CR: "Періодика"
+    VM: "Відеоматеріал"
+
+  ccodes:
+    FICTION: "Художня література"
+    SCIENCE: "Наукова література"
+
+unknown_policy:
+  authorized_value: "keep_code"

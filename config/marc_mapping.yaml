@@ -1,0 +1,34 @@
+version: 1
+columns:
+  - name: "ID Запису"
+    sources:
+      - field: "001"
+
+  - name: "Назва книги"
+    sources:
+      - field: "245"
+        subfields: ["a", "b"]
+        join: " "
+        strip_chars: " /:"
+
+  - name: "Тип документа"
+    sources:
+      - field: "942"
+        subfields: ["c"]
+        transform: "authorized_value"
+        dictionary: "itemtypes"
+
+static_columns:
+  - name: "Бібліотека-отримувач"
+    value: "REDACTED_LIBRARY_NAME"
+    reason: "Потрібно для імпорту в іншу бібліотеку, MARC-джерела поки немає"
+
+  - name: "Статус імпорту"
+    value: "Новий"
+    reason: "Фіксоване значення для downstream import"
+
+required_columns:
+  - "ID Запису"
+  - "Назва книги"
+  - "Тип документа"
+  - "Бібліотека-отримувач"
