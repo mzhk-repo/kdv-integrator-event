@@ -292,10 +292,3 @@
 - **Rollback:** Видалити `src/export_module/koha/`, `tests/test_export_koha_client.py` і цей changelog-запис.
 
 
-## 2026-05-27 — Koha Export docs: optional `biblionumber` range
-
-- **Context:** Потрібно дозволити оператору запускати Koha Export не тільки для всього каталогу, а й для обмеженого inclusive діапазону Koha `biblionumber`, наприклад для перевірки або передачі окремої партії записів.
-- **Change:** `docs/koha-export/PRD_Koha_Export_Module.md` оновлено до v2.3: додано сценарій range export, criteria filter, CLI examples `--biblionumber-from` / `--biblionumber-to`, правила inclusive range, keyset старт `from - 1`, заборону env-перемикачів для range і тестовий сценарій. `docs/koha-export/ROADMAP_Koha_Export_Module.md` оновлено до v1.2: range support додано в задачі 2.1, 2.2, 4.1, integration checklist і Definition of Done.
-- **Verification:** Документаційна зміна без runtime-коду; перевірено ключові згадки через `rg` (`biblionumber-from`, `biblionumber-to`, `range export`, `v2.3`, `v1.2`); `git diff --check -- docs/koha-export/PRD_Koha_Export_Module.md docs/koha-export/ROADMAP_Koha_Export_Module.md docs/changelogs/CHANGELOG_2026_VOL_03.md` без whitespace-зауважень.
-- **Risks:** `KohaApiClient` уже підтримує range для задачі 2.1, але CLI/`RuntimeOptions`, filtering/orchestrator і end-to-end range тести ще мають бути додані в наступних задачах.
-- **Rollback:** Повернути PRD v2.2/roadmap v1.1 формулювання без range export і видалити цей changelog-запис.

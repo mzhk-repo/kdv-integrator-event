@@ -55,6 +55,18 @@ class ExportRepository:
 
         return [self._record_from_row(row) for row in rows]
 
+    def get_failed_biblionumbers(self) -> set[int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT biblionumber
+                FROM exported_records
+                WHERE status = 'failed'
+                """
+            ).fetchall()
+
+        return {int(row["biblionumber"]) for row in rows}
+
     def get_recoverable_runs(self) -> list[ExportRecord]:
         """Повертає записи у проміжних станах для runbook/recovery."""
         with self._connect() as connection:
