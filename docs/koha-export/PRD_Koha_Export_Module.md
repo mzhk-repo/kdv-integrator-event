@@ -1,12 +1,13 @@
 # PRD: Модуль експорту бібліографічних записів Koha в XLSX
 ## з Email-сповіщенням та архівацією на Google Drive
 
-> **Версія:** 2.2
+> **Версія:** 2.3
 > **Статус:** Review-ready
 > **Попередня версія:** 1.0 (вихідний PRD)
 > **Changelog v2.0:** Виправлено At-Most-Once семантику, додано пагінацію API, усунуто Base64-псевдошифрування, додано retry/backoff, обмеження розміру вкладення, мінімізацію OAuth scopes, Dry-Run режим, декларативний YAML-маппінг, структуровані метрики та exit codes.
 > **Changelog v2.1:** Узгоджено PRD з поточним стеком репозиторію: експорт оформлено як окремий CLI/batch-модуль, уточнено offset-based пагінацію Koha, розділено read-only Google Drive source та upload-сервіс експорту, перейменовано шлях до service account на `GDRIVE_SERVICE_ACCOUNT_FILE`, уточнено staged-idempotency замість абсолютної At-Most-Once гарантії для зовнішніх side effects.
 > **Changelog v2.2:** Google Drive export переведено з API/service account upload на запис у вже змонтований rclone volume `/mnt/drive`; Email transport змінено зі SMTP на Microsoft Graph API; `EXPORT_DRY_RUN` прибрано з ENV, dry-run запускається тільки CLI прапорцем `--dry-run`.
+> **Changelog v2.3:** Додано optional operator mode для експорту тільки записів Koha в inclusive діапазоні `biblionumber` через CLI flags, без env-перемикачів і без зміни staged-idempotency контракту.
 
 ---
 
@@ -69,6 +70,15 @@ XLSX-файлом, якщо розмір дозволяє),
 надсилається **лише один раз**, а стан процесу атомарно фіксується у локальній БД
 лише після підтвердження від усіх зовнішніх сервісів.
 
+### Сценарій 4: Ручний експорт діапазону `biblionumber`
+
+Як **оператор або SRE-інженер**,
+я хочу запустити export-модуль для конкретного inclusive діапазону Koha
+`biblionumber`, наприклад `1000..1250`,
+щоб перевірити або передати обмежену партію записів без повного обходу каталогу.
+Діапазон має задаватися тільки CLI-прапорцями, а не env-змінними, і має
+поважати ті самі правила staged-idempotency, retry та dry-run, що й повний export.
+
 ---
 
 ## 3. Функціональні вимоги
@@ -82,6 +92,7 @@ XLSX-файлом, якщо розмір дозволяє),
 | 1 | Поле `856$u` заповнене | Наявність URL посилання |
 | 2 | `856$y == "Файл"` | PDF успішно завантажено в DSpace |
 | 3 | `biblionumber` відсутній у `exported_records` зі статусом `completed` | At-Most-Once гарантія |
+| 4 | Якщо задано CLI range — `from <= biblionumber <= to` | Optional операторський фільтр діапазону |
 
 > **Увага:** записи зі статусом `pending` або `failed` (з `retry_count < MAX_RETRIES`)
 > є кандидатами для повторної обробки при наступному запуску.
@@ -139,6 +150,65 @@ def fetch_all_biblios_keyset(koha_client, page_size: int = 100):
 > Синтаксис параметра `biblionumber > last_seen_id` залежить від фактичного Koha
 > REST/search endpoint. Під час реалізації потрібно підтвердити підтримуваний
 > формат фільтрації на цільовій версії Koha і зафіксувати його contract-тестом.
+
+#### 3.2.1. Optional range export за `biblionumber`
+
+Export-модуль має підтримувати опційне обмеження вибірки inclusive діапазоном
+Koha `biblionumber`. Діапазон задається тільки CLI-прапорцями:
+
+```bash
+python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
+python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1250
+```
+
+Правила:
+
+- `--biblionumber-from` і `--biblionumber-to` мають бути додатними integer.
+- Якщо задано обидва прапорці, `from <= to`; інакше CLI завершується validation error.
+- Дозволено задавати тільки нижню або тільки верхню межу:
+  - тільки `from` — export від `from` до кінця каталогу;
+  - тільки `to` — export від початку каталогу до `to`.
+- Межі діапазону є inclusive.
+- Range filter не обходить staged-idempotency: completed записи все одно
+  виключаються, retry/recoverable правила лишаються чинними.
+- Range filter не є env-конфігом і не має змінної на кшталт
+  `EXPORT_BIBLIONUMBER_FROM`; це operator/runtime option.
+
+Для keyset pagination нижня межа визначає стартовий `last_seen_id` як
+`biblionumber_from - 1`. Верхня межа має передаватися в Koha filter, якщо endpoint
+це підтримує, або застосовуватися локально після отримання сторінки; у будь-якому
+разі records з `biblionumber > biblionumber_to` не мають потрапити в XLSX/SQLite.
+
+```python
+def fetch_all_biblios_keyset(
+    koha_client,
+    page_size: int = 100,
+    biblionumber_from: int | None = None,
+    biblionumber_to: int | None = None,
+):
+    last_seen_id = (biblionumber_from - 1) if biblionumber_from else 0
+    while True:
+        params = {
+            "_per_page": page_size,
+            "_order_by": "biblionumber",
+            "biblionumber": {">": last_seen_id},
+        }
+        batch = koha_client.get("/api/v1/biblios", params=params)
+        if not batch:
+            break
+        for biblio in batch:
+            current_id = int(biblio["biblionumber"])
+            if biblionumber_to is not None and current_id > biblionumber_to:
+                return
+            if biblionumber_from is None or current_id >= biblionumber_from:
+                yield biblio
+        last_seen_id = max(int(item["biblionumber"]) for item in batch)
+        if len(batch) < page_size:
+            break
+```
+
+Contract-тести мають окремо фіксувати keyset params для range-start і те, що
+верхня межа не пропускає records за межами requested діапазону.
 
 ### 3.3. Декларативний YAML-маппінг MARC → XLSX
 
@@ -535,6 +605,13 @@ Dry-run вмикається тільки CLI прапорцем `--dry-run`. З
 поведінку scheduled/export job. У dry-run процес генерує XLSX та логує результат,
 але **не виконує** copy у Google Drive mount, MS Graph sendMail та оновлення SQLite.
 
+При запуску з range dry-run використовує ті самі правила, але обробляє тільки
+records у заданому inclusive діапазоні:
+
+```bash
+python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1250
+```
+
 ```python
 if self.config.dry_run:
     dry_run_path = f"/tmp/dry_run/{os.path.basename(xlsx_path)}"
@@ -710,6 +787,8 @@ config/marc_mapping.yaml
 ```bash
 python -m src.export_module --health-check
 python -m src.export_module --dry-run
+python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
+python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1250
 python -m src.export_module
 python -m src.export_module --reset-pending <RUN_ID>
 ```
@@ -774,6 +853,7 @@ secret і змонтований rclone volume `/mnt/drive`; Google service acco
 | `test_dry_run_no_side_effects` | `--dry-run` → жодних змін у SQLite, GDrive mount, MS Graph |
 | `test_zero_new_records` | Каталог без нових записів → `exit_code=0`, жодних зовнішніх викликів |
 | `test_pagination_three_pages` | Mock Koha повертає 3 сторінки по 10 записів → оброблено 30 |
+| `test_biblionumber_range_export` | CLI range `1000..1250` експортує тільки records у цьому inclusive діапазоні |
 
 ---
 

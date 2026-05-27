@@ -1,11 +1,12 @@
 # ROADMAP: Імплементація модуля експорту Koha → XLSX
 ## Адаптовано для AI-агента Codex
 
-> **Версія роадмапи:** 1.1
-> **На основі PRD:** v2.2
+> **Версія роадмапи:** 1.2
+> **На основі PRD:** v2.3
 > **Мова реалізації:** Python 3.11+
 > **Загальний обсяг:** 6 фаз · 23 завдання · ~5–7 тижнів
 > **Changelog v1.1:** Roadmap синхронізовано з PRD v2.2: Google Drive export через rclone-mounted `/mnt/drive`, email через Microsoft Graph API, dry-run тільки через CLI `--dry-run`, keyset pagination по `biblionumber > last_seen_id`, staged-idempotency замість спрощеного двофазного commit. У Завданні 1.1 додано статичні XLSX-колонки та словник перекодування Koha Authorized values.
+> **Changelog v1.2:** Додано optional CLI range export за inclusive діапазоном `biblionumber` для KohaApiClient, orchestration/filtering, CLI і тестового чекліста.
 
 ---
 
@@ -27,7 +28,8 @@
 5. Усі зовнішні виклики або side effects мають mock-реалізацію для тестів: Koha API, filesystem copy у `/mnt/drive`, Microsoft Graph API.
 6. `run_id: str = str(uuid4())` генерується один раз на початку `ExportOrchestrator.run()` і прокидається через весь pipeline.
 7. Dry-run вмикається тільки CLI прапорцем `--dry-run`; `EXPORT_DRY_RUN` у env не використовується.
-8. Секрети не логуються і не потрапляють у репозиторій. У документації й `.env.example` дозволені тільки placeholders на кшталт `REDACTED`.
+8. Optional export range задається тільки CLI-прапорцями `--biblionumber-from` / `--biblionumber-to`; env-змінні для range не вводяться.
+9. Секрети не логуються і не потрапляють у репозиторій. У документації й `.env.example` дозволені тільки placeholders на кшталт `REDACTED`.
 
 ---
 
@@ -472,14 +474,23 @@ import requests
 class KohaApiClient:
     def __init__(self, base_url: str, username: str, password: str, page_size: int = 100) -> None: ...
 
-    def fetch_all_biblios_keyset(self) -> Iterator[dict]:
+    def fetch_all_biblios_keyset(
+        self,
+        biblionumber_from: int | None = None,
+        biblionumber_to: int | None = None,
+    ) -> Iterator[dict]:
         """
         Ітерує всі записи за biblionumber ASC.
         На кожній сторінці запитує biblionumber > last_seen_id.
         Конкретний синтаксис фільтра має бути підтверджений contract-тестом для цільової Koha.
+        Якщо задано range, повертає тільки records у inclusive межах.
         """
 
-    def fetch_all_biblios_offset_fallback(self) -> Iterator[dict]:
+    def fetch_all_biblios_offset_fallback(
+        self,
+        biblionumber_from: int | None = None,
+        biblionumber_to: int | None = None,
+    ) -> Iterator[dict]:
         """Fallback через _per_page/_offset, якщо keyset недоступний."""
 
     def fetch_biblio_marcxml(self, biblionumber: int) -> str: ...
@@ -492,6 +503,9 @@ class KohaApiClient:
 - [ ] Є contract-тест/fixture для фактичного Koha filter syntax.
 - [ ] Offset fallback покритий окремим тестом.
 - [ ] Не робити `_per_page=99999`.
+- [ ] `biblionumber_from=1000`, `biblionumber_to=1250` повертає тільки records у межах `1000..1250`.
+- [ ] Keyset range стартує з `last_seen_id = biblionumber_from - 1`.
+- [ ] Некоректний range (`from > to`, непозитивні значення) відхиляється validation error.
 
 ---
 
@@ -505,6 +519,7 @@ class KohaApiClient:
 - [ ] Completed biblionumber виключається.
 - [ ] Retry-eligible biblionumber включається.
 - [ ] Recoverable staged runs не створюють дубльований export.
+- [ ] Якщо задано runtime range, records поза `biblionumber_from..biblionumber_to` не потрапляють у candidate list.
 
 ---
 
@@ -699,6 +714,8 @@ class ExportOrchestrator:
 # Використання:
 #   python -m src.export_module
 #   python -m src.export_module --dry-run
+#   python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
+#   python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1250
 #   python -m src.export_module --reset-pending RUN_ID
 #   python -m src.export_module --health-check
 ```
@@ -706,6 +723,9 @@ class ExportOrchestrator:
 **Acceptance criteria:**
 
 - [ ] `--dry-run` встановлює `RuntimeOptions(dry_run=True)`.
+- [ ] `--biblionumber-from` / `--biblionumber-to` встановлюють runtime range options.
+- [ ] Range flags є optional, inclusive і не мають env-аналогів.
+- [ ] CLI відхиляє `from > to` і непозитивні значення.
 - [ ] `EXPORT_DRY_RUN` у env ігнорується.
 - [ ] `--health-check` перевіряє config, DB dir, mapping, dictionaries, `/mnt/drive` root path.
 - [ ] `--reset-pending RUN_ID` повертає кількість оновлених записів.
@@ -743,6 +763,8 @@ Dry-run генерує XLSX і зберігає копію в `/tmp/dry_run`, а
 - [ ] `test_dry_run_no_side_effects`
 - [ ] `test_zero_candidates_returns_zero`
 - [ ] `test_keyset_pagination_all_pages_processed`
+- [ ] `test_biblionumber_range_export_only_requested_records`
+- [ ] `test_cli_rejects_invalid_biblionumber_range`
 - [ ] `test_part_file_cleanup_on_copy_error`
 - [ ] `test_no_duplicate_export_on_second_run`
 - [ ] `test_static_columns_and_authorized_values_in_xlsx`
@@ -800,6 +822,7 @@ pytest-cov>=5.0.0
 7. XLSX > 15 MB — перевірка link-only email.
 8. Примусовий re-export конкретного `biblionumber`.
 9. Dry-run smoke через `--dry-run`.
+10. Range smoke через `--biblionumber-from <FROM> --biblionumber-to <TO>`.
 10. Синхронізація Authorized values dictionary після змін у Koha.
 
 ---
@@ -816,6 +839,7 @@ pytest-cov>=5.0.0
 - Email через MS Graph API.
 - Dry-run тільки через `--dry-run`.
 - Keyset pagination як пріоритет.
+- Optional `biblionumber` range тільки через CLI runtime flags, не через env.
 - Static columns і Authorized values dictionaries.
 
 ---
@@ -843,6 +867,7 @@ pytest-cov>=5.0.0
 - [ ] Фаза 0: staged-idempotency schema/repository/config готові й протестовані.
 - [ ] Фаза 1: mapping, static columns і Authorized values dictionaries валідовані JSON Schema.
 - [ ] Фаза 2: Koha keyset pagination має contract-тест для цільового endpoint.
+- [ ] Фаза 2/4: Optional `biblionumber` range має unit/integration тести для valid та invalid меж.
 - [ ] Фаза 2: `parse_record()` не падає на брудному MARCXML.
 - [ ] Фаза 2: XLSX містить static columns і кириличні labels з Authorized values.
 - [ ] Фаза 3: retry/backoff реалізовано для `gdrive_copy` та `graph_email`.

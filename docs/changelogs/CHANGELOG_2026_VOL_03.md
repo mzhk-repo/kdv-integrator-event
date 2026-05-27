@@ -281,3 +281,21 @@
 - **Verification:** `python3 -m py_compile src/export_module/observability/__init__.py src/export_module/observability/logger.py tests/test_export_logger.py`; `python3 -m pytest tests/test_export_logger.py -q` -> `4 passed`; `python3 -m pytest tests/test_export_schema.py tests/test_export_repository.py tests/test_export_config.py tests/test_export_mapping_loader.py tests/test_export_logger.py -q` -> `22 passed`; `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md requirements.txt` і `git diff --no-index --check /dev/null ...` для нових файлів без whitespace-зауважень.
 - **Risks:** Logger поки не підключений до orchestration pipeline, бо `ExportOrchestrator` ще не реалізовано; інтеграційне використання має бути додано в наступних фазах без зміни контракту JSON formatter-а.
 - **Rollback:** Видалити `src/export_module/observability/`, `tests/test_export_logger.py` і цей changelog-запис.
+
+
+## 2026-05-27 — Koha Export KohaApiClient з keyset pagination (Завдання 2.1)
+
+- **Context:** Для старту Фази 2 Koha Export потрібен ізольований REST client, який читає бібліографічні записи сторінками з пріоритетом keyset pagination по `biblionumber > last_seen_id`, має offset fallback і не робить unbounded `_per_page=99999` запитів.
+- **Change:** Додано `src/export_module/koha/client.py` і package init. `KohaApiClient` використовує окрему `requests.Session`, `HTTPBasicAuth`, bounded `page_size`, keyset params `_per_page`, `_order_by=biblionumber`, `biblionumber={">": last_seen_id}`, оновлює `last_seen_id` через max `biblionumber` поточного batch, підтримує `_offset` fallback і `fetch_biblio_marcxml()` з `Accept: application/marcxml+xml`. Після PRD v2.3 додано optional inclusive range support: `biblionumber_from` / `biblionumber_to`, keyset start `from - 1`, local upper-bound stop, offset fallback filtering і validation для непозитивних значень або `from > to`. Додано focused тести `tests/test_export_koha_client.py`.
+- **Verification:** `python3 -m py_compile src/export_module/koha/__init__.py src/export_module/koha/client.py tests/test_export_koha_client.py`; `python3 -m pytest tests/test_export_koha_client.py -q` -> `13 passed`; `python3 -m pytest tests/test_export_schema.py tests/test_export_repository.py tests/test_export_config.py tests/test_export_mapping_loader.py tests/test_export_logger.py tests/test_export_koha_client.py -q` -> `35 passed`; `git diff --check -- docs/changelogs/CHANGELOG_2026_VOL_03.md` і `git diff --no-index --check /dev/null ...` для нових файлів без whitespace-зауважень.
+- **Risks:** Contract test фіксує погоджений формат params для keyset filter, але фактичний синтаксис `biblionumber > last_seen_id` залежить від цільового Koha endpoint і має бути підтверджений на dev Koha перед production запуском export pipeline.
+- **Rollback:** Видалити `src/export_module/koha/`, `tests/test_export_koha_client.py` і цей changelog-запис.
+
+
+## 2026-05-27 — Koha Export docs: optional `biblionumber` range
+
+- **Context:** Потрібно дозволити оператору запускати Koha Export не тільки для всього каталогу, а й для обмеженого inclusive діапазону Koha `biblionumber`, наприклад для перевірки або передачі окремої партії записів.
+- **Change:** `docs/koha-export/PRD_Koha_Export_Module.md` оновлено до v2.3: додано сценарій range export, criteria filter, CLI examples `--biblionumber-from` / `--biblionumber-to`, правила inclusive range, keyset старт `from - 1`, заборону env-перемикачів для range і тестовий сценарій. `docs/koha-export/ROADMAP_Koha_Export_Module.md` оновлено до v1.2: range support додано в задачі 2.1, 2.2, 4.1, integration checklist і Definition of Done.
+- **Verification:** Документаційна зміна без runtime-коду; перевірено ключові згадки через `rg` (`biblionumber-from`, `biblionumber-to`, `range export`, `v2.3`, `v1.2`); `git diff --check -- docs/koha-export/PRD_Koha_Export_Module.md docs/koha-export/ROADMAP_Koha_Export_Module.md docs/changelogs/CHANGELOG_2026_VOL_03.md` без whitespace-зауважень.
+- **Risks:** `KohaApiClient` уже підтримує range для задачі 2.1, але CLI/`RuntimeOptions`, filtering/orchestrator і end-to-end range тести ще мають бути додані в наступних задачах.
+- **Rollback:** Повернути PRD v2.2/roadmap v1.1 формулювання без range export і видалити цей changelog-запис.
