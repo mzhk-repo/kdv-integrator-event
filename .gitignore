@@ -21,3 +21,4 @@ docs/NOTES.md
 docs/hello-world.md
 docs/DOCKER-SECRETS.md
 .archive
+.venv/
