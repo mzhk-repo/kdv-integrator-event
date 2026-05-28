@@ -103,6 +103,9 @@ class ExportOrchestrator:
 
             if options.dry_run:
                 dry_path = self._preserve_dry_run_copy(xlsx_path)
+                LOGGER.info("would_copy_to_gdrive_mount", extra={"xlsx_path": dry_path})
+                LOGGER.info("would_send_graph_email", extra={"records": len(records)})
+                LOGGER.info("db_not_modified")
                 LOGGER.info("export_dry_run", extra={"xlsx_path": dry_path})
                 return 0
 

@@ -1,3 +1,4 @@
+import logging
 import os
 import sqlite3
 import sys
@@ -203,14 +204,15 @@ def test_recovery_from_gdrive_uploaded_continues_with_email_stage(tmp_path):
     assert graph.calls[0][3] == "recover-run"
 
 
-def test_dry_run_does_not_write_db_or_call_side_effects(tmp_path):
+def test_dry_run_does_not_write_db_or_call_side_effects(tmp_path, caplog):
     drive = _DriveService()
     graph = _GraphService()
     orchestrator, repo, xlsx_generator = _orchestrator(
         tmp_path, drive=drive, graph=graph
     )
 
-    assert orchestrator.run(RuntimeOptions(dry_run=True)) == 0
+    with caplog.at_level(logging.INFO):
+        assert orchestrator.run(RuntimeOptions(dry_run=True)) == 0
 
     assert _rows(repo) == []
     assert drive.calls == []
@@ -219,3 +221,8 @@ def test_dry_run_does_not_write_db_or_call_side_effects(tmp_path):
     dry_run_file = Path(os.path.join("/tmp", "dry_run", xlsx_generator.last_path.name))
     assert dry_run_file.exists()
     dry_run_file.unlink()
+
+    log_events = {record.getMessage() for record in caplog.records}
+    assert "would_copy_to_gdrive_mount" in log_events
+    assert "would_send_graph_email" in log_events
+    assert "db_not_modified" in log_events
