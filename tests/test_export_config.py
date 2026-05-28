@@ -36,6 +36,8 @@ EXPORT_ENV_KEYS = {
     "PUSHGATEWAY_URL",
     "ORCHESTRATOR_ENV_FILE",
     "SERVER_ENV",
+    "EXPORT_BIBLIONUMBER_FROM",
+    "EXPORT_BIBLIONUMBER_TO",
 }
 
 
@@ -167,3 +169,36 @@ def test_server_env_can_resolve_sops_age_encrypted_env(monkeypatch, tmp_path):
     assert config.enabled is True
     assert config.koha_base_url == "https://from-sops.example.org"
     assert os.environ["KOHA_API_USER"] == "sops-user"
+
+
+def test_biblionumber_range_cli_sets_runtime_options():
+    options = parse_runtime_options(
+        ["--dry-run", "--biblionumber-from", "1000", "--biblionumber-to", "1250"]
+    )
+
+    assert options.dry_run is True
+    assert options.biblionumber_from == 1000
+    assert options.biblionumber_to == 1250
+
+
+def test_biblionumber_range_env_is_ignored(monkeypatch):
+    monkeypatch.setenv("EXPORT_BIBLIONUMBER_FROM", "1000")
+    monkeypatch.setenv("EXPORT_BIBLIONUMBER_TO", "1250")
+
+    options = parse_runtime_options([])
+
+    assert options.biblionumber_from is None
+    assert options.biblionumber_to is None
+
+
+def test_biblionumber_range_rejects_invalid_values():
+    with pytest.raises(SystemExit):
+        parse_runtime_options(["--biblionumber-from", "0"])
+
+    with pytest.raises(SystemExit):
+        parse_runtime_options(["--biblionumber-to", "-1"])
+
+    with pytest.raises(SystemExit):
+        parse_runtime_options(
+            ["--biblionumber-from", "1250", "--biblionumber-to", "1000"]
+        )

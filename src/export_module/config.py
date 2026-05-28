@@ -129,13 +129,41 @@ class ExportConfig:
 @dataclass
 class RuntimeOptions:
     dry_run: bool = False
+    biblionumber_from: int | None = None
+    biblionumber_to: int | None = None
 
 
 def parse_runtime_options(argv: list[str] | None = None) -> RuntimeOptions:
     parser = argparse.ArgumentParser(prog="koha-export")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--biblionumber-from", type=int, default=None)
+    parser.add_argument("--biblionumber-to", type=int, default=None)
     args = parser.parse_args(argv)
-    return RuntimeOptions(dry_run=args.dry_run)
+    _validate_runtime_range(args.biblionumber_from, args.biblionumber_to, parser)
+    return RuntimeOptions(
+        dry_run=args.dry_run,
+        biblionumber_from=args.biblionumber_from,
+        biblionumber_to=args.biblionumber_to,
+    )
+
+
+def _validate_runtime_range(
+    biblionumber_from: int | None,
+    biblionumber_to: int | None,
+    parser: argparse.ArgumentParser,
+) -> None:
+    if biblionumber_from is not None and biblionumber_from <= 0:
+        parser.error("--biblionumber-from must be a positive integer")
+    if biblionumber_to is not None and biblionumber_to <= 0:
+        parser.error("--biblionumber-to must be a positive integer")
+    if (
+        biblionumber_from is not None
+        and biblionumber_to is not None
+        and biblionumber_from > biblionumber_to
+    ):
+        parser.error(
+            "--biblionumber-from must be less than or equal to --biblionumber-to"
+        )
 
 
 def bootstrap_environment() -> None:
