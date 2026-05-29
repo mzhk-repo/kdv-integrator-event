@@ -99,18 +99,53 @@ def test_keyset_contract_uses_expected_koha_filter_params():
     }
 
 
+def test_keyset_falls_back_to_offset_when_koha_rejects_query_params():
+    session = _Session(
+        [
+            _Response([{"message": "Malformed query string"}], status_code=400),
+            _Response([{"biblio_id": 1}, {"biblio_id": 2}]),
+            _Response([]),
+        ]
+    )
+    client = KohaApiClient(
+        "https://koha.example.org", "user", "pass", page_size=2, session=session
+    )
+
+    assert [item["biblio_id"] for item in client.fetch_all_biblios_keyset()] == [1, 2]
+
+    assert session.calls[0]["kwargs"]["params"] == {
+        "_per_page": 2,
+        "_order_by": "biblionumber",
+        "biblionumber": {">": 0},
+    }
+    assert session.calls[1]["kwargs"]["params"] == {"_per_page": 2, "_offset": 0}
+    assert session.calls[2]["kwargs"]["params"] == {"_per_page": 2, "_offset": 2}
+
+
+def test_keyset_fallback_is_not_used_for_unrelated_koha_errors():
+    session = _Session([_Response({"error": "unauthorized"}, status_code=401)])
+    client = KohaApiClient(
+        "https://koha.example.org", "user", "pass", page_size=2, session=session
+    )
+
+    with pytest.raises(Exception, match="HTTP 401"):
+        list(client.fetch_all_biblios_keyset())
+
+    assert len(session.calls) == 1
+
+
 def test_offset_fallback_uses_offset_pagination():
     session = _Session(
         [
-            _Response(_biblios(1, 3)),
-            _Response(_biblios(4, 2)),
+            _Response([{"biblio_id": 1}, {"biblio_id": 2}, {"biblio_id": 3}]),
+            _Response([{"biblio_id": 4}, {"biblio_id": 5}]),
         ]
     )
     client = KohaApiClient(
         "https://koha.example.org", "user", "pass", page_size=3, session=session
     )
 
-    assert [item["biblionumber"] for item in client.fetch_all_biblios_offset_fallback()] == [
+    assert [item["biblio_id"] for item in client.fetch_all_biblios_offset_fallback()] == [
         1,
         2,
         3,

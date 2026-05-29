@@ -100,17 +100,24 @@ KohaApiClient ──► filter_exportable_biblios()
 **1. Перевірити, чи `/mnt/drive` змонтовано та доступно для запису:**
 
 ```bash
-docker compose exec kdv-api ls -la /mnt/drive/
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" ls -la /mnt/drive/
 # Очікується: каталог KohaExports або порожній /mnt/drive
-docker compose exec kdv-api touch /mnt/drive/.write_check && \
-  docker compose exec kdv-api rm /mnt/drive/.write_check && \
+docker exec "$KDV_API_CID" touch /mnt/drive/.write_check && \
+  docker exec "$KDV_API_CID" rm /mnt/drive/.write_check && \
   echo "MOUNT OK"
 ```
 
 **2. Перевірити health-check модуля:**
 
 ```bash
-docker compose exec kdv-api python -m src.export_module --health-check
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --health-check
 ```
 
 Модуль виконає перевірку:
@@ -122,7 +129,23 @@ docker compose exec kdv-api python -m src.export_module --health-check
 **3. Перевірити змінні середовища:**
 
 ```bash
-docker compose exec kdv-api env | grep -E "^(EXPORT_|GRAPH_|MAX_)" | sort
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+printf "%s\n" \
+  "EXPORT_MODULE_ENABLED=${EXPORT_MODULE_ENABLED:-}" \
+  "EXPORT_GDRIVE_ROOT_PATH=${EXPORT_GDRIVE_ROOT_PATH:-}" \
+  "EXPORT_DB_PATH=${EXPORT_DB_PATH:-}" \
+  "MAX_RETRIES=${MAX_RETRIES:-}" \
+  "MAX_ATTACHMENT_BYTES=${MAX_ATTACHMENT_BYTES:-}" \
+  "GRAPH_TENANT_ID=${GRAPH_TENANT_ID:+SET}" \
+  "GRAPH_CLIENT_ID=${GRAPH_CLIENT_ID:+SET}" \
+  "GRAPH_CLIENT_SECRET=${GRAPH_CLIENT_SECRET:+SET}" \
+  "GRAPH_SENDER_USER_ID=${GRAPH_SENDER_USER_ID:+SET}" \
+  "GRAPH_TO=${GRAPH_TO:+SET}"
+'
 ```
 
 > Значення `GRAPH_CLIENT_SECRET` та інших секретів **не мають відображатися у логах** — вони логуються як `***REDACTED***`.
@@ -132,29 +155,71 @@ docker compose exec kdv-api env | grep -E "^(EXPORT_|GRAPH_|MAX_)" | sort
 ### 2.2 CLI-команди — повний довідник
 
 ```bash
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+
 # Перевірка готовності (без запуску export)
-python -m src.export_module --health-check
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --health-check
 
 # Пробний запуск: XLSX генерується, але нічого не записується/не надсилається
-python -m src.export_module --dry-run
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --dry-run
 
 # Звичайний запуск: повний export всіх нових/retry записів
-python -m src.export_module
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module
 
 # Кастомний діапазон: export тільки biblionumber 1000..1250
-python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
 
 # Тільки від biblionumber 500 до кінця каталогу
-python -m src.export_module --biblionumber-from 500
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-from 500
 
 # Тільки від початку до biblionumber 200
-python -m src.export_module --biblionumber-to 200
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-to 200
 
 # Dry-run з діапазоном (комбінація)
-python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1250
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1250
 
 # Скинути stuck pending записи для конкретного run_id
-python -m src.export_module --reset-pending <RUN_ID>
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --reset-pending <RUN_ID>
 ```
 
 > **Де знайти `<RUN_ID>`:** дивіться поле `run_id` у JSON-логах або у SQLite:
@@ -170,8 +235,14 @@ python -m src.export_module --reset-pending <RUN_ID>
 #### Сценарій A: Заплановий щоденний запуск (cron/Swarm)
 
 ```bash
-# Запуск у production через docker exec
-docker compose exec kdv-api python -m src.export_module
+# Запуск у production через Swarm task-контейнер
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module
 echo "Exit code: $?"
 ```
 
@@ -189,21 +260,36 @@ echo "Exit code: $?"
 
 ```bash
 # 1. Dry-run — перевірити, що XLSX генерується без помилок
-docker compose exec kdv-api python -m src.export_module --dry-run
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --dry-run
 # Знайти згенерований файл у /tmp/dry_run/
-docker compose exec kdv-api ls -lh /tmp/dry_run/
+docker exec "$KDV_API_CID" ls -lh /tmp/dry_run/
 
 # 2. Range smoke — переконатися, що pipeline працює на малій вибірці
-docker compose exec kdv-api python -m src.export_module \
-  --dry-run --biblionumber-from 1 --biblionumber-to 10
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --dry-run --biblionumber-from 1 --biblionumber-to 10
 ```
 
 #### Сценарій C: Ручний одноразовий export партії
 
 ```bash
 # Потрібно передати конкретну партію biblionumber 5000..5100 для іншої бібліотеки
-docker compose exec kdv-api python -m src.export_module \
-  --biblionumber-from 5000 --biblionumber-to 5100
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-from 5000 --biblionumber-to 5100
 ```
 
 ---
@@ -218,7 +304,13 @@ docker compose exec kdv-api python -m src.export_module \
 
 ```bash
 # Автоматична реакція на помилку у скрипті:
-python -m src.export_module
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module
 EXIT=$?
 if [ $EXIT -ne 0 ]; then
   echo "Export failed with code $EXIT — check logs"
@@ -317,11 +409,17 @@ unknown_policy:
 3. Перевірити, що `marc_mapping.yaml` посилається на `dictionary: "itemtypes"` для відповідного поля.
 4. Запустити тести маппінгу:
    ```bash
-   python -m pytest tests/test_export_mapping_loader.py -q
+   pytest tests/test_export_mapping_loader.py -q
    ```
 5. Запустити dry-run smoke для перевірки:
    ```bash
-   python -m src.export_module --dry-run
+   KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+   docker exec "$KDV_API_CID" sh -lc '
+   set -a
+   . /run/secrets/app_env_payload
+   set +a
+   exec "$@"
+   ' -- python -m src.export_module --dry-run
    ```
 
 > **Важливо:** `unknown_policy: keep_code` означає, що невідомий код потрапить у XLSX як є (наприклад, `AV`). Якщо це небажано для цільової бібліотеки — змініть на `empty` або додайте код у словник.
@@ -391,7 +489,7 @@ required_columns:
 3. За потреби — додати до `required_columns`.
 4. Перевірити валідацію:
    ```bash
-   python -m pytest tests/test_export_mapping_loader.py -q
+   pytest tests/test_export_mapping_loader.py -q
    ```
 
 **Як додати static column:**
@@ -428,7 +526,13 @@ static_columns:
 Перевірка завантаження:
 
 ```bash
-docker compose exec kdv-api python -c "
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -c "
 from src.export_module.config import ExportConfig
 cfg = ExportConfig.from_env()
 cfg.validate()
@@ -477,14 +581,31 @@ failed           → помилка, retry_count збільшено; буде п
 ### Базовий range export
 
 ```bash
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+
 # Inclusive діапазон: від 1000 до 1250 включно
-python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
 
 # Від 500 до кінця каталогу
-python -m src.export_module --biblionumber-from 500
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-from 500
 
 # Від початку до 200 включно
-python -m src.export_module --biblionumber-to 200
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-to 200
 ```
 
 ### Правила range
@@ -497,17 +618,31 @@ python -m src.export_module --biblionumber-to 200
 ### Dry-run з range для smoke-тесту
 
 ```bash
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+
 # Перевірити 10 конкретних записів без реальних side effects
-python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1010
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1010
 # XLSX збережеться у /tmp/dry_run/ для ручного огляду
-docker compose exec kdv-api ls -lh /tmp/dry_run/
+docker exec "$KDV_API_CID" ls -lh /tmp/dry_run/
 ```
 
 ### Export конкретного одного запису
 
 ```bash
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+
 # Один biblionumber = from == to
-python -m src.export_module --biblionumber-from 12345 --biblionumber-to 12345
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-from 12345 --biblionumber-to 12345
 ```
 
 > **Примітка:** якщо запис вже `completed` у SQLite, він буде **пропущений** навіть при range export. Для примусового re-export — дивіться [розділ 6.9](#69-примусовий-re-export-конкретного-biblionumber).
@@ -532,7 +667,13 @@ sqlite3 /data/kdv_optimize/export/export_state.db \
 
 ```bash
 # Перевести конкретний run_id зі stuck pending у failed (активує retry)
-docker compose exec kdv-api python -m src.export_module --reset-pending <RUN_ID>
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --reset-pending <RUN_ID>
 ```
 
 `--reset-pending` виконує `reset_stuck_pending()`: переводить `pending` записи у `failed` з причиною `reset_stuck_pending`. При наступному запуску вони стануть retry-кандидатами.
@@ -566,7 +707,13 @@ sqlite3 /data/kdv_optimize/export/export_state.db \
 **Дія:** просто запустити модуль знову. Він автоматично підхопить recoverable runs:
 
 ```bash
-docker compose exec kdv-api python -m src.export_module
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module
 ```
 
 ---
@@ -580,7 +727,13 @@ docker compose exec kdv-api python -m src.export_module
 **Дія:** запустити модуль знову — відновлення відбудеться автоматично:
 
 ```bash
-docker compose exec kdv-api python -m src.export_module
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module
 ```
 
 ---
@@ -593,14 +746,15 @@ docker compose exec kdv-api python -m src.export_module
 
 ```bash
 # Перевірити монтування
-docker compose exec kdv-api df -h /mnt/drive
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" df -h /mnt/drive
 
 # Перевірити права запису
-docker compose exec kdv-api touch /mnt/drive/.test_write && \
-  docker compose exec kdv-api rm /mnt/drive/.test_write && echo "RW OK"
+docker exec "$KDV_API_CID" touch /mnt/drive/.test_write && \
+  docker exec "$KDV_API_CID" rm /mnt/drive/.test_write && echo "RW OK"
 
 # Перевірити стан rclone
-docker compose exec kdv-api rclone lsd /mnt/drive/ 2>&1 | head -20
+docker exec "$KDV_API_CID" rclone lsd /mnt/drive/ 2>&1 | head -20
 ```
 
 **Рішення:**
@@ -609,11 +763,12 @@ docker compose exec kdv-api rclone lsd /mnt/drive/ 2>&1 | head -20
 2. Перевірити `RCLONE_REMOTE_NAME` у env — має збігатися з реальним remote name.
 3. Якщо `EXPORT_GDRIVE_ROOT_PATH` вказує на неіснуючий каталог всередині mount:
    ```bash
-   docker compose exec kdv-api mkdir -p /mnt/drive/KohaExports
+   KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+   docker exec "$KDV_API_CID" mkdir -p /mnt/drive/KohaExports
    ```
-4. Перезапустити контейнер після виправлення mount:
+4. Перезапустити Swarm service task після виправлення mount:
    ```bash
-   docker compose restart kdv-api
+   docker service update --force kdv_integrator_event_kdv-api
    ```
 
 ---
@@ -627,13 +782,15 @@ docker compose exec kdv-api rclone lsd /mnt/drive/ 2>&1 | head -20
 **Перевірити:**
 
 ```bash
-docker compose exec kdv-api find /mnt/drive/KohaExports -name "*.part" -ls
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" find /mnt/drive/KohaExports -name "*.part" -ls
 ```
 
 **Очистити вручну:**
 
 ```bash
-docker compose exec kdv-api find /mnt/drive/KohaExports -name "*.part" -delete
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" find /mnt/drive/KohaExports -name "*.part" -delete
 echo "Cleaned .part files"
 ```
 
@@ -665,9 +822,9 @@ echo "Cleaned .part files"
    sops env.prod.enc
    # Знайти GRAPH_CLIENT_SECRET, замінити значення, зберегти
    ```
-4. Перезапустити контейнер:
+4. Перезапустити Swarm service task:
    ```bash
-   docker compose pull && docker compose up -d
+   docker service update --force kdv_integrator_event_kdv-api
    ```
 
 ---
@@ -684,7 +841,8 @@ echo "Cleaned .part files"
 2. Зменшити частоту planned запусків export-модуля.
 3. Перевірити, чи не запущено кілька одночасних інстансів:
    ```bash
-   docker compose exec kdv-api ps aux | grep "export_module"
+   KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+   docker exec "$KDV_API_CID" ps aux | grep "export_module"
    ```
 4. Звернутися до адміністратора Azure tenant для підвищення ліміту, якщо навантаження об'єктивно велике.
 
@@ -697,7 +855,13 @@ echo "Cleaned .part files"
 **Перевірити поточний ліміт:**
 
 ```bash
-docker compose exec kdv-api env | grep MAX_ATTACHMENT_BYTES
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+echo "MAX_ATTACHMENT_BYTES=${MAX_ATTACHMENT_BYTES:-}"
+'
 ```
 
 **Як отримати файл при link-only email:**
@@ -732,8 +896,13 @@ sqlite3 /data/kdv_optimize/export/export_state.db \
   "DELETE FROM exported_records WHERE biblionumber=12345 AND status='completed';"
 
 # 3. Запустити range export тільки для цього biblionumber
-docker compose exec kdv-api python -m src.export_module \
-  --biblionumber-from 12345 --biblionumber-to 12345
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --biblionumber-from 12345 --biblionumber-to 12345
 ```
 
 > ⚠️ **Увага:** видалення `completed` запису означає, що отримувач отримає повторний email для цього запису. Повідомте команду перед виконанням у production.
@@ -746,16 +915,22 @@ docker compose exec kdv-api python -m src.export_module \
 
 ```bash
 # Запустити без --biblionumber-from/to — обходить весь каталог у dry-run
-docker compose exec kdv-api python -m src.export_module --dry-run
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --dry-run
 
 # Перевірити exit code
 echo "Exit: $?"
 
 # Переглянути згенерований XLSX
-docker compose exec kdv-api ls -lh /tmp/dry_run/
+docker exec "$KDV_API_CID" ls -lh /tmp/dry_run/
 
 # Перевірити логи на ключові events
-docker compose logs kdv-api --tail=100 | grep -E '"event":'
+docker service logs kdv_integrator_event_kdv-api --tail=100 | grep -E '"event":'
 ```
 
 **Очікувані log events у dry-run:**
@@ -783,13 +958,23 @@ sqlite3 /data/kdv_optimize/export/export_state.db \
 
 ```bash
 # Взяти перші 5 biblionumber для smoke
-docker compose exec kdv-api python -m src.export_module \
-  --dry-run --biblionumber-from 1 --biblionumber-to 5
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --dry-run --biblionumber-from 1 --biblionumber-to 5
 
 echo "Exit: $?"
 
 # Переконатися, що XLSX містить не більше 5 рядків (+ header)
-docker compose exec kdv-api python -c "
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -c "
 import openpyxl
 wb = openpyxl.load_workbook(sorted(__import__('glob').glob('/tmp/dry_run/*.xlsx'))[-1])
 ws = wb.active
@@ -829,12 +1014,18 @@ print([cell.value for cell in ws[1]])  # Headers
 
 3. **Перевірити mapping_loader:**
    ```bash
-   python -m pytest tests/test_export_mapping_loader.py -q
+   pytest tests/test_export_mapping_loader.py -q
    ```
 
 4. **Dry-run для перевірки в XLSX:**
    ```bash
-   python -m src.export_module --dry-run
+   KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+   docker exec "$KDV_API_CID" sh -lc '
+   set -a
+   . /run/secrets/app_env_payload
+   set +a
+   exec "$@"
+   ' -- python -m src.export_module --dry-run
    # Відкрити /tmp/dry_run/*.xlsx, перевірити колонку "Тип документа"
    ```
 
@@ -852,7 +1043,7 @@ print([cell.value for cell in ws[1]])  # Headers
 **Читати логи в реальному часі:**
 
 ```bash
-docker compose logs -f kdv-api | grep -v '"event": "koha_page_fetched"'
+docker service logs -f kdv_integrator_event_kdv-api | grep -v '"event": "koha_page_fetched"'
 # Фільтруємо шумні pagination events
 ```
 
@@ -860,7 +1051,7 @@ docker compose logs -f kdv-api | grep -v '"event": "koha_page_fetched"'
 
 ```bash
 # Знайти run_id за часом
-docker compose logs kdv-api --since="2026-05-29T10:00:00" | \
+docker service logs kdv_integrator_event_kdv-api --since="2026-05-29T10:00:00" | \
   python3 -c "
 import sys, json
 for line in sys.stdin:
@@ -891,7 +1082,7 @@ for line in sys.stdin:
 
 > Поле `run_id` є у **кожному** log-рядку — завдяки `contextvars`. Це дозволяє фільтрувати всі події одного запуску:
 > ```bash
-> docker compose logs kdv-api | grep '"run_id": "a1b2c3d4'
+> docker service logs kdv_integrator_event_kdv-api | grep '"run_id": "a1b2c3d4'
 > ```
 
 ---
@@ -928,10 +1119,11 @@ curl -s http://pushgateway:9091/metrics | grep "export_"
 
 ```bash
 # Зупинити поточний запуск (якщо висить)
-docker compose exec kdv-api pkill -f "python -m src.export_module"
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" pkill -f "src.export_module"
 
-# Або перезапустити весь контейнер
-docker compose restart kdv-api
+# Або перезапустити service task
+docker service update --force kdv_integrator_event_kdv-api
 ```
 
 ### Відкотити зміни у Google Drive
@@ -940,10 +1132,11 @@ docker compose restart kdv-api
 
 ```bash
 # Знайти файл
-docker compose exec kdv-api find /mnt/drive/KohaExports -name "*<run_id[:8]>*"
+KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+docker exec "$KDV_API_CID" find /mnt/drive/KohaExports -name "*<run_id[:8]>*"
 
 # Видалити (необоротно! підтвердіть двічі)
-docker compose exec kdv-api rm /mnt/drive/KohaExports/2026/export_Koha_..._<run_id[:8]>.xlsx
+docker exec "$KDV_API_CID" rm /mnt/drive/KohaExports/2026/export_Koha_..._<run_id[:8]>.xlsx
 ```
 
 Після видалення файлу скинути SQLite запис:
@@ -962,7 +1155,7 @@ git diff config/marc_mapping.yaml config/export_dictionaries.yaml
 git checkout -- config/marc_mapping.yaml config/export_dictionaries.yaml
 
 # Перевірити
-python -m pytest tests/test_export_mapping_loader.py -q
+pytest tests/test_export_mapping_loader.py -q
 ```
 
 ---
@@ -991,17 +1184,22 @@ python -m pytest tests/test_export_mapping_loader.py -q
 
 **Smoke-тести:**
 
-- [ ] `python -m src.export_module --health-check` → `exit 0`.
-- [ ] `python -m src.export_module --dry-run` → `exit 0`, XLSX у `/tmp/dry_run/` виглядає коректно.
-- [ ] `python -m src.export_module --dry-run --biblionumber-from 1 --biblionumber-to 10` → `exit 0`.
+- [ ] Swarm health-check із секції 2.2 (`--health-check`) → `exit 0`.
+- [ ] Swarm dry-run із секції 2.2 (`--dry-run`) → `exit 0`, XLSX у `/tmp/dry_run/` виглядає коректно.
+- [ ] Swarm range dry-run із секції 2.2 (`--dry-run --biblionumber-from 1 --biblionumber-to 10`) → `exit 0`.
 - [ ] Після dry-run SQLite чистий (0 `pending`/`completed` записів).
 
 **Перший production run:**
 
 - [ ] Запустити з range обмеженням для пілоту:
   ```bash
-  docker compose exec kdv-api python -m src.export_module \
-    --biblionumber-from 1 --biblionumber-to 100
+  KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
+  docker exec "$KDV_API_CID" sh -lc '
+  set -a
+  . /run/secrets/app_env_payload
+  set +a
+  exec "$@"
+  ' -- python -m src.export_module --biblionumber-from 1 --biblionumber-to 100
   ```
 - [ ] Перевірити лог на `export_success` без `export_failed`.
 - [ ] Підтвердити, що файл з'явився у `/mnt/drive/KohaExports/{year}/`.

@@ -11,6 +11,7 @@ from src.export_module.config import (
     parse_runtime_options,
 )
 from src.export_module.db.repository import ExportRepository
+from src.export_module.observability.logger import configure_export_logging
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -82,4 +83,5 @@ def _extract_reset_pending(args: list[str]) -> str | None:
 
 
 if __name__ == "__main__":
+    configure_export_logging()
     raise SystemExit(main())
