@@ -94,11 +94,11 @@ class KohaApiClient:
         biblionumber_to: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         _validate_biblionumber_range(biblionumber_from, biblionumber_to)
-        offset = 0
+        page = 1
         while True:
             batch = self._get_json_list(
                 "/api/v1/biblios",
-                params={"_per_page": self.page_size, "_offset": offset},
+                params={"_per_page": self.page_size, "_page": page},
             )
             if not batch:
                 break
@@ -114,7 +114,7 @@ class KohaApiClient:
 
             if should_stop or len(batch) < self.page_size:
                 break
-            offset += len(batch)
+            page += 1
 
     def fetch_biblio_marcxml(self, biblionumber: int) -> str:
         response = self.session.get(

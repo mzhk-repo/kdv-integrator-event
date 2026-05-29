@@ -99,7 +99,7 @@ def test_keyset_contract_uses_expected_koha_filter_params():
     }
 
 
-def test_keyset_falls_back_to_offset_when_koha_rejects_query_params():
+def test_keyset_falls_back_to_page_when_koha_rejects_query_params():
     session = _Session(
         [
             _Response([{"message": "Malformed query string"}], status_code=400),
@@ -118,8 +118,8 @@ def test_keyset_falls_back_to_offset_when_koha_rejects_query_params():
         "_order_by": "biblionumber",
         "biblionumber": {">": 0},
     }
-    assert session.calls[1]["kwargs"]["params"] == {"_per_page": 2, "_offset": 0}
-    assert session.calls[2]["kwargs"]["params"] == {"_per_page": 2, "_offset": 2}
+    assert session.calls[1]["kwargs"]["params"] == {"_per_page": 2, "_page": 1}
+    assert session.calls[2]["kwargs"]["params"] == {"_per_page": 2, "_page": 2}
 
 
 def test_keyset_fallback_is_not_used_for_unrelated_koha_errors():
@@ -134,7 +134,7 @@ def test_keyset_fallback_is_not_used_for_unrelated_koha_errors():
     assert len(session.calls) == 1
 
 
-def test_offset_fallback_uses_offset_pagination():
+def test_offset_fallback_uses_koha_page_pagination():
     session = _Session(
         [
             _Response([{"biblio_id": 1}, {"biblio_id": 2}, {"biblio_id": 3}]),
@@ -152,8 +152,8 @@ def test_offset_fallback_uses_offset_pagination():
         4,
         5,
     ]
-    assert session.calls[0]["kwargs"]["params"] == {"_per_page": 3, "_offset": 0}
-    assert session.calls[1]["kwargs"]["params"] == {"_per_page": 3, "_offset": 3}
+    assert session.calls[0]["kwargs"]["params"] == {"_per_page": 3, "_page": 1}
+    assert session.calls[1]["kwargs"]["params"] == {"_per_page": 3, "_page": 2}
 
 
 def test_fetch_biblio_marcxml_uses_marcxml_accept_header():
