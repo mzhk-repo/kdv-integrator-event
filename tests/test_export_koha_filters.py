@@ -82,6 +82,16 @@ def test_recoverable_staged_runs_do_not_create_duplicate_export(tmp_path):
     assert _candidate_ids(candidates) == [100, 104]
 
 
+def test_biblio_id_payload_is_supported(tmp_path):
+    repo = _repo(tmp_path)
+
+    candidates = filter_exportable_biblios(
+        [{"biblio_id": 101}, {"biblio_id": "102"}], repo, max_retries=3
+    )
+
+    assert [record["biblio_id"] for record in candidates] == [101, "102"]
+
+
 def test_runtime_range_excludes_records_outside_requested_bounds(tmp_path):
     repo = _repo(tmp_path)
 

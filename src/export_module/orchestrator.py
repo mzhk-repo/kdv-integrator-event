@@ -207,7 +207,7 @@ class ExportOrchestrator:
 
 def _extract_biblionumber(record: dict) -> int:
     try:
-        return int(record["biblionumber"])
+        return int(record.get("biblionumber") or record["biblio_id"])
     except (KeyError, TypeError, ValueError) as exc:
         raise KohaApiClientError("Koha biblio item has invalid biblionumber") from exc
 

@@ -111,14 +111,16 @@ def _rows(repo):
         ).fetchall()
 
 
-def _orchestrator(tmp_path, repository=None, drive=None, graph=None, xlsx=None):
+def _orchestrator(
+    tmp_path, repository=None, drive=None, graph=None, xlsx=None, koha=None
+):
     config = _config(tmp_path)
     repo = repository or ExportRepository(config.db_path)
     xlsx_generator = xlsx or _XLSXGenerator(tmp_path)
     return ExportOrchestrator(
         config=config,
         repository=repo,
-        koha_client=_KohaClient(),
+        koha_client=koha or _KohaClient(),
         marc_parser=_MarcParser(),
         xlsx_generator=xlsx_generator,
         drive_mount_service=drive or _DriveService(),
@@ -138,6 +140,18 @@ def test_happy_path_marks_records_completed(tmp_path):
     assert rows[0]["status"] == "completed"
     assert rows[0]["email_message_id"] == "message-1"
     assert not xlsx_generator.last_path.exists()
+
+
+def test_biblio_id_payload_is_exported_successfully(tmp_path):
+    koha = _KohaClient(biblios=[{"biblio_id": 202}], marcxml_by_id={202: "<record />"})
+    orchestrator, repo, _ = _orchestrator(tmp_path, koha=koha)
+
+    assert orchestrator.run(RuntimeOptions()) == 0
+
+    rows = _rows(repo)
+    assert len(rows) == 1
+    assert rows[0]["biblionumber"] == 202
+    assert rows[0]["status"] == "completed"
 
 
 def test_drive_copy_failure_marks_failed_and_does_not_call_graph(tmp_path):

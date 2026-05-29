@@ -63,7 +63,7 @@ def _validate_biblionumber_range(
 
 def _extract_biblionumber(item: Mapping[str, Any]) -> int:
     try:
-        return int(item["biblionumber"])
+        return int(item.get("biblionumber") or item["biblio_id"])
     except (KeyError, TypeError, ValueError) as exc:
         raise KohaApiClientError("Koha biblio item has invalid biblionumber") from exc
 
