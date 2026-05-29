@@ -204,6 +204,28 @@ def test_recovery_from_gdrive_uploaded_continues_with_email_stage(tmp_path):
     assert graph.calls[0][3] == "recover-run"
 
 
+def test_recovery_from_xlsx_generated_continues_with_drive_and_email(tmp_path):
+    config = _config(tmp_path)
+    repo = ExportRepository(config.db_path)
+    repo.insert_pending([101], "recover-run")
+    repo.mark_xlsx_generated("recover-run", "export.xlsx")
+    drive = _DriveService()
+    graph = _GraphService()
+    orchestrator, _, _ = _orchestrator(
+        tmp_path, repository=repo, drive=drive, graph=graph
+    )
+
+    assert orchestrator.run(RuntimeOptions()) == 0
+
+    rows = _rows(repo)
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["gdrive_file_path"] is not None
+    assert rows[0]["email_message_id"] == "message-1"
+    assert drive.calls == [("export.xlsx", "recover-run")]
+    assert len(graph.calls) == 1
+    assert graph.calls[0][3] == "recover-run"
+
+
 def test_dry_run_does_not_write_db_or_call_side_effects(tmp_path, caplog):
     drive = _DriveService()
     graph = _GraphService()

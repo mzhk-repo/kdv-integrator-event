@@ -86,13 +86,20 @@ class ExportOrchestrator:
             if self._recover_staged_runs():
                 return 0
 
-            candidates = list(self.koha_client.fetch_all_biblios_keyset())
+            biblionumber_from = getattr(options, "biblionumber_from", None)
+            biblionumber_to = getattr(options, "biblionumber_to", None)
+            candidates = list(
+                self.koha_client.fetch_all_biblios_keyset(
+                    biblionumber_from=biblionumber_from,
+                    biblionumber_to=biblionumber_to,
+                )
+            )
             exportable = filter_exportable_biblios(
                 candidates,
                 self.repository,
                 self.config.max_retries,
-                biblionumber_from=getattr(options, "biblionumber_from", None),
-                biblionumber_to=getattr(options, "biblionumber_to", None),
+                biblionumber_from=biblionumber_from,
+                biblionumber_to=biblionumber_to,
             )
             if not exportable:
                 LOGGER.info("export_no_candidates")
