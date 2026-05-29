@@ -1,6 +1,6 @@
-Архітектура та Workflow (v0.4.0-M8 + Swarm Robot wrapper + Google Drive source)
+Архітектура та Workflow (v0.4.0-M8 + Swarm Robot wrapper + Google Drive source + Koha Export Module)
 
-Цей документ описує логіку роботи KDV Integrator v0.4.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests), M7 (release canary + rollback + batch controls) та M8 (PDF optimizer + Swarm runtime wrapper для Robot + read-only Google Drive source).
+Цей документ описує логіку роботи KDV Integrator v0.4.0 з урахуванням M2 hardening (розділення сервісів, DI, тестованість), M3 (CI/CD pipeline, security gates, release/deploy flow), M4 (Zero Trust + CORS), M5 (ops readiness/runbooks), M6 (contract tests), M7 (release canary + rollback + batch controls), M8 (PDF optimizer + Swarm runtime wrapper для Robot + read-only Google Drive source) та Koha Export Module (CLI/batch-підсистема для побудови XLSX-звітів Koha → Google Drive → MS Graph email, staged-idempotency).
 
 🔄 Загальний Workflow (Fork-Join Pattern)
 
@@ -289,6 +289,7 @@ Koha JS для browser-flow:
     - `docs/RUNBOOK_TESTING.md` (dev/testing flow)
     - `docs/RUNBOOK_MAYDAY.md` (production incidents + recovery)
     - `docs/RUNBOOK_GDRIVE_SOURCE.md` (Google Drive source smoke, troubleshooting, rollback)
+    - `docs/RUNBOOK_KOHA_EXPORT.md` (Koha Export CLI, конфігурація, staged-idempotency recovery, troubleshooting)
 
 ### 14. Test strategy (M6)
 
@@ -333,6 +334,31 @@ src/
     ├── covers.py            # CoverService (self-contained)
     └── files.py             # FileService (versioning, error-move)
 
+src/export_module/           # Koha Export Module (CLI/batch, ізольований)
+├── __main__.py              # CLI entrypoint: --health-check, --dry-run, --reset-pending, --biblionumber-from/to
+├── orchestrator.py          # ExportOrchestrator: staged pipeline
+├── config.py                # ExportConfig + RuntimeOptions (SOPS bootstrap)
+├── db/
+│   ├── schema.py            # DDL: exported_records, SCHEMA_V1, MigrationManager
+│   └── repository.py        # ExportRepository: staged state transitions
+├── koha/
+│   ├── client.py            # KohaApiClient: keyset pagination, optional range
+│   └── filters.py           # filter_exportable_biblios()
+├── marc/
+│   ├── parser.py            # MARCParser: defensive parsing + transforms
+│   └── mapping_loader.py    # MappingLoader: YAML + JSON Schema + dict refs
+├── xlsx/
+│   └── generator.py         # XLSXGenerator: openpyxl, /tmp, atomic naming
+├── services/
+│   ├── drive_mount_service.py   # ExportDriveMountService: /mnt/drive atomic copy
+│   └── graph_email_service.py   # GraphEmailService: MS Graph sendMail
+└── observability/
+    └── logger.py            # JSON structured logger, run_id contextvars, secret sanitizer
+
+config/
+├── marc_mapping.yaml        # MARC → XLSX column mapping + static columns + transforms
+└── export_dictionaries.yaml # Koha Authorized values → кириличні мітки
+
 scripts/
 ├── deploy-orchestrator-swarm.sh # Swarm deploy orchestration + versioned env secret
 ├── run-robot-swarm.sh           # Manual Swarm wrapper для Robot: env/container/candidates/log sync
@@ -358,3 +384,84 @@ docker exec -e PYTHONPATH=/app kdv-api pytest -q
 ```
 
 Станом на 2026-03-05: очікувано `22 passed` (unit + integration + contract).
+
+Станом на 2026-05-29: повний baseline разом із Koha Export Module — `94 passed` (unit + integration + contract + export pipeline):
+```bash
+docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest -q
+```
+
+---
+
+### 16. Koha Export Module (ізольована CLI/batch-підсистема)
+
+Koha Export Module — це окрема підсистема у `src/export_module/`, яка **не є Flask endpoint** і не впливає на основний Koha → DSpace pipeline. Запускається вручну або за розкладом як one-off CLI команда.
+
+**Роль:** Періодичний пакетний експорт бібліографічних записів Koha у XLSX → архівація на Google Drive → email-розсилка через Microsoft Graph API.
+
+**Ключові архітектурні рішення:**
+
+| Рішення | Деталь |
+|---|---|
+| **Транспорт Google Drive** | Записує через rclone-mounted `/mnt/drive`; Google Drive API / service account не потрібні |
+| **Email** | MS Graph `sendMail`; SMTP не використовується |
+| **State tracking** | SQLite staged-idempotency: `pending → xlsx_generated → gdrive_uploaded → email_sent → completed` |
+| **Pagination** | Keyset по `biblionumber > last_seen_id`; offset-based тільки як fallback |
+| **Dry-run** | Тільки через `--dry-run` CLI прапорець; env-змінна `EXPORT_DRY_RUN` не існує |
+| **Range export** | Тільки через `--biblionumber-from` / `--biblionumber-to`; env-змінних для range нема |
+| **Конфіг** | Декларативний YAML: `config/marc_mapping.yaml` + `config/export_dictionaries.yaml` |
+| **Ізоляція** | Не змінює `src/core.py`, `src/koha.py`, семантику `956$u/p/q` |
+
+**Staged-idempotency — recovery rules:**
+
+```
+pending / xlsx_generated  → повна повторна обробка при наступному запуску
+gdrive_uploaded           → reuse існуючого файлу, тільки email
+email_sent                → тільки mark_completed, повторний email не надсилається
+completed                 → назавжди виключається з обробки
+failed (retry_count < MAX_RETRIES)  → повторна обробка
+```
+
+**Схема pipeline:**
+
+```
+Koha REST API
+     │ keyset pagination (biblionumber > last_seen_id)
+     ▼
+KohaApiClient ──► filter_exportable_biblios()
+                         │
+                         ▼
+                  MARCParser ──► config/marc_mapping.yaml
+                         │       config/export_dictionaries.yaml
+                         ▼
+                  XLSXGenerator ──► /tmp/export_Koha_{date}_{run_id[:8]}.xlsx
+                         │
+            ┌────────────┴────────────┐
+            ▼                         ▼
+ ExportDriveMountService      GraphEmailService
+ /mnt/drive/.../year/         MS Graph sendMail
+ .part → atomic rename        attach ≤15MB / link-only
+            │                         │
+            └────────────┬────────────┘
+                         ▼
+                SQLite exported_records
+                status → completed
+```
+
+**CLI (запуск в контейнері):**
+
+```bash
+docker compose exec kdv-api python -m src.export_module --health-check
+docker compose exec kdv-api python -m src.export_module --dry-run
+docker compose exec kdv-api python -m src.export_module
+docker compose exec kdv-api python -m src.export_module --biblionumber-from 1000 --biblionumber-to 1250
+docker compose exec kdv-api python -m src.export_module --reset-pending <RUN_ID>
+```
+
+**Exit codes:** `0` = success · `1` = partial failure · `2` = total failure / validation error
+
+**Межі інтеграції з основним pipeline:**
+
+- Читає готові `856$u` (де `$y = "Файл"` або `$y = "Запис в репозиторії"`) після успішної архівації.
+- `GoogleDriveSource` у `src/services/sources.py` — окремий read-only компонент для PDF source; `ExportDriveMountService` — окремий write-компонент тільки для XLSX copy.
+
+**Документація:** [`docs/RUNBOOK_KOHA_EXPORT.md`](RUNBOOK_KOHA_EXPORT.md) · [`docs/koha-export/PRD_Koha_Export_Module.md`](koha-export/PRD_Koha_Export_Module.md)

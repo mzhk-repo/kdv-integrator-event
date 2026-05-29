@@ -44,7 +44,11 @@
 - Додано deterministic cache, TTL cleanup і safe logs для Google Drive downloads: source type, safe file id, mime/size, duration/failure reason без URL/resourcekey/secrets.
 - Додано [RUNBOOK_GDRIVE_SOURCE.md](docs/RUNBOOK_GDRIVE_SOURCE.md) для конфігурації, dev smoke, troubleshooting і rollback Google Drive source.
 
-### Попередні зміни (2026-05-17)
+### Останні зміни (2026-05-29)
+- Імплементовано Koha Export Module (`src/export_module/`): ізольована CLI/batch-підсистема для періодичного експорту бібліографічних записів Koha у XLSX з архівацією на Google Drive (через rclone mount) і email-розсилкою через MS Graph API.
+- staged-idempotency SQLite (6 станів), keyset pagination, dry-run, optional range export, декларативний YAML-маппінг і словники Authorized values.
+- Повний test suite: 94 passed (unit + integration + contract + export pipeline).
+- Додано [RUNBOOK_KOHA_EXPORT.md](docs/RUNBOOK_KOHA_EXPORT.md) для CLI, конфігурації, troubleshooting і recovery.
 - Додано ізольований сервіс `kdv-optimizer` для автоматичної оптимізації важких PDF перед upload у DSpace.
 - `docker-compose.yml`/Swarm deploy тепер піднімають два сервіси: `kdv-api` та внутрішній `kdv-optimizer` зі shared volume `kdv_optimize_data`.
 - `/integrate` backward-compatible: старі клієнти без JSON body працюють, новий payload підтримує `skip_optimization`.
@@ -60,6 +64,8 @@
 - [x] Ізольований PDF optimizer service (`kdv-optimizer`)
 - [x] Shared volume, Swarm deploy і readiness перевірки optimizer-а
 - [x] Koha UI/API/Robot skip optimization controls
+- [x] Koha Export Module: staged-idempotency, keyset pagination, XLSX → Google Drive → MS Graph email
+- [x] Runbook, PRD, Roadmap для Koha Export Module
 - [ ] Post-prod SLO baseline: p95 latency, fallback rate, queue depth
 - [ ] Тюнінг rate-limit/parallelism параметрів за даними prod-трафіку
 
@@ -80,6 +86,7 @@
 - **MARC Enrichment** — зворотній запис двох `856`: прямий download primary bitstream (`$y Файл`) і Handle DSpace (`$y Запис в репозиторії`); `956$p` задає готову обкладинку, `956$q` — additional файли для ORIGINAL
 - **Google Drive Source** — read-only support для PDF URL у `956$u` і змішаного `956$q`: local paths або Google Drive links через `|`; service account приходить тільки як Swarm secret
 - **Batch & Audit** — `robot.py` для масової архівації, `nightwalker.py` для пошуку "зомбі" (файли без посилань)
+- **Koha Export Module** — ізольована CLI/batch-підсистема: періодичний експорт Koha записів у XLSX, архівація на Google Drive через rclone mount, email через MS Graph API; staged-idempotency SQLite, keyset pagination, dry-run, optional `biblionumber` range
 
 ### Що НЕ входить у скоуп
 
@@ -104,6 +111,9 @@
 | **Тестування** | pytest | — | Unit + integration + contract тести |
 | **Linting / Quality** | ruff | — | Статичний аналіз |
 | **Dependency Audit** | pip-audit + trivy | — | CVE-сканування |
+| **Парсинг MARC** | `pymarc` | поточний стек | Koha → DSpace MARC-парсинг |
+| **XLSX export** | `openpyxl` | ≥ 3.1.5 | Koha Export Module: генерація XLSX-звітів |
+| **YAML маппінг** | `PyYAML` | ≥ 6.0.2 | Koha Export Module: декларативний MARC → XLSX маппінг |
 | **PDF Processing** | pdf2image + Pillow | — | Генерація обкладинок |
 | **PDF Optimization** | Ghostscript + poppler-utils | pinned у `kdv-optimizer` image | Оптимізація важких PDF в ізольованому контейнері |
 
@@ -210,7 +220,8 @@ kdv-integrator-event/
 │   ├── RUNBOOK_MAYDAY.md           # Incident response: Cloudflare/Koha/DSpace/mount
 │   ├── RUNBOOK_NIGHTWALKER.md      # Інструкція: аудит каталогу через nightwalker.py
 │   ├── RUNBOOK_ROBOT.md            # Інструкція: масова архівація через robot.py
-│   └── RUNBOOK_PDF_OPTIMIZER.md    # Інструкція: конфігурація, перевірка, rollback optimizer-а
+│   ├── RUNBOOK_PDF_OPTIMIZER.md    # Інструкція: конфігурація, перевірка, rollback optimizer-а
+│   └── RUNBOOK_KOHA_EXPORT.md     # Інструкція: Koha Export CLI, конфіг, troubleshooting, recovery
 │
 ├── 📁 docs/changelogs/
 │   └── CHANGELOG_2026_VOL_03.md   # Активний том changelog (Context/Change/Verification)
@@ -234,6 +245,7 @@ kdv-integrator-event/
 | `src/mapping.py` | Контракт MARC → Dublin Core (змінювати обережно) |
 | `docs/RUNBOOK_MAYDAY.md` | Першочергово при production-інциденті |
 | `docs/RUNBOOK_PDF_OPTIMIZER.md` | Використання, конфігурація, health/readiness, rollback `kdv-optimizer` |
+| `docs/RUNBOOK_KOHA_EXPORT.md` | Koha Export: CLI-довідник, конфіг словників/маппінгу, staged-idempotency recovery, troubleshooting |
 | `docs/RUNBOOK_GDRIVE_SOURCE.md` | Google Drive source: secret check без виводу, dev smoke, troubleshooting, rollback |
 | `docs/RELEASE.md` | Обов'язково перед будь-яким деплоєм |
 | `.env.example` | Документація всіх ENV змінних |
@@ -550,7 +562,14 @@ Google Drive source логує безпечні події без secrets: `sour
 
 ## 📜 Ченджлог
 
-> Детальний ченджлог (Context / Change / Verification / Risks / Rollback): [`CHANGELOG.md`](CHANGELOG.md), активний том [`docs/changelogs/CHANGELOG_2026_VOL_03.md`](docs/changelogs/CHANGELOG_2026_VOL_03.md)
+> Детальний ченджлог (Context / Change / Verification / Risks / Rollback): [`CHANGELOG.md`](CHANGELOG.md), активний том [`docs/changelogs/CHANGELOG_2026_VOL_04.md`](docs/changelogs/CHANGELOG_2026_VOL_04.md)
+
+### v0.4.0-m8 + Koha Export — 2026-05-29
+- ✅ Koha Export Module: 6-стадійна staged-idempotency (SQLite), keyset pagination, MARCParser, XLSXGenerator, `ExportDriveMountService`, `GraphEmailService`, `ExportOrchestrator`
+- ✅ Declarative config: `config/marc_mapping.yaml` + `config/export_dictionaries.yaml` (Authorized values)
+- ✅ CLI: `--health-check`, `--dry-run`, `--reset-pending`, `--biblionumber-from/to`; dry-run не має side effects
+- ✅ Tests: 94 passed (повний baseline), orchestrator coverage ≥ 92%
+- ✅ Runbook: [`docs/RUNBOOK_KOHA_EXPORT.md`](docs/RUNBOOK_KOHA_EXPORT.md)
 
 ### v0.4.0-m8 — 2026-05-17 (PDF optimizer)
 - ✅ Ізольований `kdv-optimizer`: Flask mini-API, Ghostscript, ProcessPoolExecutor(1), TTL cleanup
@@ -586,4 +605,5 @@ Google Drive source логує безпечні події без secrets: `sour
 | [docs/RUNBOOK_ROBOT.md](docs/RUNBOOK_ROBOT.md) | Масова архівація: robot.py |
 | [docs/RUNBOOK_PDF_OPTIMIZER.md](docs/RUNBOOK_PDF_OPTIMIZER.md) | PDF optimizer: конфігурація, використання, health/readiness, rollback |
 | [docs/RUNBOOK_GDRIVE_SOURCE.md](docs/RUNBOOK_GDRIVE_SOURCE.md) | Google Drive source: secret check, dev smoke, troubleshooting, rollback |
+| [docs/RUNBOOK_KOHA_EXPORT.md](docs/RUNBOOK_KOHA_EXPORT.md) | Koha Export: CLI-довідник, конфіг словників/маппінгу, staged-idempotency recovery, troubleshooting |
 | [docs/RUNBOOK_NIGHTWALKER.md](docs/RUNBOOK_NIGHTWALKER.md) | Аудит каталогу: nightwalker.py |
