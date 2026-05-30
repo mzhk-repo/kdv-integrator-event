@@ -247,7 +247,7 @@ class ExportConfig:
     max_retries: int = 3
     max_attachment_bytes: int = 15 * 1024 * 1024
 
-    db_path: str = "/data/kdv_optimize/export/export_state.db"
+    db_path: str = "/data/kdv_export_state/export_state.db"
     marc_mapping_path: str = "config/marc_mapping.yaml"
     export_dictionaries_path: str = "config/export_dictionaries.yaml"
     pushgateway_url: Optional[str] = None

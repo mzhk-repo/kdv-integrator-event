@@ -224,7 +224,7 @@ exec "$@"
 
 > **Де знайти `<RUN_ID>`:** дивіться поле `run_id` у JSON-логах або у SQLite:
 > ```bash
-> sqlite3 /data/kdv_optimize/export/export_state.db \
+> sqlite3 /data/kdv_export_state/export_state.db \
 >   "SELECT DISTINCT run_id, status, COUNT(*) FROM exported_records GROUP BY run_id, status;"
 > ```
 
@@ -337,8 +337,9 @@ fi
 EXPORT_MODULE_ENABLED=true          # false = модуль вимкнено, exit 0 без дій
 
 # ── Стан: SQLite ─────────────────────────────────────────────────────────────
-EXPORT_DB_PATH=/data/kdv_optimize/export/export_state.db
-#   Файл має знаходитись на shared volume, доступному з контейнера.
+EXPORT_STATE_HOST_PATH=/srv/kdv-integrator/export-state
+EXPORT_DB_PATH=/data/kdv_export_state/export_state.db
+#   Файл має знаходитись на dedicated bind mount, змонтованому в контейнер як /data/kdv_export_state.
 #   Каталог створюється автоматично, якщо не існує.
 
 # ── Google Drive mount ────────────────────────────────────────────────────────
@@ -658,7 +659,7 @@ exec "$@"
 **Діагностика:**
 
 ```bash
-sqlite3 /data/kdv_optimize/export/export_state.db \
+sqlite3 /data/kdv_export_state/export_state.db \
   "SELECT run_id, COUNT(*), MIN(last_attempt_at) FROM exported_records
    WHERE status='pending' GROUP BY run_id ORDER BY MIN(last_attempt_at);"
 ```
@@ -681,7 +682,7 @@ exec "$@"
 **Якщо потрібно скинути всі старі pending (аварійний варіант):**
 
 ```bash
-sqlite3 /data/kdv_optimize/export/export_state.db \
+sqlite3 /data/kdv_export_state/export_state.db \
   "UPDATE exported_records SET status='failed', failed_reason='manual_reset_stuck_pending'
    WHERE status='pending';"
 ```
@@ -699,7 +700,7 @@ sqlite3 /data/kdv_optimize/export/export_state.db \
 **Перевірити стан:**
 
 ```bash
-sqlite3 /data/kdv_optimize/export/export_state.db \
+sqlite3 /data/kdv_export_state/export_state.db \
   "SELECT run_id, status, gdrive_file_path FROM exported_records
    WHERE status='gdrive_uploaded' LIMIT 10;"
 ```
@@ -887,12 +888,12 @@ MAX_ATTACHMENT_BYTES=31457280  # 30 MB
 
 ```bash
 # 1. Переконатися, що запис дійсно completed
-sqlite3 /data/kdv_optimize/export/export_state.db \
+sqlite3 /data/kdv_export_state/export_state.db \
   "SELECT biblionumber, run_id, status, exported_at FROM exported_records
    WHERE biblionumber=12345;"
 
 # 2. Видалити completed запис для цього biblionumber (ручна операція!)
-sqlite3 /data/kdv_optimize/export/export_state.db \
+sqlite3 /data/kdv_export_state/export_state.db \
   "DELETE FROM exported_records WHERE biblionumber=12345 AND status='completed';"
 
 # 3. Запустити range export тільки для цього biblionumber
@@ -947,7 +948,7 @@ docker service logs kdv_integrator_event_kdv-api --tail=100 | grep -E '"event":'
 **Перевірити, що SQLite не змінився:**
 
 ```bash
-sqlite3 /data/kdv_optimize/export/export_state.db \
+sqlite3 /data/kdv_export_state/export_state.db \
   "SELECT COUNT(*) FROM exported_records WHERE status='pending';"
 # Має бути 0 після dry-run
 ```
@@ -1142,7 +1143,7 @@ docker exec "$KDV_API_CID" rm /mnt/drive/KohaExports/2026/export_Koha_..._<run_i
 Після видалення файлу скинути SQLite запис:
 
 ```bash
-sqlite3 /data/kdv_optimize/export/export_state.db \
+sqlite3 /data/kdv_export_state/export_state.db \
   "UPDATE exported_records SET status='failed', failed_reason='manual_gdrive_rollback'
    WHERE run_id='<RUN_ID>';"
 ```
@@ -1165,7 +1166,7 @@ pytest tests/test_export_mapping_loader.py -q
 **Інфраструктура:**
 
 - [ ] `/mnt/drive/KohaExports` змонтовано та доступно для запису (`touch` тест проходить).
-- [ ] `EXPORT_DB_PATH` доступний або каталог `export/` існує на shared volume.
+- [ ] `EXPORT_STATE_HOST_PATH` існує на host-ноді, змонтований у контейнер як `/data/kdv_export_state`, а `EXPORT_DB_PATH` доступний для запису.
 - [ ] `EXPORT_MODULE_ENABLED=true` у `env.prod.enc`.
 
 **Graph / Email:**

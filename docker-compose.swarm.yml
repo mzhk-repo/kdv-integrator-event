@@ -43,6 +43,9 @@ services:
     volumes:
       - kdv-drive:/mnt/drive
       - kdv_optimize_data:/data/kdv_optimize
+      - type: bind
+        source: ${EXPORT_STATE_HOST_PATH:-/srv/kdv-integrator/export-state}
+        target: /data/kdv_export_state
       - ${ENTRYPOINT_SCRYPT_PATH:-./scripts/entrypoint.sh}:/app/scripts/entrypoint.sh:ro
 
   kdv-optimizer:

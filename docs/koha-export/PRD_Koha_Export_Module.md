@@ -517,8 +517,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_biblionumber_completed
     WHERE status = 'completed';
 ```
 
-> Файл бази даних розміщується на shared volume, доступному `kdv-api`.
-> Рекомендований шлях без додавання нового volume: `/data/kdv_optimize/export/export_state.db`.
+> Файл бази даних розміщується на dedicated host bind mount, доступному `kdv-api`.
+> Рекомендований контейнерний шлях: `/data/kdv_export_state/export_state.db`; рекомендований host path: `/srv/kdv-integrator/export-state`.
 
 ### 4.3. Retry та backoff для зовнішніх сервісів
 
