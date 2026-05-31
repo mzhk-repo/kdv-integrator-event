@@ -169,16 +169,25 @@ def test_drive_copy_failure_marks_failed_and_does_not_call_graph(tmp_path):
     assert not xlsx_generator.last_path.exists()
 
 
-def test_graph_failure_after_copy_preserves_gdrive_uploaded(tmp_path):
+def test_graph_failure_after_copy_preserves_gdrive_uploaded(tmp_path, caplog):
     graph = _GraphService(should_fail=True)
     orchestrator, repo, xlsx_generator = _orchestrator(tmp_path, graph=graph)
 
-    assert orchestrator.run(RuntimeOptions()) == 2
+    with caplog.at_level(logging.INFO):
+        assert orchestrator.run(RuntimeOptions()) == 2
 
     rows = _rows(repo)
     assert rows[0]["status"] == "gdrive_uploaded"
     assert rows[0]["gdrive_file_path"] is not None
     assert not xlsx_generator.last_path.exists()
+
+    log_events = {record.getMessage() for record in caplog.records}
+    assert "gdrive_uploaded" in log_events
+    assert "graph_email_started" in log_events
+    assert "export_failed" in log_events
+    failed_log = next(record for record in caplog.records if record.getMessage() == "export_failed")
+    assert failed_log.stage == "graph_email"
+    assert failed_log.gdrive_file_path is not None
 
 
 def test_recovery_after_email_sent_marks_completed_without_resending_email(tmp_path):

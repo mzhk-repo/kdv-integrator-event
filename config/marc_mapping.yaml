@@ -4,17 +4,17 @@ columns:
     sources:
       - field: "001"
 
-  - name: "Назва книги"
+  - name: "title"
     sources:
       - field: "245"
         subfields: ["a", "b"]
         join: " "
         strip_chars: " /:"
 
-  - name: "Тип документа"
+  - name: "literature_type"
     sources:
-      - field: "942"
-        subfields: ["c"]
+      - field: "993"
+        subfields: ["a"]
         transform: "authorized_value"
         dictionary: "itemtypes"
 
@@ -29,6 +29,6 @@ static_columns:
 
 required_columns:
   - "ID Запису"
-  - "Назва книги"
-  - "Тип документа"
+  - "title"
+  - "literature_type"
   - "Бібліотека-отримувач"

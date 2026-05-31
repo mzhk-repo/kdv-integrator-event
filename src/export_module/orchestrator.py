@@ -79,21 +79,52 @@ class ExportOrchestrator:
         run_id = self.run_id_factory()
         run_token = set_run_id(run_id)
         xlsx_path: str | None = None
+        drive_result: DriveMountCopyResult | None = None
         preserve_staged_state_on_failure = False
+        stage = "start"
+        records_count = 0
+        candidates_count = 0
+        exportable_count = 0
+        biblionumber_from = getattr(options, "biblionumber_from", None)
+        biblionumber_to = getattr(options, "biblionumber_to", None)
         try:
+            LOGGER.info(
+                "export_started",
+                extra={
+                    "dry_run": options.dry_run,
+                    "biblionumber_from": biblionumber_from,
+                    "biblionumber_to": biblionumber_to,
+                },
+            )
+            stage = "config_validation"
             self.config.validate()
+            LOGGER.info("config_validated")
 
+            stage = "recovery_check"
             if self._recover_staged_runs():
+                LOGGER.info("export_recovery_completed")
                 return 0
 
-            biblionumber_from = getattr(options, "biblionumber_from", None)
-            biblionumber_to = getattr(options, "biblionumber_to", None)
+            stage = "koha_fetch"
+            LOGGER.info(
+                "koha_fetch_started",
+                extra={
+                    "biblionumber_from": biblionumber_from,
+                    "biblionumber_to": biblionumber_to,
+                },
+            )
             candidates = list(
                 self.koha_client.fetch_all_biblios_keyset(
                     biblionumber_from=biblionumber_from,
                     biblionumber_to=biblionumber_to,
                 )
             )
+            candidates_count = len(candidates)
+            LOGGER.info(
+                "koha_candidates_fetched", extra={"candidates": candidates_count}
+            )
+
+            stage = "filter_exportable"
             exportable = filter_exportable_biblios(
                 candidates,
                 self.repository,
@@ -101,14 +132,36 @@ class ExportOrchestrator:
                 biblionumber_from=biblionumber_from,
                 biblionumber_to=biblionumber_to,
             )
+            exportable_count = len(exportable)
+            LOGGER.info(
+                "exportable_filtered",
+                extra={
+                    "candidates": candidates_count,
+                    "exportable": exportable_count,
+                },
+            )
             if not exportable:
                 LOGGER.info("export_no_candidates")
                 return 0
 
+            stage = "marc_parsing"
+            LOGGER.info("marc_parsing_started", extra={"records": exportable_count})
             records = self._parse_records(exportable)
+            records_count = len(records)
+            LOGGER.info(
+                "marc_parsing_completed",
+                extra={"records": records_count, "skipped": exportable_count - records_count},
+            )
+
+            stage = "xlsx_generation"
             xlsx_path = self.xlsx_generator.generate(records, run_id)
+            LOGGER.info(
+                "xlsx_generated",
+                extra={"records": records_count, "xlsx_path": xlsx_path},
+            )
 
             if options.dry_run:
+                stage = "dry_run_preserve"
                 dry_path = self._preserve_dry_run_copy(xlsx_path)
                 LOGGER.info("would_copy_to_gdrive_mount", extra={"xlsx_path": dry_path})
                 LOGGER.info("would_send_graph_email", extra={"records": len(records)})
@@ -116,25 +169,68 @@ class ExportOrchestrator:
                 LOGGER.info("export_dry_run", extra={"xlsx_path": dry_path})
                 return 0
 
+            stage = "pending_reservation"
             biblionumbers = [_extract_biblionumber(record) for record in exportable]
             self.repository.insert_pending(biblionumbers, run_id)
+            LOGGER.info(
+                "pending_reserved",
+                extra={"records": len(biblionumbers), "status": "pending"},
+            )
             self.repository.mark_xlsx_generated(run_id, Path(xlsx_path).name)
+            LOGGER.info(
+                "state_xlsx_generated",
+                extra={"xlsx_filename": Path(xlsx_path).name, "status": "xlsx_generated"},
+            )
 
+            stage = "gdrive_copy"
+            LOGGER.info("gdrive_copy_started", extra={"xlsx_path": xlsx_path})
             drive_result = self.drive_mount_service.copy_to_mount(xlsx_path, run_id)
             self.repository.mark_gdrive_uploaded(
                 run_id, drive_result.file_path, drive_result.folder_path
             )
+            LOGGER.info(
+                "gdrive_uploaded",
+                extra={
+                    "gdrive_file_path": drive_result.file_path,
+                    "gdrive_folder_path": drive_result.folder_path,
+                    "gdrive_skipped_existing": drive_result.was_skipped,
+                    "status": "gdrive_uploaded",
+                },
+            )
             preserve_staged_state_on_failure = True
 
+            stage = "graph_email"
+            LOGGER.info(
+                "graph_email_started",
+                extra={"records": records_count, "gdrive_file_path": drive_result.file_path},
+            )
             email_result = self.graph_email_service.send_via_graph(
                 records, drive_result, xlsx_path, run_id
             )
             self.repository.mark_email_sent(run_id, email_result.message_id)
+            LOGGER.info(
+                "graph_email_sent",
+                extra={"message_id": email_result.message_id, "status": "email_sent"},
+            )
             self.repository.mark_completed(run_id)
-            LOGGER.info("export_completed", extra={"records_exported": len(records)})
+            LOGGER.info(
+                "export_completed",
+                extra={"records_exported": len(records), "status": "completed"},
+            )
             return 0
         except Exception as exc:
-            LOGGER.error("export_failed", extra={"error": str(exc)})
+            LOGGER.error(
+                "export_failed",
+                extra={
+                    "error": str(exc),
+                    "stage": stage,
+                    "candidates": candidates_count,
+                    "exportable": exportable_count,
+                    "records": records_count,
+                    "xlsx_path": xlsx_path,
+                    "gdrive_file_path": drive_result.file_path if drive_result else None,
+                },
+            )
             if not preserve_staged_state_on_failure:
                 self.repository.mark_failed(run_id, str(exc))
             return 2
