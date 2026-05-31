@@ -46,6 +46,10 @@ services:
       - type: bind
         source: ${EXPORT_STATE_HOST_PATH:-/srv/kdv-integrator/export-state}
         target: /data/kdv_export_state
+      - type: bind
+        source: ${EXPORT_CONFIG_HOST_PATH:-./config}
+        target: /app/config
+        read_only: true
       - ${ENTRYPOINT_SCRYPT_PATH:-./scripts/entrypoint.sh}:/app/scripts/entrypoint.sh:ro
 
   kdv-optimizer:

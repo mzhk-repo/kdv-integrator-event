@@ -510,7 +510,7 @@ static_columns:
 | `extract_year_regex` | Витягти 4-значний рік регулярним виразом |
 | (без transform) | Взяти значення субполя як є |
 
-> **Обмеження:** після зміни `marc_mapping.yaml` новий образ не потрібен, якщо файл bind-mounted. Але якщо конфіг упакований в image — потрібен rebuild.
+> **Production contract:** `config/` монтується в `kdv-api` як read-only bind mount `${EXPORT_CONFIG_HOST_PATH:-./config}` -> `/app/config`. Тому зміни `config/marc_mapping.yaml` і `config/export_dictionaries.yaml` на хості застосовуються для наступного CLI-запуску без rebuild образу.
 
 ---
 
