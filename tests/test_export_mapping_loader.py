@@ -82,6 +82,63 @@ def test_authorized_value_dictionary_maps_code_to_label(tmp_path):
     )
 
 
+def test_source_condition_and_column_year_transform_are_loaded(tmp_path):
+    mapping_path, dictionaries_path = _write_valid_files(tmp_path)
+    mapping_path.write_text(
+        """
+version: 1
+columns:
+  - name: "url"
+    sources:
+      - field: "856"
+        subfields: ["u"]
+        condition:
+          subfield: "y"
+          equals: "Файл"
+  - name: "Рік видання"
+    sources:
+      - field: "264"
+        subfields: ["c"]
+      - field: "260"
+        subfields: ["c"]
+    transform: "extract_year_regex"
+required_columns:
+  - "url"
+  - "Рік видання"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    mapping = MappingLoader(mapping_path, dictionaries_path).load()
+
+    url_source = mapping.columns[0].sources[0]
+    assert url_source.condition is not None
+    assert url_source.condition.subfield == "y"
+    assert url_source.condition.equals == "Файл"
+    assert mapping.columns[1].transform == "extract_year_regex"
+
+
+def test_source_condition_must_be_mapping(tmp_path):
+    mapping_path, dictionaries_path = _write_valid_files(tmp_path)
+    mapping_path.write_text(
+        """
+version: 1
+columns:
+  - name: "url"
+    sources:
+      - field: "856"
+        subfields: ["u"]
+        condition: "Файл"
+required_columns:
+  - "url"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MappingValidationError, match="condition must be a mapping"):
+        MappingLoader(mapping_path, dictionaries_path).load()
+
+
 def test_unknown_dictionary_id_raises(tmp_path):
     mapping_path, dictionaries_path = _write_valid_files(tmp_path)
     mapping_path.write_text(

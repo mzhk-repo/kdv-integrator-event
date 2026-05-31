@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import xml.etree.ElementTree as ET
 
 from src.export_module.marc.mapping_loader import (
@@ -25,7 +26,7 @@ class MARCParser:
 
         parsed: dict[str, str | None] = {}
         for column in self.mapping.columns:
-            parsed[column.name] = self._extract_column(record, column.sources)
+            parsed[column.name] = self._extract_column(record, column)
 
         for static_column in self.mapping.static_columns:
             parsed[static_column.name] = static_column.value
@@ -43,18 +44,21 @@ class MARCParser:
             return False
         return _has_856_file_link(record)
 
-    def _extract_column(
-        self, record: ET.Element, sources: list[SourceMapping]
-    ) -> str | None:
+    def _extract_column(self, record: ET.Element, column) -> str | None:
         values: list[str] = []
-        for source in sources:
+        for source in column.sources:
             value = self._extract_source(record, source)
             if value is not None:
                 values.append(value)
 
         if not values:
             return None
-        return " ".join(values)
+        value = " ".join(values)
+        if column.transform == "extract_year_regex":
+            return _extract_year_regex(value)
+        if column.transform:
+            raise MappingValidationError(f"Unsupported transform: {column.transform}")
+        return value
 
     def _extract_source(
         self, record: ET.Element, source: SourceMapping
@@ -79,6 +83,9 @@ class MARCParser:
                     "authorized_value source must define dictionary"
                 )
             return self.apply_authorized_value(source.dictionary, value)
+
+        if source.transform == "extract_year_regex":
+            return _extract_year_regex(value)
 
         if source.transform:
             raise MappingValidationError(f"Unsupported transform: {source.transform}")
@@ -146,6 +153,8 @@ def _extract_data_field(record: ET.Element, source: SourceMapping) -> str | None
             continue
         if datafield.attrib.get("tag") != source.field:
             continue
+        if not _matches_condition(datafield, source):
+            continue
 
         if source.subfields:
             subfield_values = [
@@ -170,6 +179,28 @@ def _extract_data_field(record: ET.Element, source: SourceMapping) -> str | None
     if not field_values:
         return None
     return source.join.join(field_values)
+
+
+def _matches_condition(datafield: ET.Element, source: SourceMapping) -> bool:
+    if source.condition is None:
+        return True
+    for subfield in datafield:
+        if _local_name(subfield.tag) != "subfield":
+            continue
+        if subfield.attrib.get("code") != source.condition.subfield:
+            continue
+        if (subfield.text or "").strip() == source.condition.equals:
+            return True
+    return False
+
+
+def _extract_year_regex(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r"\d{4}", value)
+    if not match:
+        return None
+    return match.group(0)
 
 
 def _local_name(tag: str) -> str:

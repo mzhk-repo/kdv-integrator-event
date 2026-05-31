@@ -461,12 +461,28 @@ columns:
         join: " "               # Роздільник при об'єднанні
         strip_chars: " /:"      # Символи, які обрізаємо з країв
 
+  - name: "Рік видання"
+    sources:
+      - field: "264"
+        subfields: ["c"]
+      - field: "260"
+        subfields: ["c"]
+    transform: "extract_year_regex"     # Напр. ©2024. -> 2024
+
   - name: "Тип документа"
     sources:
       - field: "942"
         subfields: ["c"]
         transform: "authorized_value"   # Застосувати перекодування
         dictionary: "itemtypes"         # Ключ зі словника export_dictionaries.yaml
+
+  - name: "url"
+    sources:
+      - field: "856"
+        subfields: ["u"]
+        condition:
+          subfield: "y"
+          equals: "Файл"                # Брати $u лише з того 856, де $y == Файл
 
 static_columns:
   # Колонки без MARC-джерела — фіксовані значення для кожного рядка XLSX
@@ -511,6 +527,20 @@ static_columns:
   - name: "Фонд"
     value: "КДВ-2026"
     reason: "Ідентифікатор фонду для downstream системи"
+```
+
+**Умови для source:**
+
+`condition` застосовується до конкретного MARC datafield. Для `856` це означає: `$u` береться тільки з того самого поля `856`, де є `$y` з потрібним значенням.
+
+```yaml
+- name: "url"
+  sources:
+    - field: "856"
+      subfields: ["u"]
+      condition:
+        subfield: "y"
+        equals: "Файл"
 ```
 
 **Доступні transforms:**

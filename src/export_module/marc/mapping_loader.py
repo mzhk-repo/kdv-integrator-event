@@ -14,6 +14,12 @@ class MappingValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class SourceCondition:
+    subfield: str
+    equals: str
+
+
+@dataclass(frozen=True)
 class SourceMapping:
     field: str
     subfields: list[str] = field(default_factory=list)
@@ -21,12 +27,14 @@ class SourceMapping:
     strip_chars: str = ""
     transform: str = ""
     dictionary: str = ""
+    condition: SourceCondition | None = None
 
 
 @dataclass(frozen=True)
 class ColumnMapping:
     name: str
     sources: list[SourceMapping]
+    transform: str = ""
 
 
 @dataclass(frozen=True)
@@ -187,7 +195,13 @@ def _parse_columns(payload: Any) -> list[ColumnMapping]:
             raise MappingValidationError(
                 f"Column '{name}' must define at least one source"
             )
-        columns.append(ColumnMapping(name=name, sources=sources))
+        columns.append(
+            ColumnMapping(
+                name=name,
+                sources=sources,
+                transform=str(item.get("transform", "")),
+            )
+        )
     return columns
 
 
@@ -209,9 +223,27 @@ def _parse_sources(payload: Any, column_name: str) -> list[SourceMapping]:
                 strip_chars=str(item.get("strip_chars", "")),
                 transform=str(item.get("transform", "")),
                 dictionary=str(item.get("dictionary", "")),
+                condition=_parse_source_condition(item.get("condition"), column_name),
             )
         )
     return sources
+
+
+def _parse_source_condition(payload: Any, column_name: str) -> SourceCondition | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise MappingValidationError(
+            f"Column '{column_name}' source condition must be a mapping"
+        )
+    return SourceCondition(
+        subfield=_required_string(
+            payload, "subfield", f"column '{column_name}' condition"
+        ),
+        equals=_required_string(
+            payload, "equals", f"column '{column_name}' condition"
+        ),
+    )
 
 
 def _parse_static_columns(payload: Any) -> list[StaticColumn]:
@@ -274,3 +306,11 @@ def _validate_mapping(mapping: MARCMapping) -> None:
                     raise MappingValidationError(
                         f"Unknown authorized value dictionary: {source.dictionary}"
                     )
+            elif source.transform and source.transform != "extract_year_regex":
+                raise MappingValidationError(
+                    f"Unsupported source transform: {source.transform}"
+                )
+        if column.transform and column.transform != "extract_year_regex":
+            raise MappingValidationError(
+                f"Unsupported column transform: {column.transform}"
+            )

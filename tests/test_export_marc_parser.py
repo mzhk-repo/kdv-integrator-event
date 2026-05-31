@@ -13,6 +13,7 @@ from src.export_module.marc.mapping_loader import (  # noqa: E402
     ColumnMapping,
     ExportDictionaries,
     MARCMapping,
+    SourceCondition,
     SourceMapping,
     StaticColumn,
 )
@@ -169,6 +170,109 @@ def test_has_file_link_rejects_wrong_label_missing_url_or_split_fields():
     assert parser.has_file_link(wrong_label) is False
     assert parser.has_file_link(missing_url) is False
     assert parser.has_file_link(split_fields) is False
+
+
+def test_source_condition_extracts_url_only_from_856_file_field():
+    mapping = replace(
+        _mapping(),
+        columns=[
+            ColumnMapping(
+                name="url",
+                sources=[
+                    SourceMapping(
+                        field="856",
+                        subfields=["u"],
+                        condition=SourceCondition(subfield="y", equals="Файл"),
+                    )
+                ],
+            )
+        ],
+        static_columns=[],
+        required_columns=["url"],
+    )
+    parser = MARCParser(mapping)
+    marcxml = """
+<record xmlns="http://www.loc.gov/MARC21/slim">
+  <datafield tag="856">
+    <subfield code="u">https://repo.example/handle</subfield>
+    <subfield code="y">Запис в репозиторії</subfield>
+  </datafield>
+  <datafield tag="856">
+    <subfield code="u">https://repo.example/file.pdf</subfield>
+    <subfield code="y">Файл</subfield>
+  </datafield>
+</record>
+""".strip()
+
+    parsed = parser.parse_record(marcxml)
+
+    assert parsed == {"url": "https://repo.example/file.pdf"}
+
+
+def test_source_condition_returns_none_when_856_label_does_not_match():
+    mapping = replace(
+        _mapping(),
+        columns=[
+            ColumnMapping(
+                name="url",
+                sources=[
+                    SourceMapping(
+                        field="856",
+                        subfields=["u"],
+                        condition=SourceCondition(subfield="y", equals="Файл"),
+                    )
+                ],
+            )
+        ],
+        static_columns=[],
+        required_columns=["url"],
+    )
+    parser = MARCParser(mapping)
+    marcxml = """
+<record xmlns="http://www.loc.gov/MARC21/slim">
+  <datafield tag="856">
+    <subfield code="u">https://repo.example/handle</subfield>
+    <subfield code="y">Запис в репозиторії</subfield>
+  </datafield>
+</record>
+""".strip()
+
+    parsed = parser.parse_record(marcxml)
+
+    assert parsed == {"url": None}
+
+
+def test_extract_year_regex_column_transform_prefers_264_before_260():
+    mapping = replace(
+        _mapping(),
+        columns=[
+            ColumnMapping(
+                name="Рік видання",
+                sources=[
+                    SourceMapping(field="264", subfields=["c"]),
+                    SourceMapping(field="260", subfields=["c"]),
+                ],
+                transform="extract_year_regex",
+            )
+        ],
+        static_columns=[],
+        required_columns=["Рік видання"],
+    )
+    parser = MARCParser(mapping)
+    marcxml = """
+<record xmlns="http://www.loc.gov/MARC21/slim">
+  <datafield tag="260">
+    <subfield code="c">1998.</subfield>
+  </datafield>
+  <datafield tag="264">
+    <subfield code="c">©2024.</subfield>
+  </datafield>
+</record>
+""".strip()
+
+    parsed = parser.parse_record(marcxml)
+
+    assert parsed == {"Рік видання": "2024"}
 
 
 def test_unknown_authorized_value_follows_keep_code_policy():

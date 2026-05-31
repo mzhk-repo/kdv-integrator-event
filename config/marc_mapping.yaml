@@ -11,12 +11,28 @@ columns:
         join: " "
         strip_chars: " /:"
 
+  - name: "Рік видання"
+    sources:
+      - field: "264"
+        subfields: ["c"]
+      - field: "260"
+        subfields: ["c"]
+    transform: "extract_year_regex"
+
   - name: "literature_type"
     sources:
       - field: "993"
         subfields: ["a"]
         transform: "authorized_value"
         dictionary: "itemtypes"
+
+  - name: "url"
+    sources:
+      - field: "856"
+        subfields: ["u"]
+        condition:
+          subfield: "y"
+          equals: "Файл"
 
 static_columns:
   - name: "Бібліотека-отримувач"
@@ -28,7 +44,6 @@ static_columns:
     reason: "Фіксоване значення для downstream import"
 
 required_columns:
-  - "ID Запису"
   - "title"
   - "literature_type"
-  - "Бібліотека-отримувач"
+  - "url"
