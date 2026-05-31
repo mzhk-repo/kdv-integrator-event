@@ -74,7 +74,7 @@ def test_cli_passes_runtime_options_to_orchestrator(monkeypatch):
     monkeypatch.setattr(export_cli, "_run_export", fake_run_export)
 
     exit_code = export_cli.main(
-        ["--dry-run", "--biblionumber-from", "1000", "--biblionumber-to", "1250"]
+        ["--dry-run", "--export-mode", "file-links", "--biblionumber-from", "1000", "--biblionumber-to", "1250"]
     )
 
     assert exit_code == 0
@@ -82,3 +82,4 @@ def test_cli_passes_runtime_options_to_orchestrator(monkeypatch):
     assert captured["options"].dry_run is True
     assert captured["options"].biblionumber_from == 1000
     assert captured["options"].biblionumber_to == 1250
+    assert captured["options"].export_mode == "file-links"

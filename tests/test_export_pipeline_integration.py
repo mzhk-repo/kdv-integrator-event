@@ -230,6 +230,10 @@ def _marcxml(biblionumber: int) -> str:
       <datafield tag=\"942\">
         <subfield code=\"c\">{item_type}</subfield>
       </datafield>
+      <datafield tag=\"856\">
+        <subfield code=\"u\">https://repo.example/{biblionumber}.pdf</subfield>
+        <subfield code=\"y\">Файл</subfield>
+      </datafield>
     </record>
     """
 
@@ -239,7 +243,7 @@ def test_happy_path_five_records(tmp_path):
         tmp_path, pages=[[101, 102], [103, 104], [105]]
     )
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert len(rows) == 5
@@ -263,7 +267,7 @@ def test_drive_mount_copy_fail_marks_failed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(shutil, "copyfileobj", failing_copy)
 
-    assert orchestrator.run(RuntimeOptions()) == 2
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 2
 
     rows = _rows(repo)
     assert rows[0]["status"] == "failed"
@@ -278,7 +282,7 @@ def test_graph_fail_after_drive_copy_keeps_gdrive_uploaded(tmp_path):
         tmp_path, pages=[[101]], graph=graph
     )
 
-    assert orchestrator.run(RuntimeOptions()) == 2
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 2
 
     rows = _rows(repo)
     assert rows[0]["status"] == "gdrive_uploaded"
@@ -308,7 +312,7 @@ def test_recovery_after_graph_success_marks_completed_without_resend(tmp_path):
         run_id_factory=lambda: "new-run",
     )
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert rows[0]["status"] == "completed"
@@ -325,7 +329,7 @@ def test_dry_run_no_side_effects(tmp_path):
     )
     orchestrator, repo, _koha, graph, config = _orchestrator(tmp_path, pages=[[101]])
 
-    assert orchestrator.run(RuntimeOptions(dry_run=True)) == 0
+    assert orchestrator.run(RuntimeOptions(dry_run=True, export_mode="file-links")) == 0
 
     assert _rows(repo) == []
     assert graph.calls == []
@@ -340,7 +344,7 @@ def test_dry_run_no_side_effects(tmp_path):
 def test_zero_candidates_returns_zero(tmp_path):
     orchestrator, repo, koha, graph, config = _orchestrator(tmp_path, pages=[[]])
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     assert _rows(repo) == []
     assert koha.marcxml_requests == []
@@ -353,7 +357,7 @@ def test_keyset_pagination_all_pages_processed(tmp_path):
         tmp_path, pages=[[101, 102], [103, 104], [105]]
     )
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     assert [row["biblionumber"] for row in _rows(repo)] == [
         101,
@@ -372,7 +376,7 @@ def test_biblionumber_range_export_only_requested_records(tmp_path):
     )
 
     assert orchestrator.run(
-        RuntimeOptions(biblionumber_from=101, biblionumber_to=103)
+        RuntimeOptions(biblionumber_from=101, biblionumber_to=103, export_mode="file-links")
     ) == 0
 
     assert koha.fetch_kwargs == [
@@ -403,7 +407,7 @@ def test_part_file_cleanup_on_copy_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(shutil, "copyfileobj", failing_copy)
 
-    assert orchestrator.run(RuntimeOptions()) == 2
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 2
 
     assert not list(Path(config.export_gdrive_root_path).glob("*/*.part"))
     assert not list(Path(config.export_gdrive_root_path).glob("*/*.xlsx"))
@@ -412,8 +416,8 @@ def test_part_file_cleanup_on_copy_error(tmp_path, monkeypatch):
 def test_no_duplicate_export_on_second_run(tmp_path):
     orchestrator, repo, _koha, graph, config = _orchestrator(tmp_path, pages=[[101]])
 
-    assert orchestrator.run(RuntimeOptions()) == 0
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert len(rows) == 1
@@ -427,7 +431,7 @@ def test_static_columns_and_authorized_values_in_xlsx(tmp_path):
         tmp_path, pages=[[101, 102]]
     )
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     copied_files = _copied_xlsx_files(config)
     assert len(copied_files) == 1

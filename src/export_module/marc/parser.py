@@ -19,17 +19,8 @@ class MARCParser:
         self.mapping = mapping
 
     def parse_record(self, marcxml: str) -> dict[str, str | None] | None:
-        try:
-            root = ET.fromstring(marcxml)
-        except ET.ParseError as exc:
-            LOGGER.warning("marc_parse_failed", extra={"error": str(exc)})
-            return None
-
-        record = _find_record(root)
+        record = _parse_marc_record(marcxml)
         if record is None:
-            LOGGER.warning(
-                "marc_parse_failed", extra={"error": "record element not found"}
-            )
             return None
 
         parsed: dict[str, str | None] = {}
@@ -45,6 +36,12 @@ class MARCParser:
         self, dictionary_id: str, raw_code: str | None
     ) -> str | None:
         return self.mapping.dictionaries.apply_authorized_value(dictionary_id, raw_code)
+
+    def has_file_link(self, marcxml: str) -> bool:
+        record = _parse_marc_record(marcxml)
+        if record is None:
+            return False
+        return _has_856_file_link(record)
 
     def _extract_column(
         self, record: ET.Element, sources: list[SourceMapping]
@@ -87,6 +84,42 @@ class MARCParser:
             raise MappingValidationError(f"Unsupported transform: {source.transform}")
 
         return value
+
+
+def _parse_marc_record(marcxml: str) -> ET.Element | None:
+    try:
+        root = ET.fromstring(marcxml)
+    except ET.ParseError as exc:
+        LOGGER.warning("marc_parse_failed", extra={"error": str(exc)})
+        return None
+
+    record = _find_record(root)
+    if record is None:
+        LOGGER.warning(
+            "marc_parse_failed", extra={"error": "record element not found"}
+        )
+    return record
+
+
+def _has_856_file_link(record: ET.Element) -> bool:
+    for datafield in record:
+        if _local_name(datafield.tag) != "datafield":
+            continue
+        if datafield.attrib.get("tag") != "856":
+            continue
+        has_file_label = False
+        has_url = False
+        for subfield in datafield:
+            if _local_name(subfield.tag) != "subfield":
+                continue
+            value = (subfield.text or "").strip()
+            if subfield.attrib.get("code") == "y" and value == "Файл":
+                has_file_label = True
+            if subfield.attrib.get("code") == "u" and value:
+                has_url = True
+        if has_file_label and has_url:
+            return True
+    return False
 
 
 def _find_record(root: ET.Element) -> ET.Element | None:

@@ -9,7 +9,11 @@ from pathlib import Path
 from tempfile import gettempdir
 from uuid import uuid4
 
-from src.export_module.config import ExportConfig, RuntimeOptions
+from src.export_module.config import (
+    EXPORT_MODE_FILE_LINKS,
+    ExportConfig,
+    RuntimeOptions,
+)
 from src.export_module.db.repository import ExportRecord, ExportRepository
 from src.export_module.koha.client import KohaApiClient, KohaApiClientError
 from src.export_module.koha.filters import filter_exportable_biblios
@@ -43,7 +47,7 @@ class ExportOrchestrator:
         run_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self.config = config
-        self.repository = repository or ExportRepository(config.db_path)
+        self.repository = repository
         self.koha_client = koha_client or KohaApiClient(
             config.koha_base_url,
             config.koha_api_user,
@@ -81,6 +85,7 @@ class ExportOrchestrator:
         xlsx_path: str | None = None
         drive_result: DriveMountCopyResult | None = None
         preserve_staged_state_on_failure = False
+        stateful = options.export_mode == EXPORT_MODE_FILE_LINKS
         stage = "start"
         records_count = 0
         candidates_count = 0
@@ -92,6 +97,7 @@ class ExportOrchestrator:
                 "export_started",
                 extra={
                     "dry_run": options.dry_run,
+                    "export_mode": options.export_mode,
                     "biblionumber_from": biblionumber_from,
                     "biblionumber_to": biblionumber_to,
                 },
@@ -100,10 +106,13 @@ class ExportOrchestrator:
             self.config.validate()
             LOGGER.info("config_validated")
 
-            stage = "recovery_check"
-            if self._recover_staged_runs():
-                LOGGER.info("export_recovery_completed")
-                return 0
+            if stateful:
+                stage = "recovery_check"
+                if self._recover_staged_runs():
+                    LOGGER.info("export_recovery_completed")
+                    return 0
+            else:
+                LOGGER.info("stateless_mode", extra={"db_not_modified": True})
 
             stage = "koha_fetch"
             LOGGER.info(
@@ -125,19 +134,23 @@ class ExportOrchestrator:
             )
 
             stage = "filter_exportable"
-            exportable = filter_exportable_biblios(
-                candidates,
-                self.repository,
-                self.config.max_retries,
-                biblionumber_from=biblionumber_from,
-                biblionumber_to=biblionumber_to,
-            )
+            if stateful:
+                exportable = filter_exportable_biblios(
+                    candidates,
+                    self._repository(),
+                    self.config.max_retries,
+                    biblionumber_from=biblionumber_from,
+                    biblionumber_to=biblionumber_to,
+                )
+            else:
+                exportable = [dict(candidate) for candidate in candidates]
             exportable_count = len(exportable)
             LOGGER.info(
                 "exportable_filtered",
                 extra={
                     "candidates": candidates_count,
                     "exportable": exportable_count,
+                    "stateful": stateful,
                 },
             )
             if not exportable:
@@ -146,12 +159,26 @@ class ExportOrchestrator:
 
             stage = "marc_parsing"
             LOGGER.info("marc_parsing_started", extra={"records": exportable_count})
-            records = self._parse_records(exportable)
+            selected_biblios, records, file_link_skipped, parse_skipped = self._parse_records(
+                exportable, require_file_link=stateful
+            )
             records_count = len(records)
+            if stateful:
+                LOGGER.info(
+                    "marc_file_link_filter_completed",
+                    extra={
+                        "checked": exportable_count,
+                        "matched": len(selected_biblios),
+                        "skipped": file_link_skipped,
+                    },
+                )
             LOGGER.info(
                 "marc_parsing_completed",
-                extra={"records": records_count, "skipped": exportable_count - records_count},
+                extra={"records": records_count, "skipped": file_link_skipped + parse_skipped},
             )
+            if not records:
+                LOGGER.info("export_no_candidates")
+                return 0
 
             stage = "xlsx_generation"
             xlsx_path = self.xlsx_generator.generate(records, run_id)
@@ -169,35 +196,39 @@ class ExportOrchestrator:
                 LOGGER.info("export_dry_run", extra={"xlsx_path": dry_path})
                 return 0
 
-            stage = "pending_reservation"
-            biblionumbers = [_extract_biblionumber(record) for record in exportable]
-            self.repository.insert_pending(biblionumbers, run_id)
-            LOGGER.info(
-                "pending_reserved",
-                extra={"records": len(biblionumbers), "status": "pending"},
-            )
-            self.repository.mark_xlsx_generated(run_id, Path(xlsx_path).name)
-            LOGGER.info(
-                "state_xlsx_generated",
-                extra={"xlsx_filename": Path(xlsx_path).name, "status": "xlsx_generated"},
-            )
+            if stateful:
+                stage = "pending_reservation"
+                biblionumbers = [_extract_biblionumber(record) for record in selected_biblios]
+                self._repository().insert_pending(biblionumbers, run_id)
+                LOGGER.info(
+                    "pending_reserved",
+                    extra={"records": len(biblionumbers), "status": "pending"},
+                )
+                self._repository().mark_xlsx_generated(run_id, Path(xlsx_path).name)
+                LOGGER.info(
+                    "state_xlsx_generated",
+                    extra={"xlsx_filename": Path(xlsx_path).name, "status": "xlsx_generated"},
+                )
+            else:
+                LOGGER.info("db_not_modified", extra={"export_mode": options.export_mode})
 
             stage = "gdrive_copy"
             LOGGER.info("gdrive_copy_started", extra={"xlsx_path": xlsx_path})
             drive_result = self.drive_mount_service.copy_to_mount(xlsx_path, run_id)
-            self.repository.mark_gdrive_uploaded(
-                run_id, drive_result.file_path, drive_result.folder_path
-            )
+            if stateful:
+                self._repository().mark_gdrive_uploaded(
+                    run_id, drive_result.file_path, drive_result.folder_path
+                )
             LOGGER.info(
                 "gdrive_uploaded",
                 extra={
                     "gdrive_file_path": drive_result.file_path,
                     "gdrive_folder_path": drive_result.folder_path,
                     "gdrive_skipped_existing": drive_result.was_skipped,
-                    "status": "gdrive_uploaded",
+                    "status": "gdrive_uploaded" if stateful else "stateless",
                 },
             )
-            preserve_staged_state_on_failure = True
+            preserve_staged_state_on_failure = stateful
 
             stage = "graph_email"
             LOGGER.info(
@@ -207,15 +238,17 @@ class ExportOrchestrator:
             email_result = self.graph_email_service.send_via_graph(
                 records, drive_result, xlsx_path, run_id
             )
-            self.repository.mark_email_sent(run_id, email_result.message_id)
+            if stateful:
+                self._repository().mark_email_sent(run_id, email_result.message_id)
             LOGGER.info(
                 "graph_email_sent",
-                extra={"message_id": email_result.message_id, "status": "email_sent"},
+                extra={"message_id": email_result.message_id, "status": "email_sent" if stateful else "stateless"},
             )
-            self.repository.mark_completed(run_id)
+            if stateful:
+                self._repository().mark_completed(run_id)
             LOGGER.info(
                 "export_completed",
-                extra={"records_exported": len(records), "status": "completed"},
+                extra={"records_exported": len(records), "status": "completed" if stateful else "stateless"},
             )
             return 0
         except Exception as exc:
@@ -231,13 +264,18 @@ class ExportOrchestrator:
                     "gdrive_file_path": drive_result.file_path if drive_result else None,
                 },
             )
-            if not preserve_staged_state_on_failure:
-                self.repository.mark_failed(run_id, str(exc))
+            if stateful and not preserve_staged_state_on_failure:
+                self._repository().mark_failed(run_id, str(exc))
             return 2
         finally:
             if xlsx_path and os.path.exists(xlsx_path):
                 os.unlink(xlsx_path)
             reset_run_id(run_token)
+
+    def _repository(self) -> ExportRepository:
+        if self.repository is None:
+            self.repository = ExportRepository(self.config.db_path)
+        return self.repository
 
     def _recover_staged_runs(self) -> bool:
         recoverable = self.repository.get_recoverable_runs()
@@ -310,15 +348,26 @@ class ExportOrchestrator:
         )
         self.repository.mark_failed(run_id, reason)
 
-    def _parse_records(self, biblios: Iterable[dict]) -> list[dict[str, str | None]]:
+    def _parse_records(
+        self, biblios: Iterable[dict], require_file_link: bool = False
+    ) -> tuple[list[dict], list[dict[str, str | None]], int, int]:
+        selected_biblios: list[dict] = []
         records: list[dict[str, str | None]] = []
+        file_link_skipped = 0
+        parse_skipped = 0
         for biblio in biblios:
             biblionumber = _extract_biblionumber(biblio)
             marcxml = self.koha_client.fetch_biblio_marcxml(biblionumber)
+            if require_file_link and not self.marc_parser.has_file_link(marcxml):
+                file_link_skipped += 1
+                continue
             parsed = self.marc_parser.parse_record(marcxml)
             if parsed is not None:
+                selected_biblios.append(dict(biblio))
                 records.append(parsed)
-        return records
+            else:
+                parse_skipped += 1
+        return selected_biblios, records, file_link_skipped, parse_skipped
 
     @staticmethod
     def _preserve_dry_run_copy(xlsx_path: str) -> str:

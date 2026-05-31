@@ -126,11 +126,17 @@ class ExportConfig:
         export_root.mkdir(parents=True, exist_ok=True)
 
 
+EXPORT_MODE_ALL = "all"
+EXPORT_MODE_FILE_LINKS = "file-links"
+EXPORT_MODE_CHOICES = (EXPORT_MODE_ALL, EXPORT_MODE_FILE_LINKS)
+
+
 @dataclass
 class RuntimeOptions:
     dry_run: bool = False
     biblionumber_from: int | None = None
     biblionumber_to: int | None = None
+    export_mode: str = EXPORT_MODE_ALL
 
 
 def parse_runtime_options(argv: list[str] | None = None) -> RuntimeOptions:
@@ -138,12 +144,19 @@ def parse_runtime_options(argv: list[str] | None = None) -> RuntimeOptions:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--biblionumber-from", type=int, default=None)
     parser.add_argument("--biblionumber-to", type=int, default=None)
+    parser.add_argument(
+        "--export-mode",
+        choices=EXPORT_MODE_CHOICES,
+        default=EXPORT_MODE_ALL,
+        help="Export mode: all is stateless, file-links uses 856$y=Файл and state DB",
+    )
     args = parser.parse_args(argv)
     _validate_runtime_range(args.biblionumber_from, args.biblionumber_to, parser)
     return RuntimeOptions(
         dry_run=args.dry_run,
         biblionumber_from=args.biblionumber_from,
         biblionumber_to=args.biblionumber_to,
+        export_mode=args.export_mode,
     )
 
 

@@ -35,6 +35,9 @@ class _MarcParser:
     def parse_record(self, marcxml):
         return {"ID Запису": "101", "Назва книги": "Тест", "Тип документа": "Книга"}
 
+    def has_file_link(self, marcxml):
+        return "file-link" in marcxml or marcxml == "<record />"
+
 
 class _XLSXGenerator:
     def __init__(self, tmp_path):
@@ -132,7 +135,7 @@ def _orchestrator(
 def test_happy_path_marks_records_completed(tmp_path):
     orchestrator, repo, xlsx_generator = _orchestrator(tmp_path)
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert len(rows) == 1
@@ -146,12 +149,51 @@ def test_biblio_id_payload_is_exported_successfully(tmp_path):
     koha = _KohaClient(biblios=[{"biblio_id": 202}], marcxml_by_id={202: "<record />"})
     orchestrator, repo, _ = _orchestrator(tmp_path, koha=koha)
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert len(rows) == 1
     assert rows[0]["biblionumber"] == 202
     assert rows[0]["status"] == "completed"
+
+
+def test_default_all_mode_is_stateless(tmp_path, caplog):
+    drive = _DriveService()
+    graph = _GraphService()
+    orchestrator, repo, _ = _orchestrator(tmp_path, drive=drive, graph=graph)
+
+    with caplog.at_level(logging.INFO):
+        assert orchestrator.run(RuntimeOptions()) == 0
+
+    assert _rows(repo) == []
+    assert len(drive.calls) == 1
+    assert len(graph.calls) == 1
+    log_events = {record.getMessage() for record in caplog.records}
+    assert "stateless_mode" in log_events
+    assert "db_not_modified" in log_events
+
+
+def test_file_links_mode_exports_only_856_file_records(tmp_path, caplog):
+    koha = _KohaClient(
+        biblios=[{"biblionumber": 101}, {"biblionumber": 102}],
+        marcxml_by_id={101: "file-link", 102: "handle-only"},
+    )
+    orchestrator, repo, _ = _orchestrator(tmp_path, koha=koha)
+
+    with caplog.at_level(logging.INFO):
+        assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
+
+    rows = _rows(repo)
+    assert len(rows) == 1
+    assert rows[0]["biblionumber"] == 101
+    assert rows[0]["status"] == "completed"
+    filter_log = next(
+        record for record in caplog.records
+        if record.getMessage() == "marc_file_link_filter_completed"
+    )
+    assert filter_log.checked == 2
+    assert filter_log.matched == 1
+    assert filter_log.skipped == 1
 
 
 def test_drive_copy_failure_marks_failed_and_does_not_call_graph(tmp_path):
@@ -160,7 +202,7 @@ def test_drive_copy_failure_marks_failed_and_does_not_call_graph(tmp_path):
         tmp_path, drive=_DriveService(should_fail=True), graph=graph
     )
 
-    assert orchestrator.run(RuntimeOptions()) == 2
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 2
 
     rows = _rows(repo)
     assert rows[0]["status"] == "failed"
@@ -174,7 +216,7 @@ def test_graph_failure_after_copy_preserves_gdrive_uploaded(tmp_path, caplog):
     orchestrator, repo, xlsx_generator = _orchestrator(tmp_path, graph=graph)
 
     with caplog.at_level(logging.INFO):
-        assert orchestrator.run(RuntimeOptions()) == 2
+        assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 2
 
     rows = _rows(repo)
     assert rows[0]["status"] == "gdrive_uploaded"
@@ -200,7 +242,7 @@ def test_recovery_after_email_sent_marks_completed_without_resending_email(tmp_p
     graph = _GraphService()
     orchestrator, _, _ = _orchestrator(tmp_path, repository=repo, graph=graph)
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert rows[0]["status"] == "completed"
@@ -220,7 +262,7 @@ def test_recovery_from_gdrive_uploaded_continues_with_email_stage(tmp_path):
     graph = _GraphService()
     orchestrator, _, _ = _orchestrator(tmp_path, repository=repo, graph=graph)
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert rows[0]["status"] == "completed"
@@ -242,7 +284,7 @@ def test_recovery_from_xlsx_generated_continues_with_drive_and_email(tmp_path):
         tmp_path, repository=repo, drive=drive, graph=graph
     )
 
-    assert orchestrator.run(RuntimeOptions()) == 0
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert rows[0]["status"] == "completed"
@@ -265,7 +307,7 @@ def test_recovery_missing_gdrive_file_marks_failed_and_continues_export(tmp_path
     orchestrator, _, _ = _orchestrator(tmp_path, repository=repo, graph=graph)
 
     with caplog.at_level(logging.INFO):
-        assert orchestrator.run(RuntimeOptions()) == 0
+        assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert [(row["run_id"], row["status"]) for row in rows] == [
@@ -290,7 +332,7 @@ def test_recovery_missing_xlsx_file_marks_failed_and_continues_export(tmp_path, 
     orchestrator, _, _ = _orchestrator(tmp_path, repository=repo, drive=drive)
 
     with caplog.at_level(logging.INFO):
-        assert orchestrator.run(RuntimeOptions()) == 0
+        assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
 
     rows = _rows(repo)
     assert [(row["run_id"], row["status"]) for row in rows] == [
@@ -313,7 +355,7 @@ def test_dry_run_does_not_write_db_or_call_side_effects(tmp_path, caplog):
     )
 
     with caplog.at_level(logging.INFO):
-        assert orchestrator.run(RuntimeOptions(dry_run=True)) == 0
+        assert orchestrator.run(RuntimeOptions(dry_run=True, export_mode="file-links")) == 0
 
     assert _rows(repo) == []
     assert drive.calls == []

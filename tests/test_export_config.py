@@ -38,6 +38,7 @@ EXPORT_ENV_KEYS = {
     "SERVER_ENV",
     "EXPORT_BIBLIONUMBER_FROM",
     "EXPORT_BIBLIONUMBER_TO",
+    "EXPORT_MODE",
 }
 
 
@@ -114,6 +115,25 @@ def test_export_gdrive_root_path_outside_mount_is_rejected(monkeypatch, tmp_path
 def test_dry_run_cli_sets_runtime_options():
     assert parse_runtime_options(["--dry-run"]).dry_run is True
     assert parse_runtime_options([]).dry_run is False
+
+
+def test_export_mode_cli_sets_runtime_options():
+    assert parse_runtime_options([]).export_mode == "all"
+    assert parse_runtime_options(["--export-mode", "file-links"]).export_mode == "file-links"
+    assert parse_runtime_options(["--export-mode", "all"]).export_mode == "all"
+
+
+def test_export_mode_env_is_ignored(monkeypatch):
+    monkeypatch.setenv("EXPORT_MODE", "file-links")
+
+    options = parse_runtime_options([])
+
+    assert options.export_mode == "all"
+
+
+def test_export_mode_rejects_invalid_value():
+    with pytest.raises(SystemExit):
+        parse_runtime_options(["--export-mode", "bad-mode"])
 
 
 def test_env_file_uses_sops_style_resolution_without_overriding_existing_env(

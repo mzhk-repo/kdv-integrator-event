@@ -165,7 +165,7 @@ set +a
 exec "$@"
 ' -- python -m src.export_module --health-check
 
-# Пробний запуск: XLSX генерується, але нічого не записується/не надсилається
+# Пробний stateless запуск: всі записи/range, без SQLite writes, Drive/Graph вимкнені
 docker exec "$KDV_API_CID" sh -lc '
 set -a
 . /run/secrets/app_env_payload
@@ -173,13 +173,21 @@ set +a
 exec "$@"
 ' -- python -m src.export_module --dry-run
 
-# Звичайний запуск: повний export всіх нових/retry записів
+# Дефолтний stateless запуск: всі записи/range, без 856-фільтра і без SQLite writes
 docker exec "$KDV_API_CID" sh -lc '
 set -a
 . /run/secrets/app_env_payload
 set +a
 exec "$@"
 ' -- python -m src.export_module
+
+# Cron/production stateful запуск: тільки записи з 856$u, де 856$y == "Файл"
+docker exec "$KDV_API_CID" sh -lc '
+set -a
+. /run/secrets/app_env_payload
+set +a
+exec "$@"
+' -- python -m src.export_module --export-mode file-links
 
 # Кастомний діапазон: export тільки biblionumber 1000..1250
 docker exec "$KDV_API_CID" sh -lc '
@@ -205,13 +213,13 @@ set +a
 exec "$@"
 ' -- python -m src.export_module --biblionumber-to 200
 
-# Dry-run з діапазоном (комбінація)
+# Dry-run з діапазоном у stateful file-links режимі (комбінація)
 docker exec "$KDV_API_CID" sh -lc '
 set -a
 . /run/secrets/app_env_payload
 set +a
 exec "$@"
-' -- python -m src.export_module --dry-run --biblionumber-from 1000 --biblionumber-to 1250
+' -- python -m src.export_module --dry-run --export-mode file-links --biblionumber-from 1000 --biblionumber-to 1250
 
 # Скинути stuck pending записи для конкретного run_id
 docker exec "$KDV_API_CID" sh -lc '
@@ -341,6 +349,8 @@ EXPORT_STATE_HOST_PATH=/srv/kdv-integrator/export-state
 EXPORT_DB_PATH=/data/kdv_export_state/export_state.db
 #   Файл має знаходитись на dedicated bind mount, змонтованому в контейнер як /data/kdv_export_state.
 #   Каталог створюється автоматично, якщо не існує.
+#   SQLite використовується тільки в режимі --export-mode file-links.
+#   Дефолтний режим all є stateless і не пише export rows.
 
 # ── Google Drive mount ────────────────────────────────────────────────────────
 EXPORT_GDRIVE_ROOT_PATH=/mnt/drive/KohaExports
@@ -368,6 +378,7 @@ PUSHGATEWAY_URL=http://pushgateway:9091
 - ❌ `GDRIVE_SERVICE_ACCOUNT_FILE` для export-модуля — Google API не потрібний.
 - ❌ `SMTP_HOST`, `SMTP_PASSWORD` — SMTP не використовується.
 - ❌ `EXPORT_BIBLIONUMBER_FROM/TO` — range тільки через CLI flags.
+- ❌ `EXPORT_MODE` — режим тільки через CLI flag `--export-mode`.
 
 ---
 
@@ -545,7 +556,9 @@ print('Config OK:', cfg.export_gdrive_root_path)
 
 ## 4. Staged-idempotency: як працює захист від дублювань
 
-Модуль використовує **staged-idempotency** — підхід, при якому кожен зовнішній side effect (copy на диск, надсилання email) фіксується у SQLite окремим статусом. Це дозволяє безпечно відновлювати pipeline після будь-якого збою.
+Модуль використовує **staged-idempotency** тільки в режимі `--export-mode file-links` — підхід, при якому кожен зовнішній side effect (copy на диск, надсилання email) фіксується у SQLite окремим статусом. Це дозволяє безпечно відновлювати pipeline після будь-якого збою.
+
+Дефолтний режим `--export-mode all` є **stateless**: він експортує всі записи/range без перевірки `856$y == "Файл"`, не виконує recovery і не пише export rows у SQLite. Цей режим може повторно експортувати ті самі записи.
 
 **Стани запису:**
 
@@ -1186,9 +1199,9 @@ pytest tests/test_export_mapping_loader.py -q
 **Smoke-тести:**
 
 - [ ] Swarm health-check із секції 2.2 (`--health-check`) → `exit 0`.
-- [ ] Swarm dry-run із секції 2.2 (`--dry-run`) → `exit 0`, XLSX у `/tmp/dry_run/` виглядає коректно.
-- [ ] Swarm range dry-run із секції 2.2 (`--dry-run --biblionumber-from 1 --biblionumber-to 10`) → `exit 0`.
-- [ ] Після dry-run SQLite чистий (0 `pending`/`completed` записів).
+- [ ] Swarm stateless dry-run із секції 2.2 (`--dry-run`) → `exit 0`, XLSX у `/tmp/dry_run/` виглядає коректно.
+- [ ] Swarm file-links range dry-run (`--dry-run --export-mode file-links --biblionumber-from 1 --biblionumber-to 10`) → `exit 0`.
+- [ ] Після stateless запуску SQLite чистий (0 нових `pending`/`completed` записів).
 
 **Перший production run:**
 
@@ -1200,7 +1213,7 @@ pytest tests/test_export_mapping_loader.py -q
   . /run/secrets/app_env_payload
   set +a
   exec "$@"
-  ' -- python -m src.export_module --biblionumber-from 1 --biblionumber-to 100
+  ' -- python -m src.export_module --export-mode file-links --biblionumber-from 1 --biblionumber-to 100
   ```
 - [ ] Перевірити лог на `export_success` без `export_failed`.
 - [ ] Підтвердити, що файл з'явився у `/mnt/drive/KohaExports/{year}/`.

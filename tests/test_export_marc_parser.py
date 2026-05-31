@@ -128,6 +128,49 @@ def test_authorized_value_book_exports_as_cyrillic_label():
     assert parsed["Тип документа"] == "Книга"
 
 
+def test_has_file_link_requires_856_u_and_y_file_in_same_field():
+    parser = MARCParser(_mapping())
+    marcxml = """
+<record xmlns="http://www.loc.gov/MARC21/slim">
+  <datafield tag="856">
+    <subfield code="u">https://repo.example/file.pdf</subfield>
+    <subfield code="y">Файл</subfield>
+  </datafield>
+</record>
+""".strip()
+
+    assert parser.has_file_link(marcxml) is True
+
+
+def test_has_file_link_rejects_wrong_label_missing_url_or_split_fields():
+    parser = MARCParser(_mapping())
+    wrong_label = """
+<record xmlns="http://www.loc.gov/MARC21/slim">
+  <datafield tag="856">
+    <subfield code="u">https://repo.example/handle</subfield>
+    <subfield code="y">Запис в репозиторії</subfield>
+  </datafield>
+</record>
+""".strip()
+    missing_url = """
+<record xmlns="http://www.loc.gov/MARC21/slim">
+  <datafield tag="856">
+    <subfield code="y">Файл</subfield>
+  </datafield>
+</record>
+""".strip()
+    split_fields = """
+<record xmlns="http://www.loc.gov/MARC21/slim">
+  <datafield tag="856"><subfield code="u">https://repo.example/file.pdf</subfield></datafield>
+  <datafield tag="856"><subfield code="y">Файл</subfield></datafield>
+</record>
+""".strip()
+
+    assert parser.has_file_link(wrong_label) is False
+    assert parser.has_file_link(missing_url) is False
+    assert parser.has_file_link(split_fields) is False
+
+
 def test_unknown_authorized_value_follows_keep_code_policy():
     mapping = _mapping(unknown_policy="keep_code")
     itemtypes = mapping.dictionaries.authorized_values["itemtypes"]
