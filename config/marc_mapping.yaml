@@ -11,7 +11,7 @@ columns:
         join: " "
         strip_chars: " /:"
 
-  - name: "Рік видання"
+  - name: "publication_date"
     sources:
       - field: "264"
         subfields: ["c"]

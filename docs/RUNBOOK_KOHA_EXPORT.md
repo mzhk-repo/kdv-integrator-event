@@ -250,7 +250,7 @@ set -a
 . /run/secrets/app_env_payload
 set +a
 exec "$@"
-' -- python -m src.export_module
+' -- python -m src.export_module --export-mode file-links
 echo "Exit code: $?"
 ```
 
