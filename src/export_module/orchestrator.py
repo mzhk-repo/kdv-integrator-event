@@ -244,6 +244,7 @@ class ExportOrchestrator:
         if not recoverable:
             return False
 
+        recovered_any = False
         by_run_id: dict[str, list[ExportRecord]] = {}
         for record in recoverable:
             by_run_id.setdefault(record.run_id, []).append(record)
@@ -253,10 +254,18 @@ class ExportOrchestrator:
             if "email_sent" in statuses:
                 self.repository.mark_completed(run_id)
                 LOGGER.info("export_recovered_completed", extra={"run_id": run_id})
+                recovered_any = True
                 continue
 
             if "gdrive_uploaded" in statuses:
                 record = _first_record_with_status(records, "gdrive_uploaded")
+                if not _existing_path(record.gdrive_file_path):
+                    self._mark_recovery_missing_artifact(
+                        run_id=run_id,
+                        status="gdrive_uploaded",
+                        path=record.gdrive_file_path,
+                    )
+                    continue
                 drive_result = _drive_result_from_record(record)
                 email_result = self.graph_email_service.send_via_graph(
                     [], drive_result, record.gdrive_file_path or "", run_id
@@ -264,11 +273,19 @@ class ExportOrchestrator:
                 self.repository.mark_email_sent(run_id, email_result.message_id)
                 self.repository.mark_completed(run_id)
                 LOGGER.info("export_recovered_email", extra={"run_id": run_id})
+                recovered_any = True
                 continue
 
             if "xlsx_generated" in statuses:
                 record = _first_record_with_status(records, "xlsx_generated")
                 xlsx_path = record.xlsx_filename or ""
+                if not _existing_path(xlsx_path):
+                    self._mark_recovery_missing_artifact(
+                        run_id=run_id,
+                        status="xlsx_generated",
+                        path=xlsx_path,
+                    )
+                    continue
                 drive_result = self.drive_mount_service.copy_to_mount(xlsx_path, run_id)
                 self.repository.mark_gdrive_uploaded(
                     run_id, drive_result.file_path, drive_result.folder_path
@@ -279,8 +296,19 @@ class ExportOrchestrator:
                 self.repository.mark_email_sent(run_id, email_result.message_id)
                 self.repository.mark_completed(run_id)
                 LOGGER.info("export_recovered_drive", extra={"run_id": run_id})
+                recovered_any = True
 
-        return True
+        return recovered_any
+
+    def _mark_recovery_missing_artifact(
+        self, run_id: str, status: str, path: str | None
+    ) -> None:
+        reason = f"recovery_missing_artifact:{status}:{path or 'missing_path'}"
+        LOGGER.warning(
+            "recovery_missing_artifact",
+            extra={"run_id": run_id, "status": status, "path": path},
+        )
+        self.repository.mark_failed(run_id, reason)
 
     def _parse_records(self, biblios: Iterable[dict]) -> list[dict[str, str | None]]:
         records: list[dict[str, str | None]] = []
@@ -306,6 +334,10 @@ def _extract_biblionumber(record: dict) -> int:
         return int(record.get("biblionumber") or record["biblio_id"])
     except (KeyError, TypeError, ValueError) as exc:
         raise KohaApiClientError("Koha biblio item has invalid biblionumber") from exc
+
+
+def _existing_path(path: str | None) -> bool:
+    return bool(path and Path(path).is_file())
 
 
 def _first_record_with_status(records: list[ExportRecord], status: str) -> ExportRecord:

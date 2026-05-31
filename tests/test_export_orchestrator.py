@@ -212,8 +212,10 @@ def test_recovery_from_gdrive_uploaded_continues_with_email_stage(tmp_path):
     repo = ExportRepository(config.db_path)
     repo.insert_pending([101], "recover-run")
     repo.mark_xlsx_generated("recover-run", "export.xlsx")
+    gdrive_file = tmp_path / "export.xlsx"
+    gdrive_file.write_bytes(b"xlsx")
     repo.mark_gdrive_uploaded(
-        "recover-run", str(tmp_path / "export.xlsx"), str(tmp_path)
+        "recover-run", str(gdrive_file), str(tmp_path)
     )
     graph = _GraphService()
     orchestrator, _, _ = _orchestrator(tmp_path, repository=repo, graph=graph)
@@ -231,7 +233,9 @@ def test_recovery_from_xlsx_generated_continues_with_drive_and_email(tmp_path):
     config = _config(tmp_path)
     repo = ExportRepository(config.db_path)
     repo.insert_pending([101], "recover-run")
-    repo.mark_xlsx_generated("recover-run", "export.xlsx")
+    xlsx_file = tmp_path / "export.xlsx"
+    xlsx_file.write_bytes(b"xlsx")
+    repo.mark_xlsx_generated("recover-run", str(xlsx_file))
     drive = _DriveService()
     graph = _GraphService()
     orchestrator, _, _ = _orchestrator(
@@ -244,9 +248,61 @@ def test_recovery_from_xlsx_generated_continues_with_drive_and_email(tmp_path):
     assert rows[0]["status"] == "completed"
     assert rows[0]["gdrive_file_path"] is not None
     assert rows[0]["email_message_id"] == "message-1"
-    assert drive.calls == [("export.xlsx", "recover-run")]
+    assert drive.calls == [(str(tmp_path / "export.xlsx"), "recover-run")]
     assert len(graph.calls) == 1
     assert graph.calls[0][3] == "recover-run"
+
+
+def test_recovery_missing_gdrive_file_marks_failed_and_continues_export(tmp_path, caplog):
+    config = _config(tmp_path)
+    repo = ExportRepository(config.db_path)
+    repo.insert_pending([101], "recover-run")
+    repo.mark_xlsx_generated("recover-run", "export.xlsx")
+    repo.mark_gdrive_uploaded(
+        "recover-run", str(tmp_path / "missing.xlsx"), str(tmp_path)
+    )
+    graph = _GraphService()
+    orchestrator, _, _ = _orchestrator(tmp_path, repository=repo, graph=graph)
+
+    with caplog.at_level(logging.INFO):
+        assert orchestrator.run(RuntimeOptions()) == 0
+
+    rows = _rows(repo)
+    assert [(row["run_id"], row["status"]) for row in rows] == [
+        ("recover-run", "failed"),
+        ("run12345-0000-0000-0000-000000000000", "completed"),
+    ]
+    assert "recovery_missing_artifact" in rows[0]["failed_reason"]
+    assert {record.getMessage() for record in caplog.records} >= {
+        "recovery_missing_artifact",
+        "export_completed",
+    }
+    assert len(graph.calls) == 1
+    assert graph.calls[0][3] == "run12345-0000-0000-0000-000000000000"
+
+
+def test_recovery_missing_xlsx_file_marks_failed_and_continues_export(tmp_path, caplog):
+    config = _config(tmp_path)
+    repo = ExportRepository(config.db_path)
+    repo.insert_pending([101], "recover-run")
+    repo.mark_xlsx_generated("recover-run", str(tmp_path / "missing.xlsx"))
+    drive = _DriveService()
+    orchestrator, _, _ = _orchestrator(tmp_path, repository=repo, drive=drive)
+
+    with caplog.at_level(logging.INFO):
+        assert orchestrator.run(RuntimeOptions()) == 0
+
+    rows = _rows(repo)
+    assert [(row["run_id"], row["status"]) for row in rows] == [
+        ("recover-run", "failed"),
+        ("run12345-0000-0000-0000-000000000000", "completed"),
+    ]
+    assert "recovery_missing_artifact" in rows[0]["failed_reason"]
+    assert {record.getMessage() for record in caplog.records} >= {
+        "recovery_missing_artifact",
+        "export_completed",
+    }
+    assert drive.calls == [(str(tmp_path / "export_Koha_2026-05-28_120000_run12345.xlsx"), "run12345-0000-0000-0000-000000000000")]
 
 
 def test_dry_run_does_not_write_db_or_call_side_effects(tmp_path, caplog):

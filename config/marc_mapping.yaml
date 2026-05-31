@@ -24,7 +24,7 @@ static_columns:
     reason: "Потрібно для імпорту в іншу бібліотеку, MARC-джерела поки немає"
 
   - name: "Статус імпорту"
-    value: "Новий"
+    value: "Імпортовано"
     reason: "Фіксоване значення для downstream import"
 
 required_columns:

@@ -695,7 +695,7 @@ sqlite3 /data/kdv_export_state/export_state.db \
 
 **Симптом:** процес завершився після copy у `/mnt/drive`, але до надсилання email (наприклад, `SIGTERM` між `mark_gdrive_uploaded` і `send_via_graph`).
 
-**Поведінка модуля:** при наступному запуску для цього `run_id` файл на Google Drive буде **перевикористано** (пошук за `run_id` в імені файлу), copy повторно **не виконується**, перейде одразу до MS Graph email.
+**Поведінка модуля:** при наступному запуску для цього `run_id` файл на Google Drive буде **перевикористано** (пошук за `run_id` в імені файлу), copy повторно **не виконується**, перейде одразу до MS Graph email. Якщо `gdrive_file_path` більше не існує (наприклад, XLSX видалили вручну), модуль залогує `recovery_missing_artifact`, переведе старий `run_id` у `failed` і продовжить звичайний export для retry-eligible записів.
 
 **Перевірити стан:**
 
@@ -705,7 +705,7 @@ sqlite3 /data/kdv_export_state/export_state.db \
    WHERE status='gdrive_uploaded' LIMIT 10;"
 ```
 
-**Дія:** просто запустити модуль знову. Він автоматично підхопить recoverable runs:
+**Дія:** просто запустити модуль знову. Він автоматично підхопить recoverable runs або позначить відсутній artifact як `failed`:
 
 ```bash
 KDV_API_CID="$(docker ps -q --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api | head -n 1)"
