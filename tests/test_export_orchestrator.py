@@ -173,6 +173,27 @@ def test_default_all_mode_is_stateless(tmp_path, caplog):
     assert "db_not_modified" in log_events
 
 
+def test_file_links_mode_initializes_lazy_repository(tmp_path):
+    config = _config(tmp_path)
+    orchestrator = ExportOrchestrator(
+        config=config,
+        repository=None,
+        koha_client=_KohaClient(),
+        marc_parser=_MarcParser(),
+        xlsx_generator=_XLSXGenerator(tmp_path),
+        drive_mount_service=_DriveService(),
+        graph_email_service=_GraphService(),
+        run_id_factory=lambda: "run12345-0000-0000-0000-000000000000",
+    )
+
+    assert orchestrator.run(RuntimeOptions(export_mode="file-links")) == 0
+
+    assert orchestrator.repository is not None
+    rows = _rows(orchestrator.repository)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "completed"
+
+
 def test_file_links_mode_exports_only_856_file_records(tmp_path, caplog):
     koha = _KohaClient(
         biblios=[{"biblionumber": 101}, {"biblionumber": 102}],

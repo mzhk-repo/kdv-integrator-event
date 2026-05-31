@@ -278,7 +278,8 @@ class ExportOrchestrator:
         return self.repository
 
     def _recover_staged_runs(self) -> bool:
-        recoverable = self.repository.get_recoverable_runs()
+        repository = self._repository()
+        recoverable = repository.get_recoverable_runs()
         if not recoverable:
             return False
 
@@ -290,7 +291,7 @@ class ExportOrchestrator:
         for run_id, records in by_run_id.items():
             statuses = {record.status for record in records}
             if "email_sent" in statuses:
-                self.repository.mark_completed(run_id)
+                repository.mark_completed(run_id)
                 LOGGER.info("export_recovered_completed", extra={"run_id": run_id})
                 recovered_any = True
                 continue
@@ -308,8 +309,8 @@ class ExportOrchestrator:
                 email_result = self.graph_email_service.send_via_graph(
                     [], drive_result, record.gdrive_file_path or "", run_id
                 )
-                self.repository.mark_email_sent(run_id, email_result.message_id)
-                self.repository.mark_completed(run_id)
+                repository.mark_email_sent(run_id, email_result.message_id)
+                repository.mark_completed(run_id)
                 LOGGER.info("export_recovered_email", extra={"run_id": run_id})
                 recovered_any = True
                 continue
@@ -325,14 +326,14 @@ class ExportOrchestrator:
                     )
                     continue
                 drive_result = self.drive_mount_service.copy_to_mount(xlsx_path, run_id)
-                self.repository.mark_gdrive_uploaded(
+                repository.mark_gdrive_uploaded(
                     run_id, drive_result.file_path, drive_result.folder_path
                 )
                 email_result = self.graph_email_service.send_via_graph(
                     [], drive_result, xlsx_path, run_id
                 )
-                self.repository.mark_email_sent(run_id, email_result.message_id)
-                self.repository.mark_completed(run_id)
+                repository.mark_email_sent(run_id, email_result.message_id)
+                repository.mark_completed(run_id)
                 LOGGER.info("export_recovered_drive", extra={"run_id": run_id})
                 recovered_any = True
 
@@ -346,7 +347,7 @@ class ExportOrchestrator:
             "recovery_missing_artifact",
             extra={"run_id": run_id, "status": status, "path": path},
         )
-        self.repository.mark_failed(run_id, reason)
+        self._repository().mark_failed(run_id, reason)
 
     def _parse_records(
         self, biblios: Iterable[dict], require_file_link: bool = False

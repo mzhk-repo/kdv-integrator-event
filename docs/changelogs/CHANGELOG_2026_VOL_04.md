@@ -179,3 +179,11 @@
 - **Verification:** `python3 -m py_compile src/export_module/marc/mapping_loader.py src/export_module/marc/parser.py tests/test_export_mapping_loader.py tests/test_export_marc_parser.py`; `.venv/bin/python -m pytest tests/test_export_mapping_loader.py tests/test_export_marc_parser.py -q` -> `18 passed`; `.venv/bin/python -m pytest tests/test_export_mapping_loader.py tests/test_export_marc_parser.py tests/test_export_orchestrator.py tests/test_export_pipeline_integration.py -q` -> `42 passed`.
 - **Risks:** Порівняння condition точне: `equals: "Файл"` не нормалізує регістр, пробіли всередині рядка чи альтернативні підписи. `Рік видання` не додано до `required_columns`, тому відсутній/невалідний рік не блокує export.
 - **Rollback:** Прибрати `SourceCondition`, `ColumnMapping.transform`, condition/filtering у MARC parser, колонку `Рік видання` і condition-приклади з docs/config, видалити додані тести та цей changelog-запис.
+
+## 2026-05-31 — Koha Export lazy repository у stateful recovery
+
+- **Context:** Production запуск `python -m src.export_module --export-mode file-links` падав на `stage=recovery_check` з помилкою `'NoneType' object has no attribute 'get_recoverable_runs'`. Stateless `all` режим працював, бо не заходив у recovery/state DB гілку.
+- **Change:** `ExportOrchestrator._recover_staged_runs()` тепер ініціалізує SQLite repository через lazy helper `_repository()` перед читанням recoverable runs і використовує локальний repository для recovery state transitions. Додано regression-тест для `file-links` запуску без injected repository, як у реальному CLI.
+- **Verification:** `python3 -m py_compile src/export_module/orchestrator.py tests/test_export_orchestrator.py`; `.venv/bin/python -m pytest tests/test_export_orchestrator.py -q` -> `13 passed`; `.venv/bin/python -m pytest tests/test_export_cli.py tests/test_export_orchestrator.py tests/test_export_pipeline_integration.py -q` -> `28 passed`; `git diff --check -- src/export_module/orchestrator.py tests/test_export_orchestrator.py` без зауважень.
+- **Risks:** Fix не змінює схему SQLite і не додає нових side effects; `file-links` як і раніше створює/мігрує DB при першому stateful запуску.
+- **Rollback:** Повернути прямі звернення `self.repository.*` у `_recover_staged_runs()`, видалити regression-тест `test_file_links_mode_initializes_lazy_repository` і цей changelog-запис.
