@@ -57,16 +57,14 @@ class GraphEmailService:
         token = self._get_access_token()
         payload = self._build_send_mail_payload(
             records=records,
-            drive_result=drive_result,
             xlsx_path=xlsx_path,
-            run_id=run_id,
             include_attachment=include_attachment,
             attachment_size=attachment_size,
         )
         response = self._post_send_mail_with_retry(token, payload)
 
         return GraphEmailSendResult(
-            recipient=self.config.graph_to,
+            recipient=", ".join(_recipient_addresses(self.config.graph_to)),
             attachment_included=include_attachment,
             attachment_size_bytes=attachment_size,
             message_id=response.headers.get("request-id"),
@@ -134,24 +132,21 @@ class GraphEmailService:
     def _build_send_mail_payload(
         self,
         records: list[dict],
-        drive_result: DriveMountCopyResult,
         xlsx_path: str,
-        run_id: str,
         include_attachment: bool,
         attachment_size: int,
     ) -> dict[str, Any]:
         html_body = _build_html_body(
             records=records,
-            drive_result=drive_result,
-            run_id=run_id,
             include_attachment=include_attachment,
             attachment_size=attachment_size,
         )
         message: dict[str, Any] = {
-            "subject": f"Koha export {run_id[:8]}",
+            "subject": "Koha export",
             "body": {"contentType": "HTML", "content": html_body},
             "toRecipients": [
-                {"emailAddress": {"address": self.config.graph_to}}
+                {"emailAddress": {"address": address}}
+                for address in _recipient_addresses(self.config.graph_to)
             ],
         }
         if include_attachment:
@@ -175,8 +170,6 @@ def _build_file_attachment(xlsx_path: str) -> dict[str, str]:
 
 def _build_html_body(
     records: list[dict],
-    drive_result: DriveMountCopyResult,
-    run_id: str,
     include_attachment: bool,
     attachment_size: int,
 ) -> str:
@@ -187,38 +180,31 @@ def _build_html_body(
             "і не прикріплений до листа.</p>"
         )
 
-    rows = "".join(_record_row(record) for record in records[:50])
-    if not rows:
-        rows = '<tr><td colspan="3">Немає записів для відображення</td></tr>'
+    items = "".join(_biblio_id_item(record) for record in records[:50])
+    if not items:
+        items = "<li>Немає записів для відображення</li>"
 
     return (
         "<html><body>"
-        f"<p>run_id: {html.escape(run_id)}</p>"
         f"<p>Кількість експортованих записів: {len(records)}</p>"
-        f"<p>Google Drive файл: {html.escape(drive_result.file_path)}</p>"
-        f"<p>Google Drive папка: {html.escape(drive_result.folder_path)}</p>"
         f"<p>Розмір XLSX: {attachment_size} bytes</p>"
         f"{warning}"
-        "<table><thead><tr>"
-        "<th>biblionumber</th><th>Автор</th><th>Назва</th>"
-        "</tr></thead><tbody>"
-        f"{rows}"
-        "</tbody></table>"
+        "<p>Експортовані biblio_id:</p>"
+        f"<ul>{items}</ul>"
         "</body></html>"
     )
 
 
-def _record_row(record: dict) -> str:
-    biblionumber = _first_value(record, "biblionumber", "ID Запису")
-    author = _first_value(record, "author", "Автор")
-    title = _first_value(record, "title", "Назва", "Назва книги")
-    return (
-        "<tr>"
-        f"<td>{html.escape(str(biblionumber or ''))}</td>"
-        f"<td>{html.escape(str(author or ''))}</td>"
-        f"<td>{html.escape(str(title or ''))}</td>"
-        "</tr>"
-    )
+def _biblio_id_item(record: dict) -> str:
+    biblio_id = _first_value(record, "biblio_id", "biblionumber", "ID Запису")
+    return f"<li>{html.escape(str(biblio_id or ''))}</li>"
+
+
+def _recipient_addresses(graph_to: str) -> list[str]:
+    recipients = [address.strip() for address in graph_to.split(",") if address.strip()]
+    if not recipients:
+        raise GraphEmailServiceError("GRAPH_TO did not include any recipients")
+    return recipients
 
 
 def _first_value(record: dict, *keys: str) -> Any:

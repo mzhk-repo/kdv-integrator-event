@@ -187,3 +187,11 @@
 - **Verification:** `python3 -m py_compile src/export_module/orchestrator.py tests/test_export_orchestrator.py`; `.venv/bin/python -m pytest tests/test_export_orchestrator.py -q` -> `13 passed`; `.venv/bin/python -m pytest tests/test_export_cli.py tests/test_export_orchestrator.py tests/test_export_pipeline_integration.py -q` -> `28 passed`; `git diff --check -- src/export_module/orchestrator.py tests/test_export_orchestrator.py` без зауважень.
 - **Risks:** Fix не змінює схему SQLite і не додає нових side effects; `file-links` як і раніше створює/мігрує DB при першому stateful запуску.
 - **Rollback:** Повернути прямі звернення `self.repository.*` у `_recover_staged_runs()`, видалити regression-тест `test_file_links_mode_initializes_lazy_repository` і цей changelog-запис.
+
+## 2026-06-01 — Koha Export email body і кілька GRAPH_TO отримувачів
+
+- **Context:** Email від Koha Export містив службові деталі `run_id`, Google Drive file/folder paths і таблицю `biblionumber/Автор/Назва`. Потрібно спростити повідомлення для отримувачів і дозволити кількох адресатів через `GRAPH_TO`.
+- **Change:** `GraphEmailService` більше не додає `run_id`, Google Drive файл/папку і стару HTML-таблицю в тему/body листа. Body тепер містить кількість записів, розмір XLSX, warning для великого вкладення і список експортованих `biblio_id` з fallback на `biblionumber` / `ID Запису`. `GRAPH_TO` розбирається як comma-separated список із trim пробілів і пропуском порожніх елементів; `.env.example` оновлено прикладом двох отримувачів.
+- **Verification:** `python3 -m py_compile src/export_module/services/graph_email_service.py tests/test_graph_email_service.py`; `.venv/bin/python -m pytest tests/test_graph_email_service.py -q` -> `7 passed`.
+- **Risks:** Тема листа стала статичною `Koha export`, тому correlation за `run_id` лишається в JSON-логах, а не в email. Якщо downstream очікував таблицю автор/назва в тілі листа, тепер потрібно читати XLSX-вкладення.
+- **Rollback:** Повернути попередню `_record_row()` HTML-таблицю, одинарний `toRecipients` із сирого `GRAPH_TO`, subject із `run_id[:8]`, старий приклад `.env.example` і видалити цей changelog-запис.

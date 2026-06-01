@@ -40,7 +40,7 @@ class _Session:
         return self.responses.pop(0)
 
 
-def _config(max_attachment_bytes=1024, max_retries=3):
+def _config(max_attachment_bytes=1024, max_retries=3, graph_to="target@example.org"):
     return ExportConfig(
         enabled=True,
         koha_base_url="https://koha.example.org",
@@ -51,7 +51,7 @@ def _config(max_attachment_bytes=1024, max_retries=3):
         graph_client_id="client-id",
         graph_client_secret="super-secret-value",
         graph_sender_user_id="sender@example.org",
-        graph_to="target@example.org",
+        graph_to=graph_to,
         max_retries=max_retries,
         max_attachment_bytes=max_attachment_bytes,
     )
@@ -87,7 +87,7 @@ def test_small_file_is_sent_with_graph_attachment(tmp_path):
 
     result = service.send_via_graph(
         records=[
-            {"biblionumber": 101, "Автор": "Автор", "Назва книги": "Назва"}
+            {"biblio_id": 101, "Автор": "Автор", "Назва книги": "Назва"}
         ],
         drive_result=_drive_result(),
         xlsx_path=str(xlsx_path),
@@ -95,13 +95,24 @@ def test_small_file_is_sent_with_graph_attachment(tmp_path):
     )
 
     send_call = session.calls[1]
-    attachment = send_call["kwargs"]["json"]["message"]["attachments"][0]
+    message = send_call["kwargs"]["json"]["message"]
+    attachment = message["attachments"][0]
+    html_body = message["body"]["content"]
     assert result.attachment_included is True
     assert result.attachment_size_bytes == len(b"small payload")
     assert result.message_id == "request-1"
     assert attachment["@odata.type"] == "#microsoft.graph.fileAttachment"
     assert attachment["name"] == xlsx_path.name
     assert base64.b64decode(attachment["contentBytes"]) == b"small payload"
+    assert message["subject"] == "Koha export"
+    assert "run12345" not in message["subject"]
+    assert "run_id" not in html_body
+    assert "run12345-0000" not in html_body
+    assert "Google Drive файл" not in html_body
+    assert "Google Drive папка" not in html_body
+    assert "<table>" not in html_body
+    assert "Експортовані biblio_id" in html_body
+    assert "<li>101</li>" in html_body
 
 
 def test_large_file_is_sent_without_attachment_and_with_html_warning(tmp_path):
@@ -115,7 +126,7 @@ def test_large_file_is_sent_without_attachment_and_with_html_warning(tmp_path):
     service = _service(session, config=_config(max_attachment_bytes=3))
 
     result = service.send_via_graph(
-        records=[{"biblionumber": 101, "Назва книги": "Назва"}],
+        records=[{"biblio_id": 101, "Назва книги": "Назва"}],
         drive_result=_drive_result(),
         xlsx_path=str(xlsx_path),
         run_id="run12345-0000",
@@ -126,7 +137,39 @@ def test_large_file_is_sent_without_attachment_and_with_html_warning(tmp_path):
     assert result.attachment_included is False
     assert "attachments" not in message
     assert "Увага" in html_body
-    assert "/mnt/drive/KohaExports/2026/export.xlsx" in html_body
+    assert "/mnt/drive/KohaExports/2026/export.xlsx" not in html_body
+    assert "/mnt/drive/KohaExports/2026" not in html_body
+    assert "run12345-0000" not in html_body
+    assert "<li>101</li>" in html_body
+
+
+def test_graph_to_supports_multiple_comma_separated_recipients(tmp_path):
+    xlsx_path = _xlsx(tmp_path)
+    session = _Session(
+        [
+            _Response({"access_token": "token-value"}),
+            _Response(status_code=202),
+        ]
+    )
+    service = _service(
+        session,
+        config=_config(graph_to="first@example.org, second@example.org, ,third@example.org"),
+    )
+
+    result = service.send_via_graph(
+        records=[{"biblio_id": 101}],
+        drive_result=_drive_result(),
+        xlsx_path=str(xlsx_path),
+        run_id="run12345-0000",
+    )
+
+    message = session.calls[1]["kwargs"]["json"]["message"]
+    assert result.recipient == "first@example.org, second@example.org, third@example.org"
+    assert message["toRecipients"] == [
+        {"emailAddress": {"address": "first@example.org"}},
+        {"emailAddress": {"address": "second@example.org"}},
+        {"emailAddress": {"address": "third@example.org"}},
+    ]
 
 
 def test_graph_429_retry_succeeds(tmp_path):
