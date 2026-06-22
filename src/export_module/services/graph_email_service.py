@@ -196,7 +196,7 @@ def _build_html_body(
 
 
 def _biblio_id_item(record: dict) -> str:
-    biblio_id = _first_value(record, "biblio_id", "biblionumber", "ID Запису")
+    biblio_id = _first_value(record, "biblio_id", "biblionumber", "ID Запису", "koha_id")
     return f"<li>{html.escape(str(biblio_id or ''))}</li>"
 
 

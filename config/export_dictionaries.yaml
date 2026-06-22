@@ -1,13 +1,25 @@
 version: 1
 authorized_values:
   itemtypes:
-    F1_Z1_K1: "Статті"
-    F1_Z1_K2: "Дисертації"
-    F2_Z3_K3: "Рукописи"
-    
-  ccodes:
-    FICTION: "Художня література"
-    SCIENCE: "Наукова література"
+    PATRIOT: "Патріотичне виховання"
+    BOOK: "Книга"
+    EDU_METHOD: "Навчально-методичний посібник"
+    STUDY_GUIDE: "Навчальний посібник"
+    METH_DEV: "Методична розробка"
+    TEXTBOOK: "Підручник"
+    LECTURES: "Курс лекцій"
+    BROCHURE: "Брошура"
+    HANDBOOK: "Довідник"
+    ENCYCLOP: "Енциклопедія"
+    JOURNAL: "Журнал"
+    MAP_ATLAS: "Мапа, атлас"
+    DICTIONARY: "Словник"
+    STANDARD: "Стандарт"
+    SCI_COLL: "Збірник наукових праць"
+    MONOGRAPH: "Монографія"
+    DISSERT: "Дисертація"
+    RND: "НДР"
+    OTHER: "Інше"
 
 unknown_policy:
   authorized_value: "keep_code"

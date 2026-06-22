@@ -1,15 +1,25 @@
 version: 1
 columns:
-  - name: "ID Запису"
+  - name: "koha_id"
     sources:
-      - field: "001"
+      - field: "999"  
+        subfields: ["c"]
 
   - name: "title"
     sources:
       - field: "245"
         subfields: ["a", "b"]
         join: " "
-        strip_chars: " /:"
+        strip_chars: " :"
+
+  - name: "author"
+    sources:
+      - field: "245"              
+        subfields: ["c"]
+      - field: "100"
+        subfields: ["a"]
+      - field: "110"              # Fallback: корпоративний автор
+        subfields: ["a"]
 
   - name: "publication_date"
     sources:
@@ -21,7 +31,7 @@ columns:
 
   - name: "literature_type"
     sources:
-      - field: "993"
+      - field: "992"
         subfields: ["a"]
         transform: "authorized_value"
         dictionary: "itemtypes"
@@ -42,6 +52,10 @@ static_columns:
   - name: "Статус імпорту"
     value: "Нові"
     reason: "Фіксоване значення для downstream import"
+
+  - name: "ok"
+    value: ""
+    reason: "ok"
 
 required_columns:
   - "title"
