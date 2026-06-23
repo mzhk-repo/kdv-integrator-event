@@ -195,3 +195,11 @@
 - **Verification:** `python3 -m py_compile src/export_module/services/graph_email_service.py tests/test_graph_email_service.py`; `.venv/bin/python -m pytest tests/test_graph_email_service.py -q` -> `7 passed`.
 - **Risks:** Тема листа стала статичною `Koha export`, тому correlation за `run_id` лишається в JSON-логах, а не в email. Якщо downstream очікував таблицю автор/назва в тілі листа, тепер потрібно читати XLSX-вкладення.
 - **Rollback:** Повернути попередню `_record_row()` HTML-таблицю, одинарний `toRecipients` із сирого `GRAPH_TO`, subject із `run_id[:8]`, старий приклад `.env.example` і видалити цей changelog-запис.
+
+## 2026-06-23 — kdv-optimizer Docker build poppler pin
+
+- **Context:** Swarm redeploy через `scripts/deploy-orchestrator-swarm.sh` падав під час build `kdv-optimizer` з `apt-get install` exit code `100`. Діагностика показала dependency conflict: `poppler-utils=22.12.0-2+deb12u1` вимагав `libpoppler126` тієї ж версії, але Debian Bookworm security repo вже підтягує `libpoppler126=22.12.0-2+deb12u2`.
+- **Change:** У `kdv-optimizer/Dockerfile` оновлено pin `poppler-utils` до `22.12.0-2+deb12u2`, залишивши інші pinned системні залежності без змін.
+- **Verification:** `docker run --rm python:3.11-slim-bookworm sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ghostscript=10.0.0~dfsg-11+deb12u8 poppler-utils=22.12.0-2+deb12u2 util-linux=2.38.1-5+deb12u3 curl=7.88.1-10+deb12u14 >/dev/null && gs --version && pdfinfo -v 2>&1 | head -n 1'` -> `10.00.0`, `pdfinfo version 22.12.0`.
+- **Risks:** Pin все ще залежить від поточного стану Debian Bookworm repositories; майбутні security оновлення Poppler можуть знову вимагати синхронного оновлення `poppler-utils`/`libpoppler126`.
+- **Rollback:** Повернути `poppler-utils=22.12.0-2+deb12u1` у `kdv-optimizer/Dockerfile` і видалити цей changelog-запис.
