@@ -203,3 +203,12 @@
 - **Verification:** `docker run --rm python:3.11-slim-bookworm sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ghostscript=10.0.0~dfsg-11+deb12u8 poppler-utils=22.12.0-2+deb12u2 util-linux=2.38.1-5+deb12u3 curl=7.88.1-10+deb12u14 >/dev/null && gs --version && pdfinfo -v 2>&1 | head -n 1'` -> `10.00.0`, `pdfinfo version 22.12.0`.
 - **Risks:** Pin все ще залежить від поточного стану Debian Bookworm repositories; майбутні security оновлення Poppler можуть знову вимагати синхронного оновлення `poppler-utils`/`libpoppler126`.
 - **Rollback:** Повернути `poppler-utils=22.12.0-2+deb12u1` у `kdv-optimizer/Dockerfile` і видалити цей changelog-запис.
+
+
+## 2026-06-23 — Cover URL recovery при DSpace failure
+
+- **Context:** Якщо архівація створювала/завантажувала обкладинку, але DSpace workflow падав до успішного `set_success()` (наприклад, primary PDF відсутній або upload у DSpace не вдався), Koha отримував статус `error`, але `956$c` не поповнювався URL обкладинки.
+- **Change:** Додано `KohaClient.set_cover_url()` і wrapper-метод для cover-only update `956$c`; `_update_956()` більше не очищує `956$y/$z` при оновленні лише cover URL. `process_integration_logic()` тепер після успішного cover task резолвить Koha cover URL і записує його в `956$c` навіть тоді, коли DSpace task завершився помилкою; критична DSpace-помилка й статус `error` зберігаються. Missing primary PDF з готовою обкладинкою з `956$p` також оновлює `956$c` перед error status.
+- **Verification:** `python3 -m py_compile src/core.py src/koha.py src/clients/koha.py tests/test_core.py tests/test_contracts.py`; host pytest не стартує через відсутній `pymarc`; Docker `docker run --rm --env-file .env.example --entrypoint python -e PYTHONPATH=/work:/work/kdv-optimizer -v /opt/kdv-integrator/kdv-integrator-event:/work -w /work kdv-integrator-event:cover-link-smoke -m pytest tests/test_core.py tests/test_contracts.py -q` -> `40 passed`.
+- **Risks:** Якщо Koha cover index ще не повертає URL після 3 секунд очікування, `956$c` лишиться порожнім до повторного запуску або ручного оновлення. Cover-only update не змінює `856` і не ставить статус `imported`.
+- **Rollback:** Прибрати `set_cover_url()`, helper `_resolve_cover_url()`, failure-path cover update у `src/core.py`, додані regression-тести і цей changelog-запис.

@@ -69,6 +69,31 @@ def _disk_free_mb(path: str) -> float | None:
         return None
 
 
+def _resolve_cover_url(koha, biblionumber, cover_res, update_koha: bool = False):
+    if not isinstance(cover_res, dict):
+        return None
+    if cover_res.get("status") not in ["success", "skipped"]:
+        return None
+
+    for attempt in range(3):
+        real_url = koha.get_cover_image_url(biblionumber)
+        if real_url:
+            logger.info(f"🔗 [Core] Resolved Cover URL: {real_url}")
+            if update_koha:
+                try:
+                    koha.set_cover_url(biblionumber, real_url)
+                except Exception as e:
+                    logger.warning(f"⚠️ [Core] Failed to update 956$c: {e}")
+            return real_url
+
+        logger.info(
+            f"⏳ [Core] Waiting for cover API index (attempt {attempt + 1}/3)..."
+        )
+        time.sleep(1)
+
+    return None
+
+
 def _build_pdf_telemetry(pdf_path: str) -> dict:
     return {
         "pdf_optimized": "false",
@@ -513,12 +538,13 @@ def process_integration_logic(
 
         if not original_full_path or not os.path.exists(original_full_path):
             if cover_source_path:
-                cover_service.process_book(
+                cover_res = cover_service.process_book(
                     str(biblionumber),
                     None,
                     os.path.dirname(cover_source_path),
                     cover_source_path=cover_source_path,
                 )
+                _resolve_cover_url(koha, biblionumber, cover_res, update_koha=True)
             koha.set_status(biblionumber, "error", f"File missing: {file_rel_path}")
             raise Exception("File not found on disk")
 
@@ -572,33 +598,31 @@ def process_integration_logic(
             logger.info("⚡ [Core] Parallel tasks started: Cover + DSpace")
 
             # Check Critical Task (DSpace)
+            dspace_error = None
             try:
                 dspace_result = future_dspace.result()
             except Exception as e:
                 logger.error(f"❌ [Core] DSpace Thread failed: {e}")
-                raise e
+                dspace_error = e
 
             # Check Bonus Task (Cover)
             try:
                 cover_res = future_cover.result(timeout=10)
                 logger.info(f"🖼️ [Core] Cover result: {cover_res}")
-                if cover_res.get("status") in ["success", "skipped"]:
-                    for attempt in range(3):
-                        real_url = koha.get_cover_image_url(biblionumber)
-                        if real_url:
-                            logger.info(f"🔗 [Core] Resolved Cover URL: {real_url}")
-                            cover_url = real_url
-                            break
-                        else:
-                            logger.info(
-                                f"⏳ [Core] Waiting for cover API index (attempt {attempt + 1}/3)..."
-                            )
-                            time.sleep(1)
+                cover_url = _resolve_cover_url(
+                    koha,
+                    biblionumber,
+                    cover_res,
+                    update_koha=dspace_error is not None,
+                )
 
             except concurrent.futures.TimeoutError:
                 logger.warning("⚠️ [Core] Cover generation timeout.")
             except Exception as e:
                 logger.warning(f"⚠️ [Core] Cover Thread warning: {e}")
+
+            if dspace_error is not None:
+                raise dspace_error
 
         # --- 3. FINALIZE ---
         if dspace_result:

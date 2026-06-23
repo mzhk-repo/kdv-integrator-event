@@ -10,16 +10,19 @@ columns:
       - field: "245"
         subfields: ["a", "b"]
         join: " "
-        strip_chars: " :"
+        strip_chars: " /:"
+
+  - name: "publisher"
+    sources:
+      - field: "260"
+        subfields: ["a", "b",]
+        join: ": "
+        strip_chars: " /:"
 
   - name: "author"
     sources:
       - field: "245"              
         subfields: ["c"]
-      - field: "100"
-        subfields: ["a"]
-      - field: "110"              # Fallback: корпоративний автор
-        subfields: ["a"]
 
   - name: "publication_date"
     sources:
@@ -36,6 +39,11 @@ columns:
         transform: "authorized_value"
         dictionary: "itemtypes"
 
+  - name: "language"
+    sources:
+      - field: "041"  
+        subfields: ["a"]
+
   - name: "url"
     sources:
       - field: "856"
@@ -43,19 +51,66 @@ columns:
         condition:
           subfield: "y"
           equals: "Файл"
+    
+  - name: "url_cover"
+    sources:
+      - field: "956"
+        subfields: ["c"]
+
+  - name: "isbn"
+    sources:
+      - field: "020"
+        subfields: ["a"]
+
+  - name: "description"
+    sources:
+      - field: "520"
+        subfields: ["a"]
+
+  - name: "keywords"
+    sources:
+      - field: "650"
+        subfields: ["a", "a",]
+        join: ", "
+        strip_chars: " /:"
 
 static_columns:
-  - name: "Бібліотека-отримувач"
-    value: "REDACTED_LIBRARY_NAME"
-    reason: "Потрібно для імпорту в іншу бібліотеку, MARC-джерела поки немає"
-
+  - name: "id"
+    value: ""
+    reason: "id"
   - name: "Статус імпорту"
     value: "Нові"
     reason: "Фіксоване значення для downstream import"
-
   - name: "ok"
     value: ""
     reason: "ok"
+  - name: "average_rating"
+    value: ""
+    reason: ""
+  - name: "author_user"
+    value: ""
+    reason: ""
+  - name: "file"
+    value: ""
+    reason: ""
+  - name: "cover_image"
+    value: ""
+    reason: ""
+  - name: "date_added"
+    value: ""
+    reason: ""
+  - name: "date_modified"
+    value: ""
+    reason: ""
+  - name: "added_by"
+    value: "355"
+    reason: ""
+  - name: "modified_by"
+    value: ""
+    reason: ""
+  - name: "access_type"
+    value: "public"
+    reason: ""
 
 required_columns:
   - "title"

@@ -53,6 +53,9 @@ class StubKoha:
     ):
         self.status_log.append((num, "imported", handle_url, primary_download_url))
 
+    def set_cover_url(self, num, cover_url):
+        self.status_log.append((num, "cover", cover_url))
+
     def get_cover_image_url(self, num):
         return "http://koha/cover.jpg"
 
@@ -621,6 +624,7 @@ def test_external_cover_upload_runs_when_pdf_missing(tmp_path, monkeypatch):
 
     assert koha.uploaded_covers == [("5", str(cover))]
     run_dspace.assert_not_called()
+    assert (5, "cover", "http://koha/cover.jpg") in koha.status_log
     assert any(
         status == "error" and msg == "File missing: books/missing.pdf"
         for _, status, msg in koha.status_log
@@ -817,6 +821,38 @@ def test_process_integration_google_primary_does_not_move_to_error_on_dspace_fai
         )
 
     move_to_error.assert_not_called()
+
+
+def test_process_integration_updates_cover_url_when_dspace_fails(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    pdf = mount / "book.pdf"
+    pdf.write_bytes(b"primary")
+    koha = StubKoha()
+    koha.metadata = {"file_path": "book.pdf", "collection_uuid": "coll"}
+
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(mount))
+    monkeypatch.setattr(
+        "src.core.CoverService.process_book",
+        lambda *args, **kwargs: {"status": "success", "file": str(pdf)},
+    )
+
+    with pytest.raises(Exception, match="upload exploded"):
+        process_integration_logic(
+            "task-id",
+            5,
+            koha_client=koha,
+            dspace_client=FailingUploadDSpace(),
+            skip_optimization=True,
+        )
+
+    assert (5, "cover", "http://koha/cover.jpg") in koha.status_log
+    assert any(
+        status == "error" and "upload exploded" in msg
+        for _, status, msg in koha.status_log
+    )
 
 
 def test_run_dspace_uploads_google_additional_with_original_name(tmp_path, monkeypatch):
