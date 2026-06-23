@@ -19,6 +19,7 @@ from .config import (
     KOHA_OPAC_URL,
 )
 from .core import process_integration_logic, parse_marc_details
+from scripts import robot
 
 # wrappers imported here for DI in web handlers
 from .clients.koha import KohaClientWrapper
@@ -188,6 +189,42 @@ def _parse_integrate_payload():
     }
 
 
+def _parse_robot_batch_payload():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return None, (jsonify({"status": "error", "message": "JSON object expected"}), 400)
+
+    candidates_text = str(payload.get("candidates") or "").strip()
+    if not candidates_text:
+        return None, (jsonify({"status": "error", "message": "candidates is required"}), 400)
+
+    ids = robot.parse_candidates_text(candidates_text)
+    if not ids:
+        return None, (jsonify({"status": "error", "message": "No valid candidates found"}), 400)
+
+    try:
+        parallelism = int(payload.get("parallelism", robot.ROBOT_PARALLELISM))
+    except (TypeError, ValueError):
+        return None, (jsonify({"status": "error", "message": "parallelism must be an integer"}), 400)
+    if parallelism < 1:
+        return None, (jsonify({"status": "error", "message": "parallelism must be >= 1"}), 400)
+
+    try:
+        max_wait = int(payload.get("max_wait", robot.MAX_WAIT))
+    except (TypeError, ValueError):
+        return None, (jsonify({"status": "error", "message": "max_wait must be an integer"}), 400)
+    if max_wait < 30:
+        return None, (jsonify({"status": "error", "message": "max_wait must be >= 30"}), 400)
+
+    return {
+        "candidates_text": candidates_text,
+        "ids": ids,
+        "skip_optimization": bool(payload.get("skip_optimization", False)),
+        "parallelism": parallelism,
+        "max_wait": max_wait,
+    }, None
+
+
 def _make_clients():
     """Return a fresh pair of Koha/DSpace clients (wrappers) for glue code.
 
@@ -211,6 +248,32 @@ def archive_record_async(biblionumber):
         return jsonify({"status": "accepted", "task_id": task_id}), 202
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/kdv/api/robot/batch", methods=["POST"])
+def robot_batch_async():
+    payload, error_response = _parse_robot_batch_payload()
+    if error_response:
+        return error_response
+
+    task_id = task_manager.start_task(
+        robot.run_batch_from_text,
+        payload["candidates_text"],
+        skip_optimization=payload["skip_optimization"],
+        parallelism=payload["parallelism"],
+        max_wait=payload["max_wait"],
+    )
+    return (
+        jsonify(
+            {
+                "status": "accepted",
+                "task_id": task_id,
+                "candidates_count": len(payload["ids"]),
+                "preview": payload["ids"][:20],
+            }
+        ),
+        202,
+    )
 
 
 @app.route("/kdv/api/status/<task_id>", methods=["GET"])

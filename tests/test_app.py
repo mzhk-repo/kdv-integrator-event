@@ -161,3 +161,108 @@ def test_integrate_accepts_skip_optimization_true(monkeypatch):
     assert response.status_code == 202
     assert response.get_json()["task_id"] == "task-2"
     assert captured["kwargs"]["skip_optimization"] is True
+
+
+def test_robot_batch_rejects_without_token(monkeypatch):
+    client = app.test_client()
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    response = client.post("/kdv/api/robot/batch", json={"candidates": "100"})
+
+    assert response.status_code == 401
+
+
+def test_robot_batch_accepts_valid_payload(monkeypatch):
+    client = app.test_client()
+    captured = {}
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+
+    def fake_start_task(func, candidates_text, **kwargs):
+        captured["func"] = func
+        captured["candidates_text"] = candidates_text
+        captured["kwargs"] = kwargs
+        return "robot-task-1"
+
+    monkeypatch.setattr("src.app.task_manager.start_task", fake_start_task)
+
+    response = client.post(
+        "/kdv/api/robot/batch",
+        json={
+            "candidates": "100-102, 101",
+            "skip_optimization": True,
+            "parallelism": 2,
+            "max_wait": 1200,
+        },
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 202
+    assert payload["task_id"] == "robot-task-1"
+    assert payload["candidates_count"] == 3
+    assert payload["preview"] == ["100", "101", "102"]
+    assert captured["candidates_text"] == "100-102, 101"
+    assert captured["kwargs"] == {
+        "skip_optimization": True,
+        "parallelism": 2,
+        "max_wait": 1200,
+    }
+
+
+def test_robot_batch_rejects_empty_candidates(monkeypatch):
+    client = app.test_client()
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+
+    response = client.post(
+        "/kdv/api/robot/batch",
+        json={"candidates": "   "},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "candidates is required"
+
+
+def test_robot_batch_rejects_invalid_candidates(monkeypatch):
+    client = app.test_client()
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+
+    response = client.post(
+        "/kdv/api/robot/batch",
+        json={"candidates": "abc, nope"},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "No valid candidates found"
+
+
+def test_robot_batch_rejects_invalid_controls(monkeypatch):
+    client = app.test_client()
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+
+    response = client.post(
+        "/kdv/api/robot/batch",
+        json={"candidates": "100", "parallelism": 0, "max_wait": 900},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "parallelism must be >= 1"
+
+    response = client.post(
+        "/kdv/api/robot/batch",
+        json={"candidates": "100", "parallelism": 1, "max_wait": 29},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "max_wait must be >= 30"

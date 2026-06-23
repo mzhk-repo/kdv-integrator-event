@@ -101,3 +101,46 @@ def test_robot_warns_when_parallel_optimization_queue(caplog):
 
     assert "ROBOT_PARALLELISM > 1" in caplog.text
     assert "--skip-optimization" in caplog.text
+
+
+def test_parse_candidates_text_supports_candidates_syntax():
+    candidates = """
+    # comment
+    105
+    100-102, 101, 110
+    205-203
+    bad-token
+    """
+
+    assert robot.parse_candidates_text(candidates) == [
+        "100",
+        "101",
+        "102",
+        "105",
+        "110",
+        "203",
+        "204",
+        "205",
+    ]
+
+
+def test_robot_run_batch_returns_stats(monkeypatch):
+    processed = []
+
+    def fake_process_single_biblio(biblionumber, skip_optimization=False, max_wait=None):
+        processed.append((biblionumber, skip_optimization, max_wait))
+        return "SUCCESS" if biblionumber == "100" else "SKIPPED"
+
+    monkeypatch.setattr(robot, "process_single_biblio", fake_process_single_biblio)
+    monkeypatch.setattr(robot.time, "sleep", lambda _seconds: None)
+
+    stats = robot.run_batch_ids(
+        ["100", "101"],
+        skip_optimization=True,
+        parallelism=1,
+        max_wait=45,
+    )
+
+    assert stats["SUCCESS"] == 1
+    assert stats["SKIPPED"] == 1
+    assert processed == [("100", True, 45), ("101", True, 45)]

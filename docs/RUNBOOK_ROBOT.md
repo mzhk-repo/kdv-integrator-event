@@ -140,6 +140,46 @@ SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 4
 
 ---
 
+## 🧪 GUI canary запуск із Koha search results
+
+Канарейковий GUI доступний у Koha staff на сторінці результатів пошуку каталогу, наприклад:
+
+```text
+https://koha.pinokew.buzz/cgi-bin/koha/catalogue/search.pl?q=*
+```
+
+Блок **Robot Batch** показується тільки на `catalogue/search.pl`. Він викликає KDV API напряму з браузера за тим самим auth/CORS-патерном, що й одиночна архівація з `IntranetUser.js`.
+
+Поля:
+
+| Поле | Значення |
+|------|----------|
+| `textarea` | Синтаксис як у `candidates.txt`: `100-110`, `200, 210`, коментарі `# ...` |
+| `Parallelism` | Дефолт `1`; для канарейки залишати `1` |
+| `Max wait` | Дефолт `900` секунд на один запис |
+| `Не оптимізовувати файл` | Передає `skip_optimization=true` для всього batch |
+
+Після натискання **Запустити Robot Batch** UI робить:
+
+1. `GET /kdv/api/health` для перевірки access-сесії.
+2. `POST /kdv/api/robot/batch` з candidates-текстом і параметрами.
+3. Polling `GET /kdv/api/status/<task_id>` до `success` або `error`.
+
+Очікувана відповідь на старт:
+
+```json
+{
+  "status": "accepted",
+  "task_id": "...",
+  "candidates_count": 3,
+  "preview": ["100", "101", "102"]
+}
+```
+
+> Це саме канарейкова інтеграція. Вона не додає окремих ролей, CSRF-логіки або rate limit; доступ контролюється існуючим KDV API auth mode.
+
+---
+
 ## ⚙️ Налаштування
 
 `ROBOT_*` можна передати в wrapper як env. Wrapper прокине їх у процес `robot.py` всередині контейнера:
@@ -389,12 +429,6 @@ SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt --parallelism 1 --max-
 
 ---
 
-## 🔗 Зв'язок з NightWalker
-
-Після великого robot-пуску рекомендується запустити NightWalker, щоб перевірити синхронізацію. Дивись [RUNBOOK_NIGHTWALKER.md](RUNBOOK_NIGHTWALKER.md) для деталей.
-
----
-
 ## 📞 Що робити якщо щось зламалось?
 
 1. **Гляємо host robot log**: `tail -f logs/robot_batch.log`
@@ -411,7 +445,6 @@ SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt --parallelism 1 --max-
 
 ## 📚 Дивись також
 
-- [RUNBOOK_NIGHTWALKER.md](RUNBOOK_NIGHTWALKER.md) — Про синхронізацію і перевірку
 - [RUNBOOK_MAYDAY.md](RUNBOOK_MAYDAY.md) — Про надзвичайні ситуації
 - [RUNBOOK_TESTING.md](RUNBOOK_TESTING.md) — Про тестування
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Деталі реалізації

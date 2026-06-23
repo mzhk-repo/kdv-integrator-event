@@ -122,62 +122,69 @@ def warn_optimizer_queue_if_needed(parallelism, skip_optimization, max_wait):
     )
 
 
-def parse_candidates(filename):
+def parse_candidates_text(candidates_text):
     """
-    Парсить файл candidates.txt, підтримуючи діапазони та списки.
-    Приклади рядків у файлі:
+    Парсить текст у форматі candidates.txt, підтримуючи діапазони та списки.
+    Приклади рядків:
       14
       20, 21, 25
       100-110
       300-305, 400
     """
-    if not os.path.exists(filename):
-        logger.error(f"File {filename} not found!")
-        return []
-
     unique_ids = set()
 
-    with open(filename, "r") as f:
-        for line in f:
-            # Видаляємо коментарі та зайві пробіли
-            line = line.split("#")[0].strip()
-            if not line:
+    for line in str(candidates_text or "").splitlines():
+        # Видаляємо коментарі та зайві пробіли
+        line = line.split("#")[0].strip()
+        if not line:
+            continue
+
+        # Розбиваємо по комі (якщо є перелік в одному рядку)
+        parts = line.split(",")
+
+        for part in parts:
+            part = part.strip()
+            if not part:
                 continue
 
-            # Розбиваємо по комі (якщо є перелік в одному рядку)
-            parts = line.split(",")
+            # Перевірка на діапазон (наприклад "14-30")
+            if "-" in part:
+                try:
+                    start_s, end_s = part.split("-")
+                    start = int(start_s)
+                    end = int(end_s)
 
-            for part in parts:
-                part = part.strip()
-                if not part:
-                    continue
+                    # Захист від "30-14" (міняємо місцями)
+                    if start > end:
+                        start, end = end, start
 
-                # Перевірка на діапазон (наприклад "14-30")
-                if "-" in part:
-                    try:
-                        start_s, end_s = part.split("-")
-                        start = int(start_s)
-                        end = int(end_s)
+                    # Додаємо весь діапазон (включно з останнім)
+                    for i in range(start, end + 1):
+                        unique_ids.add(i)
+                except ValueError:
+                    logger.error(f"⚠️ Invalid range format ignored: '{part}'")
 
-                        # Захист від "30-14" (міняємо місцями)
-                        if start > end:
-                            start, end = end, start
-
-                        # Додаємо весь діапазон (включно з останнім)
-                        for i in range(start, end + 1):
-                            unique_ids.add(i)
-                    except ValueError:
-                        logger.error(f"⚠️ Invalid range format ignored: '{part}'")
-
-                # Звичайне число
-                elif part.isdigit():
-                    unique_ids.add(int(part))
-                else:
-                    logger.warning(f"⚠️ Invalid ID format ignored: '{part}'")
+            # Звичайне число
+            elif part.isdigit():
+                unique_ids.add(int(part))
+            else:
+                logger.warning(f"⚠️ Invalid ID format ignored: '{part}'")
 
     # Повертаємо відсортований список рядків
     sorted_ids = sorted(list(unique_ids))
     return [str(i) for i in sorted_ids]
+
+
+def parse_candidates(filename):
+    """
+    Парсить файл candidates.txt, підтримуючи діапазони та списки.
+    """
+    if not os.path.exists(filename):
+        logger.error(f"File {filename} not found!")
+        return []
+
+    with open(filename, "r") as f:
+        return parse_candidates_text(f.read())
 
 
 def process_single_biblio(biblionumber, skip_optimization=False, max_wait=MAX_WAIT):
@@ -275,8 +282,8 @@ def process_single_biblio(biblionumber, skip_optimization=False, max_wait=MAX_WA
     return "TIMEOUT"
 
 
-def run_batch(
-    filename="candidates.txt",
+def run_batch_ids(
+    ids,
     skip_optimization=False,
     parallelism=None,
     max_wait=None,
@@ -292,11 +299,9 @@ def run_batch(
         minimum=30,
     )
 
-    ids = parse_candidates(filename)
-
     if not ids:
         logger.warning("No candidates found via parse logic. Exiting.")
-        return
+        return {}
 
     logger.info("=" * 40)
     logger.info(f"📋 BATCH STARTED. Candidates: {len(ids)}")
@@ -363,6 +368,43 @@ def run_batch(
     logger.info("🏁 BATCH COMPLETED.")
     logger.info(f"📊 Stats: {stats}")
     logger.info("📝 See full details in robot_batch.log")
+    return stats
+
+
+def run_batch(
+    filename="candidates.txt",
+    skip_optimization=False,
+    parallelism=None,
+    max_wait=None,
+):
+    ids = parse_candidates(filename)
+    return run_batch_ids(
+        ids,
+        skip_optimization=skip_optimization,
+        parallelism=parallelism,
+        max_wait=max_wait,
+    )
+
+
+def run_batch_from_text(
+    _task_id,
+    candidates_text,
+    skip_optimization=False,
+    parallelism=None,
+    max_wait=None,
+):
+    ids = parse_candidates_text(candidates_text)
+    stats = run_batch_ids(
+        ids,
+        skip_optimization=skip_optimization,
+        parallelism=parallelism,
+        max_wait=max_wait,
+    )
+    return {
+        "candidates_count": len(ids),
+        "preview": ids[:20],
+        "stats": stats,
+    }
 
 
 if __name__ == "__main__":
