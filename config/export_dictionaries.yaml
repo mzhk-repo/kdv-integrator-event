@@ -1,0 +1,25 @@
+version: 1
+authorized_values:
+  itemtypes:
+    PATRIOT: "Патріотичне виховання"
+    BOOK: "Книга"
+    EDU_METHOD: "Навчально-методичний посібник"
+    STUDY_GUIDE: "Навчальний посібник"
+    METH_DEV: "Методична розробка"
+    TEXTBOOK: "Підручник"
+    LECTURES: "Курс лекцій"
+    BROCHURE: "Брошура"
+    HANDBOOK: "Довідник"
+    ENCYCLOP: "Енциклопедія"
+    JOURNAL: "Журнал"
+    MAP_ATLAS: "Мапа, атлас"
+    DICTIONARY: "Словник"
+    STANDARD: "Стандарт"
+    SCI_COLL: "Збірник наукових праць"
+    MONOGRAPH: "Монографія"
+    DISSERT: "Дисертація"
+    RND: "НДР"
+    OTHER: "Інше"
+
+unknown_policy:
+  authorized_value: "keep_code"

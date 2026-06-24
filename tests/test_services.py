@@ -170,6 +170,13 @@ def test_optimizer_client_unavailable(tmp_path):
     assert result.fallback_reason == "optimizer_unavailable"
 
 from src.services.files import FileService
+from src.services.sources import (
+    GoogleDriveDownloadError,
+    GoogleDriveSource,
+    GoogleDriveUrlParser,
+    SourceResolutionError,
+    SourceResolver,
+)
 from src.services.covers import CoverService
 
 
@@ -206,6 +213,325 @@ def test_files_move_to_error(tmp_path):
     assert error_dir.exists()
     moved = error_dir / "biblio_1_v01.pdf"
     assert moved.exists()
+
+
+
+def test_source_resolver_primary_local_path(tmp_path):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    resolver = SourceResolver(str(mount))
+
+    resolved = resolver.resolve_primary("books/book.pdf")
+
+    assert resolved.local_path == str(mount / "books" / "book.pdf")
+    assert resolved.source_type == "local"
+    assert resolved.original_name == "book.pdf"
+    assert resolved.temporary is False
+    assert resolved.cleanup_paths == ()
+    assert resolved.lifecycle_policy == "local_managed"
+
+
+def test_source_resolver_additional_local_path_is_unmanaged(tmp_path):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    resolver = SourceResolver(str(mount))
+
+    resolved = resolver.resolve_additional("extra/additional.pdf")
+
+    assert resolved.local_path == str(mount / "extra" / "additional.pdf")
+    assert resolved.lifecycle_policy == "local_unmanaged"
+
+
+def test_source_resolver_rejects_path_escape(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    with pytest.raises(SourceResolutionError, match=r"Invalid relative path in 956\$u"):
+        resolver.resolve_primary("../secret.pdf")
+
+
+def test_gdrive_parser_supports_file_d_view_url():
+    parser = GoogleDriveUrlParser()
+
+    parsed = parser.parse(
+        "https://drive.google.com/file/d/abc123/view?usp=sharing",
+        "956$u",
+    )
+
+    assert parsed.file_id == "abc123"
+    assert parsed.resource_key is None
+
+
+def test_gdrive_parser_supports_open_and_uc_urls_with_resourcekey():
+    parser = GoogleDriveUrlParser()
+
+    open_url = parser.parse(
+        "https://drive.google.com/open?id=file-open&resourcekey=resource-open",
+        "956$u",
+    )
+    uc_url = parser.parse(
+        "https://drive.google.com/uc?export=download&id=file-uc",
+        "956$q",
+    )
+
+    assert open_url.file_id == "file-open"
+    assert open_url.resource_key == "resource-open"
+    assert uc_url.file_id == "file-uc"
+    assert uc_url.resource_key is None
+
+
+def test_gdrive_parser_rejects_folder_links():
+    parser = GoogleDriveUrlParser()
+
+    with pytest.raises(SourceResolutionError, match="folder URL is not supported"):
+        parser.parse("https://drive.google.com/drive/folders/folder-id", "956$u")
+
+
+def test_source_resolver_rejects_non_google_urls(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    with pytest.raises(SourceResolutionError, match="only Google Drive file URLs"):
+        resolver.resolve_primary("https://example.com/book.pdf")
+
+
+def test_source_resolver_primary_gdrive_url_is_remote_ephemeral(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    resolved = resolver.resolve_primary(
+        "https://drive.google.com/file/d/primary-id/view?resourcekey=primary-key"
+    )
+
+    assert resolved.local_path == ""
+    assert resolved.source_type == "gdrive"
+    assert resolved.original_name == "primary-id"
+    assert resolved.temporary is True
+    assert resolved.lifecycle_policy == "remote_ephemeral"
+    assert resolved.diagnostics["field_name"] == "956$u"
+    assert resolved.diagnostics["file_id"] == "primary-id"
+    assert resolved.diagnostics["resource_key"] == "primary-key"
+
+
+def test_source_resolver_additional_gdrive_url_is_remote_ephemeral(tmp_path):
+    resolver = SourceResolver(str(tmp_path))
+
+    resolved = resolver.resolve_additional(
+        "https://drive.google.com/open?id=additional-id&resourcekey=additional-key"
+    )
+
+    assert resolved.source_type == "gdrive"
+    assert resolved.lifecycle_policy == "remote_ephemeral"
+    assert resolved.diagnostics["field_name"] == "956$q"
+    assert resolved.diagnostics["file_id"] == "additional-id"
+    assert resolved.diagnostics["resource_key"] == "additional-key"
+
+
+class FakeDriveClient:
+    def __init__(self, metadata=None, content=b"%PDF-1.4\ncontent", error=None):
+        self.metadata = metadata or {
+            "name": "Book.pdf",
+            "mimeType": "application/pdf",
+            "size": str(len(content)),
+            "capabilities": {"canDownload": True},
+        }
+        self.content = content
+        self.error = error
+        self.metadata_calls = []
+        self.download_calls = []
+
+    def get_metadata(self, file_id, resource_key):
+        self.metadata_calls.append((file_id, resource_key))
+        return self.metadata
+
+    def download_to_file(self, file_id, resource_key, destination_path, timeout):
+        self.download_calls.append((file_id, resource_key, destination_path, timeout))
+        if self.error:
+            Path(destination_path).write_bytes(b"partial")
+            raise self.error
+        Path(destination_path).write_bytes(self.content)
+
+
+def _gdrive_resolved_source(tmp_path, url=None, drive_client=None, **source_kwargs):
+    source = GoogleDriveSource(
+        enabled=True,
+        tmp_dir=str(tmp_path),
+        drive_client=drive_client or FakeDriveClient(),
+        **source_kwargs,
+    )
+    resolver = SourceResolver(str(tmp_path), gdrive_source=source)
+    return resolver, resolver.resolve_primary(
+        url or "https://drive.google.com/file/d/file-id/view?resourcekey=res-key"
+    )
+
+
+def test_gdrive_source_downloads_pdf_with_atomic_rename(tmp_path):
+    drive_client = FakeDriveClient()
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    resolved = resolver.materialize(parsed)
+
+    assert resolved.source_type == "gdrive"
+    assert resolved.lifecycle_policy == "remote_ephemeral"
+    assert resolved.temporary is True
+    assert resolved.original_name == "Book.pdf"
+    assert Path(resolved.local_path).read_bytes() == b"%PDF-1.4\ncontent"
+    assert resolved.local_path.endswith(".pdf")
+    assert not list(tmp_path.glob("*.part"))
+    assert drive_client.metadata_calls == [("file-id", "res-key")]
+    assert drive_client.download_calls[0][0:2] == ("file-id", "res-key")
+    assert resolved.diagnostics["mime_type"] == "application/pdf"
+
+
+def test_gdrive_source_reuses_completed_temp_file_when_metadata_matches(tmp_path):
+    drive_client = FakeDriveClient(content=b"first-download")
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    first = resolver.materialize(parsed)
+    second = resolver.materialize(parsed)
+
+    assert first.local_path == second.local_path
+    assert Path(second.local_path).read_bytes() == b"first-download"
+    assert len(drive_client.metadata_calls) == 2
+    assert len(drive_client.download_calls) == 1
+
+
+def test_gdrive_source_logs_safe_observability_without_url_or_resourcekey(
+    tmp_path, caplog
+):
+    file_id = "very-long-google-drive-file-id"
+    resource_key = "secret-resource-key"
+    url = f"https://drive.google.com/file/d/{file_id}/view?resourcekey={resource_key}"
+    drive_client = FakeDriveClient()
+    resolver, parsed = _gdrive_resolved_source(
+        tmp_path,
+        url=url,
+        drive_client=drive_client,
+    )
+
+    with caplog.at_level(logging.INFO, logger="KDV-Sources"):
+        resolver.materialize(parsed)
+
+    assert "source_type=gdrive" in caplog.text
+    assert "mime_type=application/pdf" in caplog.text
+    assert "duration_ms=" in caplog.text
+    assert "very-l" in caplog.text
+    assert file_id not in caplog.text
+    assert resource_key not in caplog.text
+    assert url not in caplog.text
+
+
+def test_gdrive_source_ignores_existing_part_file(tmp_path):
+    drive_client = FakeDriveClient(content=b"complete-download")
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+    final_path = resolver.gdrive_source._cached_file_path(
+        "file-id",
+        "res-key",
+        drive_client.metadata,
+    )
+    Path(f"{final_path}.part").write_bytes(b"stale-part")
+
+    resolved = resolver.materialize(parsed)
+
+    assert Path(resolved.local_path).read_bytes() == b"complete-download"
+    assert not Path(f"{final_path}.part").exists()
+    assert len(drive_client.download_calls) == 1
+
+
+def test_gdrive_source_cleanup_stale_files_only_inside_tmp_dir(tmp_path):
+    tmp_dir = tmp_path / "gdrive"
+    tmp_dir.mkdir()
+    old_pdf = tmp_dir / "old.pdf"
+    old_part = tmp_dir / "old.part"
+    fresh_pdf = tmp_dir / "fresh.pdf"
+    ignored_txt = tmp_dir / "old.txt"
+    outside_pdf = tmp_path / "outside.pdf"
+    for file_path in (old_pdf, old_part, fresh_pdf, ignored_txt, outside_pdf):
+        file_path.write_bytes(b"x")
+    now = 1_700_000_000
+    old_ts = now - 100
+    fresh_ts = now - 1
+    for file_path in (old_pdf, old_part, ignored_txt, outside_pdf):
+        os.utime(file_path, (old_ts, old_ts))
+    os.utime(fresh_pdf, (fresh_ts, fresh_ts))
+
+    source = GoogleDriveSource(
+        enabled=True,
+        tmp_dir=str(tmp_dir),
+        tmp_ttl_seconds=10,
+        drive_client=FakeDriveClient(),
+    )
+
+    deleted = source.cleanup_stale_files(now=now)
+
+    assert sorted(Path(path).name for path in deleted) == ["old.part", "old.pdf"]
+    assert not old_pdf.exists()
+    assert not old_part.exists()
+    assert fresh_pdf.exists()
+    assert ignored_txt.exists()
+    assert outside_pdf.exists()
+
+
+def test_gdrive_source_rejects_unsupported_mime_type(tmp_path):
+    drive_client = FakeDriveClient(metadata={
+        "name": "Doc",
+        "mimeType": "application/vnd.google-apps.document",
+        "size": "10",
+        "capabilities": {"canDownload": True},
+    })
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    with pytest.raises(GoogleDriveDownloadError, match="mime type is not allowed"):
+        resolver.materialize(parsed)
+
+    assert drive_client.download_calls == []
+
+
+def test_gdrive_source_rejects_too_large_and_cannot_download(tmp_path):
+    too_large = FakeDriveClient(metadata={
+        "name": "Large.pdf",
+        "mimeType": "application/pdf",
+        "size": "11",
+        "capabilities": {"canDownload": True},
+    })
+    resolver, parsed = _gdrive_resolved_source(
+        tmp_path, drive_client=too_large, max_bytes=10
+    )
+
+    with pytest.raises(GoogleDriveDownloadError, match="too large"):
+        resolver.materialize(parsed)
+
+    cannot_download = FakeDriveClient(metadata={
+        "name": "Locked.pdf",
+        "mimeType": "application/pdf",
+        "size": "10",
+        "capabilities": {"canDownload": False},
+    })
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=cannot_download)
+
+    with pytest.raises(GoogleDriveDownloadError, match="cannot be downloaded"):
+        resolver.materialize(parsed)
+
+
+def test_gdrive_source_cleans_part_file_on_download_error(tmp_path):
+    drive_client = FakeDriveClient(error=RuntimeError("network exploded"))
+    resolver, parsed = _gdrive_resolved_source(tmp_path, drive_client=drive_client)
+
+    with pytest.raises(RuntimeError, match="network exploded"):
+        resolver.materialize(parsed)
+
+    assert not list(tmp_path.glob("*.part"))
+    assert not list(tmp_path.glob("*.pdf"))
+
+
+def test_gdrive_source_requires_enabled_flag(tmp_path):
+    source = GoogleDriveSource(
+        enabled=False,
+        tmp_dir=str(tmp_path),
+        drive_client=FakeDriveClient(),
+    )
+    resolver = SourceResolver(str(tmp_path), gdrive_source=source)
+    parsed = resolver.resolve_primary("https://drive.google.com/open?id=file-id")
+
+    with pytest.raises(GoogleDriveDownloadError, match="disabled"):
+        resolver.materialize(parsed)
 
 
 class FakeCoverKoha:

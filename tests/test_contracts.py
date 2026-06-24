@@ -195,6 +195,42 @@ def test_koha_success_writes_file_856_before_handle_856(monkeypatch):
     assert fields_856[1]["y"] == "Запис в репозиторії"
 
 
+def test_koha_set_cover_url_updates_only_956c(monkeypatch):
+    client = KohaClient()
+    captured = {}
+    xml = (
+        '<record><datafield tag="956" ind1=" " ind2=" ">'
+        '<subfield code="u">books/book.pdf</subfield>'
+        '<subfield code="y">error</subfield>'
+        '<subfield code="z">File missing</subfield>'
+        '</datafield>'
+        '<datafield tag="856" ind1="4" ind2="0">'
+        '<subfield code="u">old</subfield>'
+        '<subfield code="y">Файл</subfield>'
+        '</datafield></record>'
+    )
+
+    monkeypatch.setattr(client, "_get_biblio_xml", lambda _biblio_id: xml)
+
+    def fake_put(url, data=None, headers=None):
+        captured["data"] = data.decode("utf-8")
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    ok = client.set_cover_url(42, "http://koha.local/cover.jpg")
+
+    assert ok is True
+    updated = client._parse_marc(captured["data"])
+    field_956 = updated.get_fields("956")[0]
+    fields_856 = updated.get_fields("856")
+    assert field_956["c"] == "http://koha.local/cover.jpg"
+    assert field_956["y"] == "error"
+    assert field_956["z"] == "File missing"
+    assert len(fields_856) == 1
+    assert fields_856[0]["u"] == "old"
+
+
 def test_dspace_create_item_error_is_diagnostic(monkeypatch):
     client = DSpaceClient()
 

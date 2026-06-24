@@ -44,6 +44,9 @@ class KohaClientWrapper:
             primary_download_url=primary_download_url,
         )
 
+    def set_cover_url(self, biblio_id, cover_url):
+        return self._client.set_cover_url(biblio_id, cover_url)
+
     def get_cover_image_url(self, biblionumber):
         return self._client.get_cover_image_url(biblionumber)
 

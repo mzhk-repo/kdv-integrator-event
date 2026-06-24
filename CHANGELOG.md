@@ -4,13 +4,9 @@
 
 ## Поточний активний том
 
-1. [CHANGELOG_2026_VOL_03.md]
+1. [CHANGELOG_2026_VOL_04.md]
    - Статус: active
    - Рядків: 
-
-Попередні томи:
-- docs/changelogs/CHANGELOG_2026_VOL_01.md
-- docs/changelogs/CHANGELOG_2026_VOL_02.md
 
 ## Політика ротації
 

@@ -48,6 +48,31 @@ ENVIRONMENT_NAME=development bash scripts/healthcheck.sh
 echo $?
 ```
 
+## `scripts/run-robot-swarm.sh` (manual Swarm wrapper для Robot)
+
+### Бізнес-логіка
+- Операційний wrapper для запуску `scripts/robot.py` у Docker Swarm runtime.
+- Резолвить env-контекст у стилі `src/config.py`: `ORCHESTRATOR_ENV_FILE` → `SERVER_ENV`/`ENVIRONMENT_NAME` → `env.dev.enc`/`env.prod.enc` → `.env`.
+- Передає env у `docker exec` через `--env-file`, щоб процес `robot.py` бачив `KDV_API_TOKEN` та інші runtime-змінні.
+- Читає `STACK_NAME`/`SWARM_SERVICE_NAME` з env або використовує default `kdv_integrator_event_kdv-api`.
+- Знаходить локальний контейнер `kdv-api` через label `com.docker.swarm.service.name`.
+- Перевіряє health endpoint усередині контейнера.
+- Копіює host candidates-файл у контейнер через `docker exec -i` як `/tmp/kdv-candidates.txt`.
+- Запускає `python3 scripts/robot.py /tmp/kdv-candidates.txt` і прокидає додаткові CLI-параметри (`--skip-optimization`, `--parallelism`, `--max-wait`).
+- Після реального запуску синхронізує `/app/logs/robot_batch.log` з контейнера у host `logs/robot_batch.log`.
+
+### Ручний запуск
+```bash
+# Безпечна перевірка без старту batch:
+SERVER_ENV=dev scripts/run-robot-swarm.sh --dry-run candidates.txt
+
+# Реальний запуск batch:
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 1
+
+# Production-контекст:
+SERVER_ENV=prod scripts/run-robot-swarm.sh candidates.txt --parallelism 1 --max-wait 1800
+```
+
 ## `scripts/validate_sops_encrypted.py` (out-of-scope, guard script)
 
 ### Бізнес-логіка
@@ -90,8 +115,9 @@ docker compose exec kdv-api python3 -m src.nightwalker 5000 5100
 ### Бізнес-логіка
 - Масовий запуск інтеграції бібліографічних записів через API (`/integrate/{id}`) з polling статусу задач.
 - Підтримує контроль паралелізму та таймаутів через env (`ROBOT_*`).
+- У Swarm runtime напряму не запускається оператором; для ручного запуску використовувати `scripts/run-robot-swarm.sh`.
 
 ### Ручний запуск
 ```bash
-docker compose exec kdv-api python3 scripts/robot.py candidates.txt
+SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 1
 ```

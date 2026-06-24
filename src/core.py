@@ -14,6 +14,10 @@ from .koha import KohaClient
 from .dspace import DSpaceClient
 from .services.covers import CoverService
 from .services.files import FileService
+from .services.sources import (
+    SourceResolutionError,
+    SourceResolver,
+)
 from .services.pdf import (
     PDFOptimizerClient,
     has_optimizer_disk_space,
@@ -63,6 +67,31 @@ def _disk_free_mb(path: str) -> float | None:
         return round(shutil.disk_usage(path).free / 1024 / 1024, 2)
     except OSError:
         return None
+
+
+def _resolve_cover_url(koha, biblionumber, cover_res, update_koha: bool = False):
+    if not isinstance(cover_res, dict):
+        return None
+    if cover_res.get("status") not in ["success", "skipped"]:
+        return None
+
+    for attempt in range(3):
+        real_url = koha.get_cover_image_url(biblionumber)
+        if real_url:
+            logger.info(f"🔗 [Core] Resolved Cover URL: {real_url}")
+            if update_koha:
+                try:
+                    koha.set_cover_url(biblionumber, real_url)
+                except Exception as e:
+                    logger.warning(f"⚠️ [Core] Failed to update 956$c: {e}")
+            return real_url
+
+        logger.info(
+            f"⏳ [Core] Waiting for cover API index (attempt {attempt + 1}/3)..."
+        )
+        time.sleep(1)
+
+    return None
 
 
 def _build_pdf_telemetry(pdf_path: str) -> dict:
@@ -213,14 +242,34 @@ def _parse_additional_file_paths(raw_paths: str | None) -> list[str]:
     return [part.strip() for part in raw_paths.split("|") if part.strip()]
 
 
+def _source_resolver() -> SourceResolver:
+    return SourceResolver(INTEGRATOR_MOUNT_PATH)
+
+
+def _looks_like_gdrive_url(raw_path: str | None) -> bool:
+    return bool(raw_path and "drive.google.com" in raw_path)
+
+
 def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) -> dict:
     uploaded = []
     failed = []
 
+    resolver = _source_resolver()
+
     for relative_path in _parse_additional_file_paths(raw_paths):
         try:
-            full_path = _resolve_mount_relative_path(relative_path, "956$q")
-        except ValueError as exc:
+            resolved_source = resolver.resolve_additional(relative_path)
+            resolved_source = resolver.materialize(resolved_source)
+        except SourceResolutionError as exc:
+            if _looks_like_gdrive_url(relative_path):
+                logger.warning(
+                    "Additional Google Drive file download failed: item_uuid=%s path=%s error=%s",
+                    item_uuid,
+                    relative_path,
+                    exc,
+                )
+                failed.append({"path": relative_path, "reason": str(exc)})
+                continue
             logger.warning(
                 "Additional DSpace file path rejected: item_uuid=%s relative_path=%s error=%s",
                 item_uuid,
@@ -229,7 +278,19 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
             )
             failed.append({"path": relative_path, "reason": "invalid_path"})
             continue
+        except Exception as exc:
+            if _looks_like_gdrive_url(relative_path):
+                logger.warning(
+                    "Additional Google Drive file download failed: item_uuid=%s path=%s error=%s",
+                    item_uuid,
+                    relative_path,
+                    exc,
+                )
+                failed.append({"path": relative_path, "reason": str(exc)})
+                continue
+            raise
 
+        full_path = resolved_source.local_path if resolved_source else None
         if not full_path or not os.path.exists(full_path):
             logger.warning(
                 "Additional DSpace file missing: item_uuid=%s relative_path=%s full_path=%s",
@@ -240,13 +301,20 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
             failed.append({"path": relative_path, "reason": "missing"})
             continue
 
+        upload_name = (
+            resolved_source.original_name
+            if resolved_source.source_type == "gdrive"
+            else None
+        )
         try:
-            if dspace_client.upload_to_item(item_uuid, full_path):
+            if dspace_client.upload_to_item(item_uuid, full_path, upload_name=upload_name):
                 logger.info(
-                    "Additional DSpace file uploaded: item_uuid=%s relative_path=%s full_path=%s",
+                    "Additional DSpace file uploaded: item_uuid=%s relative_path=%s full_path=%s source_type=%s lifecycle_policy=%s",
                     item_uuid,
                     relative_path,
                     full_path,
+                    resolved_source.source_type,
+                    resolved_source.lifecycle_policy,
                 )
                 uploaded.append(relative_path)
             else:
@@ -274,23 +342,7 @@ def _upload_additional_files(dspace_client, item_uuid, raw_paths: str | None) ->
 def _resolve_mount_relative_path(
     relative_path: str | None, field_name: str
 ) -> str | None:
-    if not relative_path:
-        return None
-
-    clean_path = relative_path.strip()
-    if not clean_path:
-        return None
-
-    candidate = os.path.normpath(clean_path)
-    if os.path.isabs(candidate) or candidate.startswith("..") or "/.." in candidate:
-        raise ValueError(f"Invalid relative path in {field_name}: {relative_path}")
-
-    mount_root = os.path.abspath(INTEGRATOR_MOUNT_PATH)
-    full_path = os.path.abspath(os.path.join(mount_root, candidate))
-    if os.path.commonpath([mount_root, full_path]) != mount_root:
-        raise ValueError(f"Path escapes mount root in {field_name}: {relative_path}")
-
-    return full_path
+    return _source_resolver().resolve_local_path(relative_path, field_name)
 
 
 def parse_marc_details(xml_data):
@@ -354,6 +406,7 @@ def run_dspace_workflow(
     dspace_client=None,
     skip_optimization: bool = False,
     optimizer_client: PDFOptimizerClient | None = None,
+    upload_name: str | None = None,
 ):
     """Execute metadata extraction and file upload to DSpace.
 
@@ -417,15 +470,15 @@ def run_dspace_workflow(
             skip_optimization=skip_optimization,
             optimizer_client=optimizer_client,
         )
-        upload_name = os.path.basename(file_path)
+        primary_upload_name = upload_name or os.path.basename(file_path)
         logger.info(
             "📤 [DSpace-Thread] Uploading file to Item %s upload_path=%s upload_name=%s",
             item_uuid,
             final_pdf_path,
-            upload_name,
+            primary_upload_name,
         )
         primary_bitstream = local_dspace.upload_to_item(
-            item_uuid, final_pdf_path, upload_name=upload_name
+            item_uuid, final_pdf_path, upload_name=primary_upload_name
         )
         if not primary_bitstream:
             raise Exception("Failed to upload file")
@@ -463,6 +516,7 @@ def process_integration_logic(
     koha = koha_client or KohaClient()
     cover_service = CoverService(koha_client=koha)
     current_active_path = None
+    current_lifecycle_policy = None
 
     LIMIT_WARNING = 150 * 1024 * 1024
     LIMIT_ERROR = 250 * 1024 * 1024
@@ -475,17 +529,22 @@ def process_integration_logic(
 
         file_rel_path = meta["file_path"]
         cover_rel_path = meta.get("cover_path")
-        cover_source_path = _resolve_mount_relative_path(cover_rel_path, "956$p")
-        original_full_path = _resolve_mount_relative_path(file_rel_path, "956$u")
+        source_resolver = _source_resolver()
+        cover_source = source_resolver.resolve_cover(cover_rel_path)
+        primary_source = source_resolver.resolve_primary(file_rel_path)
+        primary_source = source_resolver.materialize(primary_source)
+        cover_source_path = cover_source.local_path if cover_source else None
+        original_full_path = primary_source.local_path if primary_source else None
 
         if not original_full_path or not os.path.exists(original_full_path):
             if cover_source_path:
-                cover_service.process_book(
+                cover_res = cover_service.process_book(
                     str(biblionumber),
                     None,
                     os.path.dirname(cover_source_path),
                     cover_source_path=cover_source_path,
                 )
+                _resolve_cover_url(koha, biblionumber, cover_res, update_koha=True)
             koha.set_status(biblionumber, "error", f"File missing: {file_rel_path}")
             raise Exception("File not found on disk")
 
@@ -499,10 +558,14 @@ def process_integration_logic(
                 biblionumber, None, f"Warning: {round(file_size / 1024 / 1024)} MB"
             )
 
-        # create file service for rename/versioning
-        file_service = FileService()
-        versioned_path = file_service.version_and_move(original_full_path, biblionumber)
-        current_active_path = versioned_path
+        if primary_source.lifecycle_policy == "local_managed":
+            file_service = FileService()
+            current_active_path = file_service.version_and_move(
+                original_full_path, biblionumber
+            )
+        else:
+            current_active_path = original_full_path
+        current_lifecycle_policy = primary_source.lifecycle_policy
 
         # --- ⚡ 2. PARALLEL PHASE: DSpace + Cover ---
         dspace_result = None
@@ -529,38 +592,37 @@ def process_integration_logic(
                 dspace_client=dspace_client,
                 skip_optimization=skip_optimization,
                 optimizer_client=optimizer_client,
+                upload_name=primary_source.original_name,
             )
 
             logger.info("⚡ [Core] Parallel tasks started: Cover + DSpace")
 
             # Check Critical Task (DSpace)
+            dspace_error = None
             try:
                 dspace_result = future_dspace.result()
             except Exception as e:
                 logger.error(f"❌ [Core] DSpace Thread failed: {e}")
-                raise e
+                dspace_error = e
 
             # Check Bonus Task (Cover)
             try:
                 cover_res = future_cover.result(timeout=10)
                 logger.info(f"🖼️ [Core] Cover result: {cover_res}")
-                if cover_res.get("status") in ["success", "skipped"]:
-                    for attempt in range(3):
-                        real_url = koha.get_cover_image_url(biblionumber)
-                        if real_url:
-                            logger.info(f"🔗 [Core] Resolved Cover URL: {real_url}")
-                            cover_url = real_url
-                            break
-                        else:
-                            logger.info(
-                                f"⏳ [Core] Waiting for cover API index (attempt {attempt + 1}/3)..."
-                            )
-                            time.sleep(1)
+                cover_url = _resolve_cover_url(
+                    koha,
+                    biblionumber,
+                    cover_res,
+                    update_koha=dspace_error is not None,
+                )
 
             except concurrent.futures.TimeoutError:
                 logger.warning("⚠️ [Core] Cover generation timeout.")
             except Exception as e:
                 logger.warning(f"⚠️ [Core] Cover Thread warning: {e}")
+
+            if dspace_error is not None:
+                raise dspace_error
 
         # --- 3. FINALIZE ---
         if dspace_result:
@@ -581,8 +643,11 @@ def process_integration_logic(
         except Exception:
             pass
 
-        if current_active_path and os.path.exists(current_active_path):
-            # delegate error move to FileService
+        if (
+            current_lifecycle_policy == "local_managed"
+            and current_active_path
+            and os.path.exists(current_active_path)
+        ):
             file_service = FileService()
             file_service.move_to_error(current_active_path)
         raise e

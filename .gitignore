@@ -20,4 +20,6 @@ docs/AGENTS.md
 docs/NOTES.md
 docs/hello-world.md
 docs/DOCKER-SECRETS.md
+docs/copilot-instruction.md
 .archive
+.venv/

@@ -259,6 +259,31 @@ run_versioned_env_secret_script() {
   log "Runtime env secret export applied: KDV_APP_ENV_PAYLOAD_SECRET_NAME=${KDV_APP_ENV_PAYLOAD_SECRET_NAME}"
 }
 
+
+run_versioned_gdrive_secret_script() {
+  local script_path export_env server_env_for_secret
+
+  script_path="${SCRIPT_DIR}/render-versioned-gdrive-secret.sh"
+  if [[ ! -f "${script_path}" ]]; then
+    log "ERROR: versioned Google Drive secret script not found: ${script_path}"
+    exit 1
+  fi
+
+  server_env_for_secret="${SERVER_ENV:-${ENVIRONMENT_NAME:-$(read_env_value SERVER_ENV)}}"
+  log "Rendering versioned Google Drive service account secret: ${script_path}"
+  export_env="$(
+    INFRA_REPO_PATH="${INFRA_REPO_PATH:-}" \
+    ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-}" \
+    SERVER_ENV="${server_env_for_secret}" \
+    GDRIVE_VAULT_FILE="${GDRIVE_VAULT_FILE:-}" \
+    GDRIVE_VAULT_KEY="${GDRIVE_VAULT_KEY:-vault_rclone_service_account_json}" \
+    GDRIVE_SECRET_BASE="${GDRIVE_SECRET_BASE:-gdrive_service_account_json}" \
+    "${script_path}"
+  )"
+  eval "${export_env}"
+  log "Google Drive secret export applied: GDRIVE_SERVICE_ACCOUNT_SECRET_NAME=${GDRIVE_SERVICE_ACCOUNT_SECRET_NAME}"
+}
+
 verify_swarm_service() {
   local service_name elapsed replicas running desired
   service_name="$1"
@@ -330,6 +355,7 @@ deploy_swarm() {
   run_validation_scripts
   run_deploy_adjacent_scripts
   run_versioned_env_secret_script
+  run_versioned_gdrive_secret_script
   prepare_deploy_image
 
   log "Rendering Swarm manifest (stack=${STACK_NAME}, env_file=${ENV_FILE})"

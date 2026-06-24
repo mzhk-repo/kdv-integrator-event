@@ -330,6 +330,9 @@ class KohaClient:
             primary_download_url=primary_download_url,
         )
 
+    def set_cover_url(self, biblio_id, cover_url):
+        return self._update_956(biblio_id, cover_url=cover_url)
+
     def _update_956(
         self,
         biblio_id,
@@ -348,11 +351,12 @@ class KohaClient:
         fields = record.get_fields("956")
         if fields:
             f956 = fields[0]
-            for code in ["y", "z"]:
-                try:
-                    f956.delete_subfield(code)
-                except Exception:
-                    pass
+            if status is not None or log_msg is not None:
+                for code in ["y", "z"]:
+                    try:
+                        f956.delete_subfield(code)
+                    except Exception:
+                        pass
 
             if status:
                 f956.add_subfield("y", status)

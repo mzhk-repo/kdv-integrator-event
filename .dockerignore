@@ -1,0 +1,41 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.coverage
+htmlcov
+*.pyc
+*.pyo
+*.pyd
+.env
+env.dev
+env.prod
+
+# Local/dev artifacts not needed in kdv-api image
+.archive
+.benchmarks
+.ruff_cache
+logs
+*.log
+
+# CI, tests and documentation are not runtime inputs
+.github
+docs
+tests
+
+# Separate service has its own Docker build context
+kdv-optimizer
+
+# Local operator inputs / encrypted deploy payloads are mounted or rendered separately
+candidates.txt
+candidates.example.txt
+env.dev.enc
+env.prod.enc
+.sops.yaml
+.pre-commit-config.yaml
+.trivyignore
+docker-compose.yml
+docker-compose.swarm.yml
+Dockerfile
+README.md
+CHANGELOG.md
