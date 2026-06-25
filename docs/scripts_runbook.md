@@ -87,7 +87,7 @@ echo $?
 ## `scripts/entrypoint.sh` (out-of-scope, container entrypoint)
 
 ### Бізнес-логіка
-- Стартовий wrapper контейнера: експортує secrets з `/run/secrets/*` у змінні оточення і запускає основний процес (`exec "$@"`).
+- Стартовий wrapper контейнера: спочатку розгортає dotenv payload `/run/secrets/app_env_payload` у runtime ENV, потім зберігає сумісність зі старими one-secret-per-env файлами з `/run/secrets/*` і запускає основний процес (`exec "$@"`).
 
 ### Ручний запуск
 ```bash

@@ -191,6 +191,31 @@ def test_server_env_can_resolve_sops_age_encrypted_env(monkeypatch, tmp_path):
     assert os.environ["KOHA_API_USER"] == "sops-user"
 
 
+def test_swarm_env_payload_is_used_as_fallback(monkeypatch, tmp_path):
+    payload = tmp_path / "app_env_payload"
+    payload.write_text(
+        "\n".join(
+            [
+                "EXPORT_MODULE_ENABLED=true",
+                "KOHA_API_URL=https://from-swarm.example.org",
+                "KOHA_API_USER=swarm-user",
+                "KOHA_API_PASS=swarm-pass",
+                "EXPORT_MARC_MAPPING_PATH=config/marc_mapping.yaml",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(export_config, "SWARM_ENV_PAYLOAD_PATH", payload)
+    monkeypatch.setattr(export_config, "_project_root", lambda: tmp_path)
+
+    config = ExportConfig.from_env()
+
+    assert config.enabled is True
+    assert config.koha_base_url == "https://from-swarm.example.org"
+    assert config.marc_mapping_path == "config/marc_mapping.yaml"
+    assert os.environ["KOHA_API_USER"] == "swarm-user"
+
+
 def test_biblionumber_range_cli_sets_runtime_options():
     options = parse_runtime_options(
         ["--dry-run", "--biblionumber-from", "1000", "--biblionumber-to", "1250"]
