@@ -20,6 +20,7 @@ except ImportError:
 
 _ENV_BOOTSTRAPPED = False
 _ENV_TMP_FILE: str | None = None
+SWARM_ENV_PAYLOAD_PATH = Path("/run/secrets/app_env_payload")
 
 
 class ConfigValidationError(ValueError):
@@ -270,6 +271,9 @@ def _resolve_env_file() -> str:
             decrypted_path = _decrypt_sops_env(enc_file)
             if decrypted_path:
                 return decrypted_path
+
+    if SWARM_ENV_PAYLOAD_PATH.is_file():
+        return str(SWARM_ENV_PAYLOAD_PATH)
 
     local_env = project_root / ".env"
     if local_env.is_file():
