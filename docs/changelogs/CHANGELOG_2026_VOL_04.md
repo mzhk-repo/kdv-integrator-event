@@ -228,3 +228,11 @@
 - **Verification:** `python3 -m py_compile src/export_module/config.py tests/test_export_config.py tests/test_entrypoint.py`; `bash -n scripts/entrypoint.sh`; host `python3 -m pytest tests/test_entrypoint.py -q` не запущено, бо `pytest` не встановлений (`No module named pytest`); виконано ручний smoke `scripts/entrypoint.sh python3 -c ...` з тимчасовим `app_env_payload`, який підтвердив `EXPORT_MARC_MAPPING_PATH`, `EXPORT_DICTIONARIES_PATH` і legacy `KDV_API_TOKEN`; `git diff --check -- src/export_module/config.py scripts/entrypoint.sh tests/test_export_config.py tests/test_entrypoint.py docs/RUNBOOK_KOHA_EXPORT.md docs/scripts_runbook.md docs/changelogs/CHANGELOG_2026_VOL_04.md`.
 - **Risks:** Payload source використовує shell dotenv contract, як і `docker-compose.swarm.yml`; некоректний рядок у env-файлі й далі зупинить старт контейнера, що є fail-fast поведінкою для runtime config. `docker exec ... env` без `. /run/secrets/app_env_payload` все одно не показує ENV PID1.
 - **Rollback:** Повернути попередній `scripts/entrypoint.sh`, прибрати fallback `SWARM_ENV_PAYLOAD_PATH` із `src/export_module/config.py`, видалити regression-тести, прибрати mapping/dictionaries paths із runbook-перевірки і цей changelog-запис.
+
+## 2026-07-20 — kdv-optimizer Docker build curl pin
+
+- **Context:** Production deploy падав під час збірки `kdv-optimizer`: APT більше не надає pinned `curl=7.88.1-10+deb12u14`, тому `apt-get install` завершувався з exit code `100`. `curl` залишається необхідним для container healthcheck.
+- **Change:** У `kdv-optimizer/Dockerfile` оновлено лише pin `curl` до доступної Debian Bookworm версії `7.88.1-10+deb12u15`; pins `ghostscript`, `poppler-utils` і `util-linux` не змінено.
+- **Verification:** Зібрано `kdv-optimizer` з чистим APT cache; в образі перевірено доступність `curl`, `gs` і `pdfinfo`; виконано `pytest tests/test_services.py -q` та `git diff --check`.
+- **Risks:** Exact-version pins залежать від поточного стану Debian Bookworm repositories; наступне security-оновлення може знову зробити конкретний pin недоступним.
+- **Rollback:** Повернути `curl=7.88.1-10+deb12u14` у `kdv-optimizer/Dockerfile` і видалити цей changelog-запис; rollback не відновить build, доки ця версія відсутня у configured APT repositories.
