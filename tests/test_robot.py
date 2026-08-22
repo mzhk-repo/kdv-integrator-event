@@ -144,3 +144,43 @@ def test_robot_run_batch_returns_stats(monkeypatch):
     assert stats["SUCCESS"] == 1
     assert stats["SKIPPED"] == 1
     assert processed == [("100", True, 45), ("101", True, 45)]
+
+
+def test_ui_robot_batch_raises_when_items_fail(monkeypatch):
+    monkeypatch.setattr(
+        robot,
+        "run_batch_ids",
+        lambda *_args, **_kwargs: {
+            "SUCCESS": 0,
+            "FAILED": 1,
+            "SKIPPED": 0,
+            "LINKED": 0,
+            "TIMEOUT": 0,
+            "ERROR_CLIENT": 0,
+            "ERROR_CONN": 0,
+        },
+    )
+
+    with pytest.raises(robot.RobotBatchError, match="FAILED=1"):
+        robot.run_batch_from_text("ui-task", "31")
+
+
+def test_ui_robot_batch_returns_stats_without_failures(monkeypatch):
+    expected_stats = {
+        "SUCCESS": 1,
+        "FAILED": 0,
+        "SKIPPED": 0,
+        "LINKED": 0,
+        "TIMEOUT": 0,
+        "ERROR_CLIENT": 0,
+        "ERROR_CONN": 0,
+    }
+    monkeypatch.setattr(robot, "run_batch_ids", lambda *_args, **_kwargs: expected_stats)
+
+    result = robot.run_batch_from_text("ui-task", "31")
+
+    assert result == {
+        "candidates_count": 1,
+        "preview": ["31"],
+        "stats": expected_stats,
+    }

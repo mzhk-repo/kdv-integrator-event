@@ -244,3 +244,10 @@
 - **Verification:** На production-вузлі `pinokew` перевірено: `rclone:latest` має `ENABLED true`; `kdv_integrator_event_kdv-api` перейшов у `Running` після rebuild `kdv-integrator-event:ffadb10ccc5d`; `curl http://127.0.0.1:5000/kdv/api/health` у task-контейнері повернув `HTTP/1.1 200` та `status=ok`; публічний URL без Cloudflare Access сесії повертає очікуваний `302` на login.
 - **Risks:** `docker plugin rm` є production-операцією й потребує backup `/var/lib/docker-plugins/rclone/config` та `cache`; не можна виводити або комітити `rclone.conf`. Rebuild local image допустимий лише з checkout того ж commit, що відповідає tag у Swarm service spec.
 - **Rollback:** Видалити секцію `3.1.1` із `docs/RUNBOOK_MAYDAY.md` і цей changelog-запис; production recovery не відкочується, бо вона вже відновила працездатний service.
+
+## 2026-08-22 — Robot Batch UI task failure propagation
+
+- **Context:** UI Robot Batch завершувався зі статусом `success`, коли вкладена інтеграційна задача повертала `FAILED`, `TIMEOUT`, `ERROR_CLIENT` або `ERROR_CONN`: batch лише повертав статистику, тому `TaskManager` не бачив винятку.
+- **Change:** Додано `RobotBatchError`. `run_batch_from_text()` після збирання статистики піднімає цей виняток для будь-якого failure-status, тож зовнішній UI-task переходить у `error` і polling UI показує повідомлення; успішні/`SKIPPED`/`LINKED` batch-и зберігають попередній результат.
+- **Verification:** `python3 -m py_compile scripts/robot.py tests/test_robot.py tests/test_tasks.py`; `python3 -m pytest tests/test_robot.py tests/test_tasks.py -q` -> `10 passed`.
+- **Rollback:** Видалити `RobotBatchError`, failure-summary перевірку в `run_batch_from_text()`, відповідні regression-тести й цей changelog-запис.
