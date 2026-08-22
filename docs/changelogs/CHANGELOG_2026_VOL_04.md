@@ -236,3 +236,11 @@
 - **Verification:** Зібрано `kdv-optimizer` з чистим APT cache; в образі перевірено доступність `curl`, `gs` і `pdfinfo`; виконано `pytest tests/test_services.py -q` та `git diff --check`.
 - **Risks:** Exact-version pins залежать від поточного стану Debian Bookworm repositories; наступне security-оновлення може знову зробити конкретний pin недоступним.
 - **Rollback:** Повернути `curl=7.88.1-10+deb12u14` у `kdv-optimizer/Dockerfile` і видалити цей changelog-запис; rollback не відновить build, доки ця версія відсутня у configured APT repositories.
+
+## 2026-08-22 — MAYDAY runbook: Swarm `kdv-api` recovery після 404
+
+- **Context:** Public `GET /kdv/api/health` повертав 404, бо Swarm service `kdv_integrator_event_kdv-api` був у стані `0/1`. Первинний блокер — disabled/crashed `rclone` Docker volume plugin, який не дозволяв створити `kdv-drive`; після відновлення plugin виявився другий блокер: відсутній локальний image tag `kdv-integrator-event:ffadb10ccc5d`.
+- **Change:** `docs/RUNBOOK_MAYDAY.md` доповнено Swarm-specific incident procedure: відрізнення Cloudflare Access `302` від API 404, перевірка service task/plugin/remote, безпечне відновлення `rclone` plugin із backup config/cache, відтворення exact local image tag зі service spec і локальна/public health verification.
+- **Verification:** На production-вузлі `pinokew` перевірено: `rclone:latest` має `ENABLED true`; `kdv_integrator_event_kdv-api` перейшов у `Running` після rebuild `kdv-integrator-event:ffadb10ccc5d`; `curl http://127.0.0.1:5000/kdv/api/health` у task-контейнері повернув `HTTP/1.1 200` та `status=ok`; публічний URL без Cloudflare Access сесії повертає очікуваний `302` на login.
+- **Risks:** `docker plugin rm` є production-операцією й потребує backup `/var/lib/docker-plugins/rclone/config` та `cache`; не можна виводити або комітити `rclone.conf`. Rebuild local image допустимий лише з checkout того ж commit, що відповідає tag у Swarm service spec.
+- **Rollback:** Видалити секцію `3.1.1` із `docs/RUNBOOK_MAYDAY.md` і цей changelog-запис; production recovery не відкочується, бо вона вже відновила працездатний service.

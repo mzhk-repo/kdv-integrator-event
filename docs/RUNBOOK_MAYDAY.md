@@ -56,6 +56,59 @@ docker compose up -d
 1. Перевірити `.env` (обов'язкові змінні, особливо `KDV_API_TOKEN`, `RCLONE_REMOTE_NAME`, `KOHA_*`, `DSPACE_*`).
 2. Відкотитись на попередній стабільний тег (див. секцію rollback).
 
+### 3.1.1 Swarm: `kdv-api` у `0/1`, public health повертає 404
+
+**Scope:** цей сценарій для Swarm stack `kdv_integrator_event`. Public `https://repo.pinokew.buzz/kdv/api/health` без Cloudflare Access сесії штатно повертає `302` на login; `404` або інша помилка після авторизації може означати, що `kdv-api` не має живого task.
+
+Діагностика:
+
+```bash
+docker service ls
+docker service ps kdv_integrator_event_kdv-api --no-trunc
+docker plugin ls
+```
+
+1. Якщо `docker service ps` показує `missing plugin`, перевірити rclone volume plugin і remote, не виводячи вміст `rclone.conf`:
+
+```bash
+docker plugin inspect rclone:latest --format 'enabled={{.Enabled}} reference={{.PluginReference}}'
+docker service inspect kdv_integrator_event_kdv-api --format '{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}'
+rclone --config /var/lib/docker-plugins/rclone/config/rclone.conf listremotes
+```
+
+Service очікує `DriverConfig.Options.remote` (у production — `gdrive-library:`). Цей remote має бути в plugin-конфігурації. Якщо plugin disabled, а `rclone.conf`/cache збережені, відновлення виконує оператор з правами Docker і доступом до `/var/lib/docker-plugins`:
+
+```bash
+docker plugin disable rclone:latest
+docker plugin rm rclone:latest
+docker plugin install --disable rclone/docker-volume-rclone:amd64 --alias rclone --grant-all-permissions args="-v"
+docker plugin enable rclone:latest
+docker plugin ls
+```
+
+Перед `docker plugin rm` обов'язково зробити резервні копії `/var/lib/docker-plugins/rclone/config` і `/var/lib/docker-plugins/rclone/cache`. Не копіювати та не публікувати вміст `rclone.conf`: він може містити OAuth tokens.
+
+2. Якщо plugin `ENABLED true`, але task відхилено з `No such image: kdv-integrator-event:<tag>`, відтворити саме image tag зі service spec з checkout того ж commit:
+
+```bash
+docker service inspect kdv_integrator_event_kdv-api --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
+git rev-parse --short=12 HEAD
+docker build -t kdv-integrator-event:<tag-from-service-spec> .
+docker service update --force kdv_integrator_event_kdv-api
+docker service ps kdv_integrator_event_kdv-api --no-trunc
+```
+
+`<tag-from-service-spec>` має дорівнювати short SHA поточного checkout. Якщо це не так, не збирати образ з іншого commit: спочатку переключити checkout на commit, з якого було зроблено deploy, або виконати штатний `scripts/deploy-orchestrator-swarm.sh` для узгодженого релізу.
+
+Перевірка після відновлення:
+
+```bash
+docker ps --filter label=com.docker.swarm.service.name=kdv_integrator_event_kdv-api
+docker exec <container-id> curl -i http://127.0.0.1:5000/kdv/api/health
+```
+
+Очікувано: Swarm task у стані `Running`, локальний endpoint повертає `HTTP/1.1 200` і JSON зі `status: "ok"`. Публічний URL без Access сесії має повертати `302` на Cloudflare Access; після успішного входу — health JSON.
+
 ### 3.2 Readiness = not_ready (drive/mount недоступний)
 
 Ознаки:
