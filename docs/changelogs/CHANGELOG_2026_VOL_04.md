@@ -251,3 +251,11 @@
 - **Change:** Додано `RobotBatchError`. `run_batch_from_text()` після збирання статистики піднімає цей виняток для будь-якого failure-status, тож зовнішній UI-task переходить у `error` і polling UI показує повідомлення; успішні/`SKIPPED`/`LINKED` batch-и зберігають попередній результат.
 - **Verification:** `python3 -m py_compile scripts/robot.py tests/test_robot.py tests/test_tasks.py`; `python3 -m pytest tests/test_robot.py tests/test_tasks.py -q` -> `10 passed`.
 - **Rollback:** Видалити `RobotBatchError`, failure-summary перевірку в `run_batch_from_text()`, відповідні regression-тести й цей changelog-запис.
+
+## 2026-08-24 — kdv-optimizer Hadolint DL3066 numeric user і poppler-utils pin
+
+- **Context:** CI checks падали на кроці Hadolint через правило `DL3066: Non-numeric user-id may not be resolvable by host system` у `kdv-optimizer/Dockerfile`. Додатково перевірка збірки виявила оновлення security-пакета `libpoppler126` у Debian Bookworm, що блокувало встановлення pinned `poppler-utils`.
+- **Change:** У `kdv-optimizer/Dockerfile` задано явні числові UID/GID (`10001:10001`) для користувача `optimizer` та оновлено інструкцію `USER 10001:10001`; оновлено pin `poppler-utils=22.12.0-2+deb12u3`.
+- **Verification:** `docker run --rm -i hadolint/hadolint:v2.15.1 hadolint - < kdv-optimizer/Dockerfile` завершився з кодом `0`; зібрано Docker образ `kdv-optimizer`, перевірено `uid=10001(optimizer) gid=10001(optimizer)` та healthcheck endpoint `GET /health` (`{"status":"ok"}`); виконано pytest-тести `tests/test_services.py` та `tests/test_pdf_optimizer_client.py` (`32 passed`).
+- **Risks:** Зміна UID/GID з дефолтного 1000 на 10001 не впливає на internal container paths завдяки `chown -R optimizer:optimizer /data/kdv_optimize`.
+- **Rollback:** Повернути `USER optimizer` та попередній pin `poppler-utils=22.12.0-2+deb12u2` у `kdv-optimizer/Dockerfile`, видалити цей changelog-запис.
