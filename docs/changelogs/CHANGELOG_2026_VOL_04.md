@@ -236,3 +236,26 @@
 - **Verification:** Зібрано `kdv-optimizer` з чистим APT cache; в образі перевірено доступність `curl`, `gs` і `pdfinfo`; виконано `pytest tests/test_services.py -q` та `git diff --check`.
 - **Risks:** Exact-version pins залежать від поточного стану Debian Bookworm repositories; наступне security-оновлення може знову зробити конкретний pin недоступним.
 - **Rollback:** Повернути `curl=7.88.1-10+deb12u14` у `kdv-optimizer/Dockerfile` і видалити цей changelog-запис; rollback не відновить build, доки ця версія відсутня у configured APT repositories.
+
+## 2026-08-22 — MAYDAY runbook: Swarm `kdv-api` recovery після 404
+
+- **Context:** Public `GET /kdv/api/health` повертав 404, бо Swarm service `kdv_integrator_event_kdv-api` був у стані `0/1`. Первинний блокер — disabled/crashed `rclone` Docker volume plugin, який не дозволяв створити `kdv-drive`; після відновлення plugin виявився другий блокер: відсутній локальний image tag `kdv-integrator-event:ffadb10ccc5d`.
+- **Change:** `docs/RUNBOOK_MAYDAY.md` доповнено Swarm-specific incident procedure: відрізнення Cloudflare Access `302` від API 404, перевірка service task/plugin/remote, безпечне відновлення `rclone` plugin із backup config/cache, відтворення exact local image tag зі service spec і локальна/public health verification.
+- **Verification:** На production-вузлі `pinokew` перевірено: `rclone:latest` має `ENABLED true`; `kdv_integrator_event_kdv-api` перейшов у `Running` після rebuild `kdv-integrator-event:ffadb10ccc5d`; `curl http://127.0.0.1:5000/kdv/api/health` у task-контейнері повернув `HTTP/1.1 200` та `status=ok`; публічний URL без Cloudflare Access сесії повертає очікуваний `302` на login.
+- **Risks:** `docker plugin rm` є production-операцією й потребує backup `/var/lib/docker-plugins/rclone/config` та `cache`; не можна виводити або комітити `rclone.conf`. Rebuild local image допустимий лише з checkout того ж commit, що відповідає tag у Swarm service spec.
+- **Rollback:** Видалити секцію `3.1.1` із `docs/RUNBOOK_MAYDAY.md` і цей changelog-запис; production recovery не відкочується, бо вона вже відновила працездатний service.
+
+## 2026-08-22 — Robot Batch UI task failure propagation
+
+- **Context:** UI Robot Batch завершувався зі статусом `success`, коли вкладена інтеграційна задача повертала `FAILED`, `TIMEOUT`, `ERROR_CLIENT` або `ERROR_CONN`: batch лише повертав статистику, тому `TaskManager` не бачив винятку.
+- **Change:** Додано `RobotBatchError`. `run_batch_from_text()` після збирання статистики піднімає цей виняток для будь-якого failure-status, тож зовнішній UI-task переходить у `error` і polling UI показує повідомлення; успішні/`SKIPPED`/`LINKED` batch-и зберігають попередній результат.
+- **Verification:** `python3 -m py_compile scripts/robot.py tests/test_robot.py tests/test_tasks.py`; `python3 -m pytest tests/test_robot.py tests/test_tasks.py -q` -> `10 passed`.
+- **Rollback:** Видалити `RobotBatchError`, failure-summary перевірку в `run_batch_from_text()`, відповідні regression-тести й цей changelog-запис.
+
+## 2026-08-24 — kdv-optimizer Hadolint DL3066 numeric user і poppler-utils pin
+
+- **Context:** CI checks падали на кроці Hadolint через правило `DL3066: Non-numeric user-id may not be resolvable by host system` у `kdv-optimizer/Dockerfile`. Додатково перевірка збірки виявила оновлення security-пакета `libpoppler126` у Debian Bookworm, що блокувало встановлення pinned `poppler-utils`.
+- **Change:** У `kdv-optimizer/Dockerfile` задано явні числові UID/GID (`10001:10001`) для користувача `optimizer` та оновлено інструкцію `USER 10001:10001`; оновлено pin `poppler-utils=22.12.0-2+deb12u3`.
+- **Verification:** `docker run --rm -i hadolint/hadolint:v2.15.1 hadolint - < kdv-optimizer/Dockerfile` завершився з кодом `0`; зібрано Docker образ `kdv-optimizer`, перевірено `uid=10001(optimizer) gid=10001(optimizer)` та healthcheck endpoint `GET /health` (`{"status":"ok"}`); виконано pytest-тести `tests/test_services.py` та `tests/test_pdf_optimizer_client.py` (`32 passed`).
+- **Risks:** Зміна UID/GID з дефолтного 1000 на 10001 не впливає на internal container paths завдяки `chown -R optimizer:optimizer /data/kdv_optimize`.
+- **Rollback:** Повернути `USER optimizer` та попередній pin `poppler-utils=22.12.0-2+deb12u2` у `kdv-optimizer/Dockerfile`, видалити цей changelog-запис.

@@ -70,6 +70,12 @@ BATCH_DELAY = _env_float(
 )  # throttle між стартами задач
 MAX_WAIT = _env_int("ROBOT_MAX_WAIT", 900, minimum=30)
 ROBOT_PARALLELISM = _env_int("ROBOT_PARALLELISM", 1, minimum=1)
+BATCH_FAILURE_STATUSES = ("FAILED", "TIMEOUT", "ERROR_CLIENT", "ERROR_CONN")
+
+
+class RobotBatchError(RuntimeError):
+    """Raised when a UI-triggered Robot batch contains failed items."""
+
 
 
 def build_parser():
@@ -400,6 +406,19 @@ def run_batch_from_text(
         parallelism=parallelism,
         max_wait=max_wait,
     )
+    failures = [
+        f"{status}={stats[status]}"
+        for status in BATCH_FAILURE_STATUSES
+        if stats.get(status, 0) > 0
+    ]
+    if failures:
+        summary = ", ".join(failures)
+        logger.error(f"🏁 BATCH COMPLETED WITH ERRORS: {summary}")
+        raise RobotBatchError(
+            f"Robot batch completed with errors: {summary}. "
+            "See robot_batch.log for details."
+        )
+
     return {
         "candidates_count": len(ids),
         "preview": ids[:20],
