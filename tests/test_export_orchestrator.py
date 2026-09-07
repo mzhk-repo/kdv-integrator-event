@@ -173,6 +173,20 @@ def test_manual_export_copies_only_file_links_without_state_or_email(tmp_path):
     )
 
 
+def test_manual_export_sends_email_only_when_requested(tmp_path):
+    graph = _GraphService()
+    orchestrator, repo, _ = _orchestrator(tmp_path, graph=graph)
+
+    assert orchestrator.run(
+        RuntimeOptions(
+            export_mode="file-links", manual_export=True, send_email=True
+        )
+    ) == 0
+
+    assert _rows(repo) == []
+    assert len(graph.calls) == 1
+
+
 def test_biblio_id_payload_is_exported_successfully(tmp_path):
     koha = _KohaClient(biblios=[{"biblio_id": 202}], marcxml_by_id={202: "<record />"})
     orchestrator, repo, _ = _orchestrator(tmp_path, koha=koha)

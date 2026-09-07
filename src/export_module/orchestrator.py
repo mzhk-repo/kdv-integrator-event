@@ -109,7 +109,10 @@ class ExportOrchestrator:
             )
             stage = "config_validation"
             self.config.validate(
-                require_graph=not options.manual_export,
+                require_graph=(
+                    not options.manual_export
+                    or (options.send_email and not options.dry_run)
+                ),
                 prepare_state=stateful,
             )
             LOGGER.info("config_validated")
@@ -239,7 +242,7 @@ class ExportOrchestrator:
             )
             preserve_staged_state_on_failure = stateful
 
-            if options.manual_export:
+            if options.manual_export and not options.send_email:
                 LOGGER.info(
                     "export_completed",
                     extra={

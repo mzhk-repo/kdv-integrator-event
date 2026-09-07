@@ -286,7 +286,6 @@ def test_export_run_accepts_file_links_options(monkeypatch):
         response = client.post(
             "/kdv/api/export/run",
             json={
-                "dry_run": True,
                 "biblionumber_from": 100,
                 "biblionumber_to": 200,
                 "export_mode": "file-links",
@@ -299,11 +298,12 @@ def test_export_run_accepts_file_links_options(monkeypatch):
     assert response.status_code == 202
     assert response.get_json()["task_id"] == "export-task-1"
     assert captured["func"] is _run_export_task
-    assert captured["options"].dry_run is True
+    assert captured["options"].dry_run is False
     assert captured["options"].biblionumber_from == 100
     assert captured["options"].biblionumber_to == 200
     assert captured["options"].export_mode == "file-links"
     assert captured["options"].manual_export is True
+    assert captured["options"].send_email is False
 
 
 def test_export_run_rejects_invalid_range(monkeypatch):

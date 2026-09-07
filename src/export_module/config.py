@@ -147,6 +147,7 @@ class RuntimeOptions:
     biblionumber_to: int | None = None
     export_mode: str = EXPORT_MODE_ALL
     manual_export: bool = False
+    send_email: bool = False
 
 
 def parse_runtime_options(argv: list[str] | None = None) -> RuntimeOptions:

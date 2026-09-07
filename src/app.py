@@ -240,9 +240,15 @@ def _parse_export_payload():
     if not isinstance(payload, dict):
         return None, (jsonify({"status": "error", "message": "JSON object expected"}), 400)
 
-    dry_run = payload.get("dry_run", False)
-    if not isinstance(dry_run, bool):
-        return None, (jsonify({"status": "error", "message": "dry_run must be a boolean"}), 400)
+    if payload.get("dry_run"):
+        return None, (
+            jsonify({"status": "error", "message": "UI export always writes to Google Drive"}),
+            400,
+        )
+
+    send_email = payload.get("send_email", False)
+    if not isinstance(send_email, bool):
+        return None, (jsonify({"status": "error", "message": "send_email must be a boolean"}), 400)
 
     try:
         biblionumber_from = _parse_optional_biblionumber(
@@ -286,11 +292,12 @@ def _parse_export_payload():
         )
 
     return RuntimeOptions(
-        dry_run=dry_run,
+        dry_run=False,
         biblionumber_from=biblionumber_from,
         biblionumber_to=biblionumber_to,
         export_mode=export_mode,
         manual_export=True,
+        send_email=send_email,
     ), None
 
 
@@ -323,6 +330,7 @@ def _run_export_task(_task_id: str, options: RuntimeOptions) -> dict:
             "biblionumber_from": options.biblionumber_from,
             "biblionumber_to": options.biblionumber_to,
             "file_path": orchestrator.last_export_path,
+            "send_email": options.send_email,
         }
     finally:
         _EXPORT_RUN_LOCK.release()

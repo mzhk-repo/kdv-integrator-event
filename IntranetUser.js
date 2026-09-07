@@ -20,7 +20,7 @@ $(document).ready(function() {
             confirmUpdate: "Оновити метадані (Назву, Автора) в DSpace?",
             confirmRobotBatch: "Запустити Robot Batch для вказаного списку?",
             robotBatchBtn: "Запустити Robot Batch",
-            confirmExport: "Запустити експорт Koha? Реальний запуск створить XLSX і надішле email.",
+            confirmExport: "Запустити експорт Koha? Буде створено XLSX на Google Drive.",
             exportBtn: "Запустити Koha Export",
             success: "✅ Дію завершено успішно!",
             error: "❌ Помилка: ",
@@ -97,7 +97,7 @@ $(document).ready(function() {
                 <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap;">
                     <label for="kdv-export-from" style="margin-bottom: 0;">Від ID<input type="number" id="kdv-export-from" class="form-control input-sm" min="1" style="width: 120px;"></label>
                     <label for="kdv-export-to" style="margin-bottom: 0;">До ID<input type="number" id="kdv-export-to" class="form-control input-sm" min="1" style="width: 120px;"></label>
-                    <label for="kdv-export-dry-run" class="checkbox-inline" style="margin-bottom: 6px;"><input type="checkbox" id="kdv-export-dry-run"> Dry-run</label>
+                    <label for="kdv-export-send-email" class="checkbox-inline" style="margin-bottom: 6px;"><input type="checkbox" id="kdv-export-send-email"> Надіслати email</label>
                     <button id="kdv-export-btn" class="btn btn-default btn-sm" type="button"><i class="fa fa-play"></i> ${KDV_CONFIG.I18N.exportBtn}</button>
                 </div>
             </div>
@@ -109,7 +109,7 @@ $(document).ready(function() {
             e.preventDefault();
             const from = $("#kdv-export-from").val();
             const to = $("#kdv-export-to").val();
-            const dryRun = document.getElementById("kdv-export-dry-run").checked;
+            const sendEmail = document.getElementById("kdv-export-send-email").checked;
             if (!from || !to) {
                 alert(KDV_CONFIG.I18N.error + "Задайте обидві межі діапазону ID");
                 return;
@@ -118,7 +118,7 @@ $(document).ready(function() {
                 alert(KDV_CONFIG.I18N.error + "ID 'Від' не може бути більшим за 'До'");
                 return;
             }
-            if (!dryRun && !confirm(KDV_CONFIG.I18N.confirmExport)) return;
+            if (!confirm(KDV_CONFIG.I18N.confirmExport)) return;
 
             const btn = $(this);
             const originalHtml = btn.html();
@@ -133,7 +133,7 @@ $(document).ready(function() {
                     headers: buildHeaders(),
                     contentType: "application/json",
                     data: JSON.stringify({
-                        dry_run: dryRun,
+                        send_email: sendEmail,
                         biblionumber_from: from || null,
                         biblionumber_to: to || null,
                         export_mode: "file-links"
@@ -397,7 +397,9 @@ Stats: ${stats}`);
                         clearInterval(pollTimer);
                         statusEl.text("Завершено");
                         btn.prop("disabled", false).addClass("btn-success").html(originalHtml);
-                        alert(`${KDV_CONFIG.I18N.success}\nФайл: ${data.result?.file_path || "не вказано"}`);
+                        const result = data.result || {};
+                        const outcome = `Файл: ${result.file_path || "не вказано"}${result.send_email ? "\nEmail надіслано." : ""}`;
+                        alert(`${KDV_CONFIG.I18N.success}\n${outcome}`);
                         setTimeout(() => btn.removeClass("btn-success"), 3000);
                     } else if (data.status === "error") {
                         clearInterval(pollTimer);
