@@ -31,8 +31,8 @@
 
 Модуль експорту є ізольованою підсистемою і не замінює поточний runtime
 Koha → DSpace архівації (`src/app.py`, `src/core.py`, `src/koha.py`). Його
-рекомендований запуск: one-off CLI у контейнері або Swarm wrapper, а не
-довгоживучий Flask endpoint.
+рекомендований запуск: one-off CLI у контейнері, Swarm wrapper або захищений
+асинхронний UI control endpoint, а не довгоживучий Flask endpoint.
 
 Згенеровані звіти підлягають:
 

@@ -15,7 +15,7 @@ from src.export_module.services.graph_email_service import GraphEmailSendResult 
 
 
 class _Config(ExportConfig):
-    def validate(self) -> None:
+    def validate(self, **_kwargs) -> None:
         return None
 
 
@@ -143,6 +143,34 @@ def test_happy_path_marks_records_completed(tmp_path):
     assert rows[0]["status"] == "completed"
     assert rows[0]["email_message_id"] == "message-1"
     assert not xlsx_generator.last_path.exists()
+
+
+def test_manual_export_copies_only_file_links_without_state_or_email(tmp_path):
+    koha = _KohaClient(
+        biblios=[{"biblionumber": 101}, {"biblionumber": 202}],
+        marcxml_by_id={101: "file-link", 202: "no-link"},
+    )
+    graph = _GraphService()
+    drive = _DriveService()
+    orchestrator, repo, _ = _orchestrator(
+        tmp_path, koha=koha, graph=graph, drive=drive
+    )
+
+    assert orchestrator.run(
+        RuntimeOptions(
+            biblionumber_from=100,
+            biblionumber_to=150,
+            export_mode="file-links",
+            manual_export=True,
+        )
+    ) == 0
+
+    assert _rows(repo) == []
+    assert graph.calls == []
+    assert len(drive.calls) == 1
+    assert orchestrator.last_export_path == str(
+        tmp_path / Path(drive.calls[0][0]).name
+    )
 
 
 def test_biblio_id_payload_is_exported_successfully(tmp_path):

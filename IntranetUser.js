@@ -6,9 +6,10 @@
 $(document).ready(function() {
     // --- 1. КОНФІГУРАЦІЯ ---
     const KDV_CONFIG = {
-        API_URL: "https://repo.pinokew.buzz/kdv/api",
-        REPO_DOMAIN: "repo.pinokew.buzz",
+        API_URL: "https://repo.ldubgd.edu.ua/kdv/api",
+        REPO_DOMAIN: "repo.ldubgd.edu.ua",
         ROBOT_BATCH_ENDPOINT: "/robot/batch",
+        EXPORT_RUN_ENDPOINT: "/export/run",
         POLLING_INTERVAL: 2000,
         MAX_POLLING_ATTEMPTS: 30, // Захист від нескінченного циклу (1 хвилина)
         ROBOT_MAX_POLLING_ATTEMPTS: 1800, // До 1 години для batch-канарейки
@@ -19,6 +20,8 @@ $(document).ready(function() {
             confirmUpdate: "Оновити метадані (Назву, Автора) в DSpace?",
             confirmRobotBatch: "Запустити Robot Batch для вказаного списку?",
             robotBatchBtn: "Запустити Robot Batch",
+            confirmExport: "Запустити експорт Koha? Реальний запуск створить XLSX і надішле email.",
+            exportBtn: "Запустити Koha Export",
             success: "✅ Дію завершено успішно!",
             error: "❌ Помилка: ",
             authNeeded: "Потрібна авторизація. Відкрийте вікно, що з'явилося, і повторіть дію."
@@ -75,6 +78,77 @@ $(document).ready(function() {
     // Точка входу: сторінка результатів пошуку каталогу
     if (window.location.href.includes("catalogue/search.pl")) {
         renderRobotBatchTools();
+        renderExportTools();
+    }
+
+    function renderExportTools() {
+        if ($("#kdv-export-panel").length > 0) return;
+
+        const mountPoint = $("#searchresults, #catalogue_search_results, #search_results, .searchresults, #main, main, #doc3")
+            .filter(":visible")
+            .first();
+        const target = mountPoint.length ? mountPoint : $("body");
+        const panelHtml = `
+            <div id="kdv-export-panel" class="well well-sm" style="margin: 12px 0; max-width: 860px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px;">
+                    <strong><i class="fa fa-file-excel-o"></i> Koha Export</strong>
+                    <span id="kdv-export-status" class="text-muted"></span>
+                </div>
+                <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap;">
+                    <label for="kdv-export-from" style="margin-bottom: 0;">Від ID<input type="number" id="kdv-export-from" class="form-control input-sm" min="1" style="width: 120px;"></label>
+                    <label for="kdv-export-to" style="margin-bottom: 0;">До ID<input type="number" id="kdv-export-to" class="form-control input-sm" min="1" style="width: 120px;"></label>
+                    <label for="kdv-export-dry-run" class="checkbox-inline" style="margin-bottom: 6px;"><input type="checkbox" id="kdv-export-dry-run"> Dry-run</label>
+                    <button id="kdv-export-btn" class="btn btn-default btn-sm" type="button"><i class="fa fa-play"></i> ${KDV_CONFIG.I18N.exportBtn}</button>
+                </div>
+            </div>
+        `;
+
+        if (target.is("body")) target.prepend(panelHtml); else target.before(panelHtml);
+
+        $("#kdv-export-btn").click(function(e) {
+            e.preventDefault();
+            const from = $("#kdv-export-from").val();
+            const to = $("#kdv-export-to").val();
+            const dryRun = document.getElementById("kdv-export-dry-run").checked;
+            if (!from || !to) {
+                alert(KDV_CONFIG.I18N.error + "Задайте обидві межі діапазону ID");
+                return;
+            }
+            if (from && to && Number(from) > Number(to)) {
+                alert(KDV_CONFIG.I18N.error + "ID 'Від' не може бути більшим за 'До'");
+                return;
+            }
+            if (!dryRun && !confirm(KDV_CONFIG.I18N.confirmExport)) return;
+
+            const btn = $(this);
+            const originalHtml = btn.html();
+            const statusEl = $("#kdv-export-status");
+            btn.prop("disabled", true).html('<i class="fa fa-spinner fa-spin"></i> Обробка...');
+            statusEl.text("Старт...");
+            ensureAccessSession(() => {
+                $.ajax({
+                    url: `${KDV_CONFIG.API_URL}${KDV_CONFIG.EXPORT_RUN_ENDPOINT}`,
+                    type: "POST",
+                    xhrFields: { withCredentials: true },
+                    headers: buildHeaders(),
+                    contentType: "application/json",
+                    data: JSON.stringify({
+                        dry_run: dryRun,
+                        biblionumber_from: from || null,
+                        biblionumber_to: to || null,
+                        export_mode: "file-links"
+                    }),
+                    success: (res) => startExportPolling(res.task_id, btn, originalHtml, statusEl),
+                    error: (xhr) => {
+                        statusEl.text("");
+                        showError(btn, xhr.responseJSON?.message || xhr.statusText, originalHtml);
+                    }
+                });
+            }, () => {
+                statusEl.text("");
+                btn.prop("disabled", false).html(originalHtml);
+            });
+        });
     }
 
     function renderRobotBatchTools() {
@@ -284,6 +358,46 @@ $(document).ready(function() {
                         alert(`${KDV_CONFIG.I18N.success}
 Candidates: ${result.candidates_count || 0}
 Stats: ${stats}`);
+                        setTimeout(() => btn.removeClass("btn-success"), 3000);
+                    } else if (data.status === "error") {
+                        clearInterval(pollTimer);
+                        statusEl.text("");
+                        showError(btn, data.error, originalHtml);
+                    }
+                },
+                error: (xhr) => {
+                    if (xhr.status === 404 || xhr.status === 401) {
+                        clearInterval(pollTimer);
+                        statusEl.text("");
+                        showError(btn, `Помилка статусу: ${xhr.status}`, originalHtml);
+                    }
+                }
+            });
+        }, KDV_CONFIG.POLLING_INTERVAL);
+    }
+
+    function startExportPolling(taskId, btn, originalHtml, statusEl) {
+        let attempts = 0;
+        const pollTimer = setInterval(() => {
+            if (++attempts > KDV_CONFIG.ROBOT_MAX_POLLING_ATTEMPTS) {
+                clearInterval(pollTimer);
+                statusEl.text("");
+                showError(btn, "Перевищено час очікування", originalHtml);
+                return;
+            }
+            $.ajax({
+                url: `${KDV_CONFIG.API_URL}/status/${taskId}`,
+                type: "GET",
+                xhrFields: { withCredentials: true },
+                headers: buildHeaders(),
+                success: (data) => {
+                    if (data.status === "queued" || data.status === "processing") {
+                        statusEl.text(data.progress || "Обробка...");
+                    } else if (data.status === "success") {
+                        clearInterval(pollTimer);
+                        statusEl.text("Завершено");
+                        btn.prop("disabled", false).addClass("btn-success").html(originalHtml);
+                        alert(`${KDV_CONFIG.I18N.success}\nФайл: ${data.result?.file_path || "не вказано"}`);
                         setTimeout(() => btn.removeClass("btn-success"), 3000);
                     } else if (data.status === "error") {
                         clearInterval(pollTimer);

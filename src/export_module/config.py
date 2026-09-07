@@ -88,17 +88,24 @@ class ExportConfig:
             pushgateway_url=_env("PUSHGATEWAY_URL") or None,
         )
 
-    def validate(self) -> None:
+    def validate(
+        self, require_graph: bool = True, prepare_state: bool = True
+    ) -> None:
         required = {
             "KOHA_API_URL": self.koha_base_url,
             "KOHA_API_USER": self.koha_api_user,
             "KOHA_API_PASS": self.koha_api_password,
-            "GRAPH_TENANT_ID": self.graph_tenant_id,
-            "GRAPH_CLIENT_ID": self.graph_client_id,
-            "GRAPH_CLIENT_SECRET": self.graph_client_secret,
-            "GRAPH_SENDER_USER_ID": self.graph_sender_user_id,
-            "GRAPH_TO": self.graph_to,
         }
+        if require_graph:
+            required.update(
+                {
+                    "GRAPH_TENANT_ID": self.graph_tenant_id,
+                    "GRAPH_CLIENT_ID": self.graph_client_id,
+                    "GRAPH_CLIENT_SECRET": self.graph_client_secret,
+                    "GRAPH_SENDER_USER_ID": self.graph_sender_user_id,
+                    "GRAPH_TO": self.graph_to,
+                }
+            )
         for env_name, value in required.items():
             if not value:
                 raise ConfigValidationError(f"Missing required environment: {env_name}")
@@ -122,8 +129,9 @@ class ExportConfig:
                 f"{self.export_dictionaries_path}"
             )
 
-        db_dir = Path(self.db_path).parent
-        db_dir.mkdir(parents=True, exist_ok=True)
+        if prepare_state:
+            db_dir = Path(self.db_path).parent
+            db_dir.mkdir(parents=True, exist_ok=True)
         export_root.mkdir(parents=True, exist_ok=True)
 
 
@@ -138,6 +146,7 @@ class RuntimeOptions:
     biblionumber_from: int | None = None
     biblionumber_to: int | None = None
     export_mode: str = EXPORT_MODE_ALL
+    manual_export: bool = False
 
 
 def parse_runtime_options(argv: list[str] | None = None) -> RuntimeOptions:

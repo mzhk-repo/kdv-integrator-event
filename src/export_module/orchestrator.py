@@ -78,6 +78,7 @@ class ExportOrchestrator:
         )
         self.graph_email_service = graph_email_service or GraphEmailService(config)
         self.run_id_factory = run_id_factory or (lambda: str(uuid4()))
+        self.last_export_path: str | None = None
 
     def run(self, options: RuntimeOptions) -> int:
         run_id = self.run_id_factory()
@@ -85,7 +86,10 @@ class ExportOrchestrator:
         xlsx_path: str | None = None
         drive_result: DriveMountCopyResult | None = None
         preserve_staged_state_on_failure = False
-        stateful = options.export_mode == EXPORT_MODE_FILE_LINKS
+        stateful = (
+            options.export_mode == EXPORT_MODE_FILE_LINKS and not options.manual_export
+        )
+        require_file_link = options.export_mode == EXPORT_MODE_FILE_LINKS
         stage = "start"
         records_count = 0
         candidates_count = 0
@@ -98,12 +102,16 @@ class ExportOrchestrator:
                 extra={
                     "dry_run": options.dry_run,
                     "export_mode": options.export_mode,
+                    "manual_export": options.manual_export,
                     "biblionumber_from": biblionumber_from,
                     "biblionumber_to": biblionumber_to,
                 },
             )
             stage = "config_validation"
-            self.config.validate()
+            self.config.validate(
+                require_graph=not options.manual_export,
+                prepare_state=stateful,
+            )
             LOGGER.info("config_validated")
 
             if stateful:
@@ -160,7 +168,7 @@ class ExportOrchestrator:
             stage = "marc_parsing"
             LOGGER.info("marc_parsing_started", extra={"records": exportable_count})
             selected_biblios, records, file_link_skipped, parse_skipped = self._parse_records(
-                exportable, require_file_link=stateful
+                exportable, require_file_link=require_file_link
             )
             records_count = len(records)
             if stateful:
@@ -215,6 +223,7 @@ class ExportOrchestrator:
             stage = "gdrive_copy"
             LOGGER.info("gdrive_copy_started", extra={"xlsx_path": xlsx_path})
             drive_result = self.drive_mount_service.copy_to_mount(xlsx_path, run_id)
+            self.last_export_path = drive_result.file_path
             if stateful:
                 self._repository().mark_gdrive_uploaded(
                     run_id, drive_result.file_path, drive_result.folder_path
@@ -229,6 +238,17 @@ class ExportOrchestrator:
                 },
             )
             preserve_staged_state_on_failure = stateful
+
+            if options.manual_export:
+                LOGGER.info(
+                    "export_completed",
+                    extra={
+                        "records_exported": len(records),
+                        "gdrive_file_path": drive_result.file_path,
+                        "status": "manual",
+                    },
+                )
+                return 0
 
             stage = "graph_email"
             LOGGER.info(

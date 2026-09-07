@@ -83,7 +83,8 @@ KohaApiClient ──► filter_exportable_biblios()
 ```
 
 **Ключові обмеження архітектури:**
-- Модуль є **CLI/batch**, не Flask endpoint. Не викликайте його через HTTP.
+- Модуль є **CLI/batch**. Koha UI викликає тільки захищений асинхронний control endpoint `POST /kdv/api/export/run`; він вимагає обидві межі діапазону biblionumber, не приймає секрети та повертає шлях сформованого XLSX.
+- UI запускає лише `file-links`: відбирає записи з `856$y = "Файл"`, копіює XLSX на `/mnt/drive`, не пише SQLite і не відправляє email. Один export може працювати одночасно в одному service process; паралельний запит отримає `409`.
 - Google Drive доступний через rclone volume `/mnt/drive`. Google API/service account для copy **не потрібен**.
 - Email тільки через **Microsoft Graph API**. SMTP не використовується.
 - Dry-run вмикається **тільки** прапорцем `--dry-run`. Змінної `EXPORT_DRY_RUN` не існує.

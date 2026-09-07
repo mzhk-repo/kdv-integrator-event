@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from flask import Flask, jsonify, request, abort
 
 try:
@@ -8,6 +9,12 @@ except ImportError:  # pragma: no cover - handled by config/mode checks
     jwt = None
 
 from .tasks import task_manager
+from .export_module.config import (
+    EXPORT_MODE_FILE_LINKS,
+    ExportConfig,
+    RuntimeOptions,
+)
+from .export_module.observability.logger import configure_export_logging
 from .config import (
     setup_logging,
     KDV_API_TOKEN,
@@ -29,6 +36,9 @@ setup_logging()
 logger = logging.getLogger("KDV-Core")
 
 app = Flask(__name__)
+
+# ponytail: process-local lock; use a shared lock only if the service gains replicas.
+_EXPORT_RUN_LOCK = threading.Lock()
 
 
 def _normalize_cf_team_domain(raw: str) -> str:
@@ -225,6 +235,99 @@ def _parse_robot_batch_payload():
     }, None
 
 
+def _parse_export_payload():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return None, (jsonify({"status": "error", "message": "JSON object expected"}), 400)
+
+    dry_run = payload.get("dry_run", False)
+    if not isinstance(dry_run, bool):
+        return None, (jsonify({"status": "error", "message": "dry_run must be a boolean"}), 400)
+
+    try:
+        biblionumber_from = _parse_optional_biblionumber(
+            payload.get("biblionumber_from"), "biblionumber_from"
+        )
+        biblionumber_to = _parse_optional_biblionumber(
+            payload.get("biblionumber_to"), "biblionumber_to"
+        )
+    except ValueError as exc:
+        return None, (jsonify({"status": "error", "message": str(exc)}), 400)
+
+    if biblionumber_from is None or biblionumber_to is None:
+        return None, (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "biblionumber_from and biblionumber_to are required",
+                }
+            ),
+            400,
+        )
+
+    if (
+        biblionumber_from > biblionumber_to
+    ):
+        return None, (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "biblionumber_from must be less than or equal to biblionumber_to",
+                }
+            ),
+            400,
+        )
+
+    export_mode = payload.get("export_mode", EXPORT_MODE_FILE_LINKS)
+    if export_mode != EXPORT_MODE_FILE_LINKS:
+        return None, (
+            jsonify({"status": "error", "message": "UI export supports file-links mode only"}),
+            400,
+        )
+
+    return RuntimeOptions(
+        dry_run=dry_run,
+        biblionumber_from=biblionumber_from,
+        biblionumber_to=biblionumber_to,
+        export_mode=export_mode,
+        manual_export=True,
+    ), None
+
+
+def _parse_optional_biblionumber(value, field: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{field} must be a positive integer")
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return parsed
+
+
+def _run_export_task(_task_id: str, options: RuntimeOptions) -> dict:
+    from .export_module.orchestrator import ExportOrchestrator
+
+    try:
+        configure_export_logging()
+        orchestrator = ExportOrchestrator(ExportConfig.from_env())
+        exit_code = orchestrator.run(options)
+        if exit_code:
+            raise RuntimeError("Export failed; inspect KDV export logs")
+        return {
+            "dry_run": options.dry_run,
+            "export_mode": options.export_mode,
+            "biblionumber_from": options.biblionumber_from,
+            "biblionumber_to": options.biblionumber_to,
+            "file_path": orchestrator.last_export_path,
+        }
+    finally:
+        _EXPORT_RUN_LOCK.release()
+
+
 def _make_clients():
     """Return a fresh pair of Koha/DSpace clients (wrappers) for glue code.
 
@@ -270,6 +373,37 @@ def robot_batch_async():
                 "task_id": task_id,
                 "candidates_count": len(payload["ids"]),
                 "preview": payload["ids"][:20],
+            }
+        ),
+        202,
+    )
+
+
+@app.route("/kdv/api/export/run", methods=["POST"])
+def export_run_async():
+    options, error_response = _parse_export_payload()
+    if error_response:
+        return error_response
+
+    if not ExportConfig.from_env().enabled:
+        return jsonify({"status": "error", "message": "Export module is disabled"}), 503
+
+    if not _EXPORT_RUN_LOCK.acquire(blocking=False):
+        return jsonify({"status": "error", "message": "Export is already running"}), 409
+
+    try:
+        task_id = task_manager.start_task(_run_export_task, options)
+    except Exception:
+        _EXPORT_RUN_LOCK.release()
+        raise
+
+    return (
+        jsonify(
+            {
+                "status": "accepted",
+                "task_id": task_id,
+                "dry_run": options.dry_run,
+                "export_mode": options.export_mode,
             }
         ),
         202,
