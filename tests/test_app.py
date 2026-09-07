@@ -12,7 +12,7 @@ os.environ.setdefault("DSPACE_API_USER", "user")
 os.environ.setdefault("DSPACE_API_PASS", "pass")
 os.environ.setdefault("INTEGRATOR_MOUNT_PATH", "/tmp")
 
-from src.app import app
+from src.app import _EXPORT_RUN_LOCK, _run_export_task, app
 
 
 def test_health_endpoint_is_public_and_ok():
@@ -294,11 +294,11 @@ def test_export_run_accepts_file_links_options(monkeypatch):
             headers={"X-KDV-TOKEN": "test-token"},
         )
     finally:
-        app._EXPORT_RUN_LOCK.release()
+        _EXPORT_RUN_LOCK.release()
 
     assert response.status_code == 202
     assert response.get_json()["task_id"] == "export-task-1"
-    assert captured["func"] is app._run_export_task
+    assert captured["func"] is _run_export_task
     assert captured["options"].dry_run is True
     assert captured["options"].biblionumber_from == 100
     assert captured["options"].biblionumber_to == 200
@@ -325,7 +325,7 @@ def test_export_run_rejects_parallel_run(monkeypatch):
     monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
     monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
     monkeypatch.setattr("src.app.ExportConfig.from_env", lambda: type("Config", (), {"enabled": True})())
-    assert app._EXPORT_RUN_LOCK.acquire(blocking=False)
+    assert _EXPORT_RUN_LOCK.acquire(blocking=False)
     try:
         response = client.post(
             "/kdv/api/export/run",
@@ -333,6 +333,6 @@ def test_export_run_rejects_parallel_run(monkeypatch):
             headers={"X-KDV-TOKEN": "test-token"},
         )
     finally:
-        app._EXPORT_RUN_LOCK.release()
+        _EXPORT_RUN_LOCK.release()
 
     assert response.status_code == 409
