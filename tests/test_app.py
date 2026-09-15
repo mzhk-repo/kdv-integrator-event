@@ -12,7 +12,7 @@ os.environ.setdefault("DSPACE_API_USER", "user")
 os.environ.setdefault("DSPACE_API_PASS", "pass")
 os.environ.setdefault("INTEGRATOR_MOUNT_PATH", "/tmp")
 
-from src.app import app
+from src.app import _EXPORT_RUN_LOCK, _run_export_task, app
 
 
 def test_health_endpoint_is_public_and_ok():
@@ -266,3 +266,73 @@ def test_robot_batch_rejects_invalid_controls(monkeypatch):
 
     assert response.status_code == 400
     assert response.get_json()["message"] == "max_wait must be >= 30"
+
+
+def test_export_run_accepts_file_links_options(monkeypatch):
+    client = app.test_client()
+    captured = {}
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app.ExportConfig.from_env", lambda: type("Config", (), {"enabled": True})())
+
+    def fake_start_task(func, options):
+        captured["func"] = func
+        captured["options"] = options
+        return "export-task-1"
+
+    monkeypatch.setattr("src.app.task_manager.start_task", fake_start_task)
+    try:
+        response = client.post(
+            "/kdv/api/export/run",
+            json={
+                "biblionumber_from": 100,
+                "biblionumber_to": 200,
+                "export_mode": "file-links",
+            },
+            headers={"X-KDV-TOKEN": "test-token"},
+        )
+    finally:
+        _EXPORT_RUN_LOCK.release()
+
+    assert response.status_code == 202
+    assert response.get_json()["task_id"] == "export-task-1"
+    assert captured["func"] is _run_export_task
+    assert captured["options"].dry_run is False
+    assert captured["options"].biblionumber_from == 100
+    assert captured["options"].biblionumber_to == 200
+    assert captured["options"].export_mode == "file-links"
+    assert captured["options"].manual_export is True
+    assert captured["options"].send_email is False
+
+
+def test_export_run_rejects_invalid_range(monkeypatch):
+    client = app.test_client()
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+
+    response = client.post(
+        "/kdv/api/export/run",
+        json={"biblionumber_from": 200, "biblionumber_to": 100},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_export_run_rejects_parallel_run(monkeypatch):
+    client = app.test_client()
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app.ExportConfig.from_env", lambda: type("Config", (), {"enabled": True})())
+    assert _EXPORT_RUN_LOCK.acquire(blocking=False)
+    try:
+        response = client.post(
+            "/kdv/api/export/run",
+            json={"biblionumber_from": 100, "biblionumber_to": 200},
+            headers={"X-KDV-TOKEN": "test-token"},
+        )
+    finally:
+        _EXPORT_RUN_LOCK.release()
+
+    assert response.status_code == 409

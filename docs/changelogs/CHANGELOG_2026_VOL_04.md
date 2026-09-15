@@ -259,3 +259,11 @@
 - **Verification:** `docker run --rm -i hadolint/hadolint:v2.15.1 hadolint - < kdv-optimizer/Dockerfile` завершився з кодом `0`; зібрано Docker образ `kdv-optimizer`, перевірено `uid=10001(optimizer) gid=10001(optimizer)` та healthcheck endpoint `GET /health` (`{"status":"ok"}`); виконано pytest-тести `tests/test_services.py` та `tests/test_pdf_optimizer_client.py` (`32 passed`).
 - **Risks:** Зміна UID/GID з дефолтного 1000 на 10001 не впливає на internal container paths завдяки `chown -R optimizer:optimizer /data/kdv_optimize`.
 - **Rollback:** Повернути `USER optimizer` та попередній pin `poppler-utils=22.12.0-2+deb12u2` у `kdv-optimizer/Dockerfile`, видалити цей changelog-запис.
+
+## 2026-09-15 — CI-only для змін export mapping
+
+- **Context:** Зміни `config/export_dictionaries.yaml` або `config/marc_mapping.yaml` потребують CI-перевірок, але не повинні автоматично запускати деплой.
+- **Change:** У `.github/workflows/main.yml` додано precheck змінених файлів через `git diff`; для таких змін параметр `deploy` у dev/release reusable workflow передається як `false`, тому CI зберігається, а CD пропускається.
+- **Verification:** `git diff --check -- .github/workflows/main.yml docs/changelogs/CHANGELOG_2026_VOL_04.md` пройшов без зауважень; `actionlint` і Ruby YAML parser недоступні в локальному середовищі.
+- **Risks:** Precheck додає окремий GitHub Actions job і потребує доступу checkout до повної історії; для release перевіряється commit, на який вказує release tag.
+- **Rollback:** Видалити `deploy-change-check`, його `needs` та умови `deploy` у `.github/workflows/main.yml`, потім видалити цей changelog-запис.

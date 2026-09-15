@@ -394,7 +394,7 @@ docker exec -e PYTHONPATH=/app:/app/kdv-optimizer kdv-api pytest -q
 
 ### 16. Koha Export Module (ізольована CLI/batch-підсистема)
 
-Koha Export Module — це окрема підсистема у `src/export_module/`, яка **не є Flask endpoint** і не впливає на основний Koha → DSpace pipeline. Запускається вручну або за розкладом як one-off CLI команда.
+Koha Export Module — це окрема CLI/batch-підсистема у `src/export_module/`, яка не впливає на основний Koha → DSpace pipeline. Запускається вручну, за розкладом або через захищений асинхронний UI control endpoint.
 
 **Роль:** Періодичний пакетний експорт бібліографічних записів Koha у XLSX → архівація на Google Drive → email-розсилка через Microsoft Graph API.
 

@@ -9,7 +9,7 @@
 
 Koha Export Module is a separate CLI/batch module in KDV Integrator for periodic export of Koha bibliographic records to XLSX.
 
-It is not a Flask endpoint and must not replace the current Koha → DSpace pipeline in `src/app.py`, `src/core.py`, `src/koha.py`.
+It remains a CLI/batch module and must not replace the current Koha → DSpace pipeline in `src/app.py`, `src/core.py`, `src/koha.py`. The authenticated asynchronous control endpoint `POST /kdv/api/export/run` may start that same batch process for Koha UI.
 
 Recommended commands:
 
@@ -24,7 +24,7 @@ python -m src.export_module --reset-pending <RUN_ID>
 
 ## 2. Current Architecture Decisions
 
-- Export runs as CLI/batch, not as a long-running Flask endpoint.
+- Export runs as CLI/batch, not as a long-running Flask endpoint; the UI control endpoint only starts it as a background task.
 - Google Drive for export is already mounted inside the container through rclone as `/mnt/drive`.
 - XLSX export does not need a Google service account and does not need Google Drive API upload.
 - Email is sent through Microsoft Graph API `sendMail`, not SMTP.
@@ -323,7 +323,7 @@ Dry-run:
 
 ## 14. Prohibitions
 
-- Do not implement export as a Flask endpoint without a separate decision.
+- Do not add a public or synchronous export endpoint; `POST /kdv/api/export/run` is the authenticated asynchronous control endpoint for the existing batch process.
 - Do not use Google Drive API/service account for export copy.
 - Do not add SMTP transport.
 - Do not read `EXPORT_DRY_RUN` from env.

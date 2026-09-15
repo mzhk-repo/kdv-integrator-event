@@ -14,7 +14,7 @@ columns:
 
   - name: "publisher"
     sources:
-      - field: "260"
+      - field: "264"
         subfields: ["a", "b",]
         join: ": "
         strip_chars: " /:"

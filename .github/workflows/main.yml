@@ -22,14 +22,41 @@ permissions:
   pull-requests: read
 
 jobs:
+  deploy-change-check:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_allowed: ${{ steps.check.outputs.deploy_allowed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+      - id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            changed_files=$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
+          else
+            changed_files=$(git diff-tree --no-commit-id --name-only -r HEAD)
+          fi
+
+          if printf '%s\n' "$changed_files" | grep -Fxq -e 'config/export_dictionaries.yaml' -e 'config/marc_mapping.yaml'; then
+            echo 'deploy_allowed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy_allowed=true' >> "$GITHUB_OUTPUT"
+          fi
+
   deploy-dev:
+    needs: deploy-change-check
     if: |
       (github.event_name == 'pull_request' && github.base_ref == 'dev') ||
       (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
     with:
       environment_name: development
-      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.deploy-change-check.outputs.deploy_allowed == 'true' }}
       use_ansible: true
       build_and_push_docker: false
       docker_image_name: kdv-integrator-event
@@ -47,6 +74,7 @@ jobs:
       SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
 
   deploy-prod:
+    needs: deploy-change-check
     if: |
       (github.event_name == 'pull_request' && github.base_ref == 'main') ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
@@ -54,7 +82,7 @@ jobs:
     uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
     with:
       environment_name: production
-      deploy: ${{ github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v') }}
+      deploy: ${{ github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v') && needs.deploy-change-check.outputs.deploy_allowed == 'true' }}
       use_ansible: true
       build_and_push_docker: false
       docker_image_name: kdv-integrator-event

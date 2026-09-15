@@ -33,7 +33,7 @@ from src.export_module.xlsx.generator import XLSXGenerator  # noqa: E402
 
 
 class _Config(ExportConfig):
-    def validate(self) -> None:
+    def validate(self, **_kwargs) -> None:
         return None
 
 
