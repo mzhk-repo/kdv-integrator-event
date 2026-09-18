@@ -275,3 +275,11 @@
 - **Verification:** `python3 -m py_compile src/core.py tests/test_core.py`; focused pytest для `tests/test_core.py` виконано після локальної перевірки залежностей.
 - **Risks:** Якщо внутрішні timeout-и `CoverService` або HTTP-клієнта не спрацюють, основний task чекатиме завершення cover worker; поточний сервіс уже має Poppler та HTTP timeout guards.
 - **Rollback:** Повернути `future_cover.result(timeout=10)` у `src/core.py`, видалити regression-тест і цей changelog-запис.
+
+## 2026-09-18 — Очищення крайових символів у Koha → DSpace metadata
+
+- **Context:** Текстові MARC-значення могли потрапляти в DSpace з технічними символами на краях, зокрема `./`, `|` і `:`.
+- **Change:** У `src/mapping.py` додано спільну нормалізацію крайових пробілів, Unicode punctuation і symbols. Її застосовано під час MARC parsing у `src/core.py` та перед формуванням DSpace metadata у `src/dspace.py` для create/update paths; внутрішні символи тексту не змінюються.
+- **Verification:** `python3 -m py_compile src/mapping.py src/core.py src/dspace.py tests/test_core.py tests/test_contracts.py`; `pytest tests/test_core.py tests/test_contracts.py -q` -> `43 passed`; `git diff --check` без зауважень.
+- **Risks:** Крайові Unicode symbols також видаляються, якщо вони стоять безпосередньо на межі значення; URL/handle поля, що використовуються для маршрутизації, не проходять через цю нормалізацію як текстові metadata.
+- **Rollback:** Видалити `strip_metadata_edges()` і його виклики у `src/core.py`/`src/dspace.py`, прибрати додані тести та цей changelog-запис.

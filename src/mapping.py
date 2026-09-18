@@ -3,6 +3,27 @@
 Тут визначаються правила, за якими поля з Koha потрапляють у DSpace.
 """
 
+import unicodedata
+
+
+def strip_metadata_edges(value):
+    """Remove whitespace and punctuation from both edges of a text value."""
+    if not isinstance(value, str):
+        return value
+
+    start = 0
+    end = len(value)
+    while start < end and _is_metadata_edge(value[start]):
+        start += 1
+    while end > start and _is_metadata_edge(value[end - 1]):
+        end -= 1
+    return value[start:end]
+
+
+def _is_metadata_edge(char):
+    category = unicodedata.category(char)
+    return char.isspace() or category.startswith(("P", "S"))
+
 # 1. СЛОВНИК МАПУВАННЯ ПОЛІВ (Field Mapping)
 METADATA_RULES = {
     # --- НАЗВА ---

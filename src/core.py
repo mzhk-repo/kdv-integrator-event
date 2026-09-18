@@ -23,7 +23,7 @@ from .services.pdf import (
     has_optimizer_disk_space,
     needs_optimization,
 )
-from .mapping import METADATA_RULES, TYPE_CONVERSION
+from .mapping import METADATA_RULES, TYPE_CONVERSION, strip_metadata_edges
 
 logger = logging.getLogger("KDV-Core")
 
@@ -372,6 +372,7 @@ def parse_marc_details(xml_data):
                         break
             final_values = []
             for v in values:
+                v = strip_metadata_edges(v)
                 if "regex" in rule:
                     match = re.search(rule["regex"], v)
                     if match:
