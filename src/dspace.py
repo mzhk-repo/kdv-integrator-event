@@ -3,6 +3,7 @@ import requests
 import logging
 import time
 from .config import DSPACE_API_URL, DSPACE_USER, DSPACE_PASS, TIMEOUT, UPLOAD_TIMEOUT
+from .mapping import strip_metadata_edges
 
 logger = logging.getLogger("DSpaceClient")
 
@@ -115,8 +116,12 @@ class DSpaceClient:
 
     def _format_metadata_value(self, value):
         if isinstance(value, list):
-            return [{"value": str(v), "language": None} for v in value]
-        return [{"value": str(value), "language": None}]
+            values = value
+        else:
+            values = [value]
+        return [
+            {"value": strip_metadata_edges(str(v)), "language": None} for v in values
+        ]
 
     def _response_reason(self, resp):
         try:
@@ -184,6 +189,7 @@ class DSpaceClient:
         name_val = metadata_dict.get("dc.title", "Untitled")
         if isinstance(name_val, list):
             name_val = name_val[0]
+        name_val = strip_metadata_edges(str(name_val))
 
         data = {
             "name": name_val,

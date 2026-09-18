@@ -99,6 +99,20 @@ def test_parse_marc_rules_basic():
     assert out.get("dc.title") == "Hello"
 
 
+def test_parse_marc_details_strips_edge_punctuation():
+    xml = (
+        '<record><datafield tag="245" ind1=" " ind2=" ">'
+        '<subfield code="a">./ Назва книги :|</subfield></datafield>'
+        '<datafield tag="100" ind1=" " ind2=" ">'
+        '<subfield code="a">: Автор /</subfield></datafield></record>'
+    )
+
+    out = parse_marc_details(xml)
+
+    assert out["dc.title"] == "Назва книги"
+    assert out["dc.contributor.author"] == "Автор"
+
+
 def test_koha_metadata_extracts_external_cover_path():
     client = KohaClient.__new__(KohaClient)
     client._get_biblio_xml = lambda _biblio_id: (

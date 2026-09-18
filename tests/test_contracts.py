@@ -88,6 +88,18 @@ def test_dspace_update_metadata_contract_builds_json_patch(monkeypatch):
     ]
 
 
+def test_dspace_metadata_format_strips_edge_punctuation():
+    client = DSpaceClient()
+
+    assert client._format_metadata_value("./ Назва :|") == [
+        {"value": "Назва", "language": None}
+    ]
+    assert client._format_metadata_value(["/ Автор /", "| Редактор :"]) == [
+        {"value": "Автор", "language": None},
+        {"value": "Редактор", "language": None},
+    ]
+
+
 def test_dspace_get_primary_bitstream_reads_first_original_bitstream(monkeypatch):
     client = DSpaceClient()
     calls = []
