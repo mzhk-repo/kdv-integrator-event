@@ -96,6 +96,7 @@ class ExportOrchestrator:
         exportable_count = 0
         biblionumber_from = getattr(options, "biblionumber_from", None)
         biblionumber_to = getattr(options, "biblionumber_to", None)
+        biblionumbers = getattr(options, "biblionumbers", None)
         try:
             LOGGER.info(
                 "export_started",
@@ -105,6 +106,7 @@ class ExportOrchestrator:
                     "manual_export": options.manual_export,
                     "biblionumber_from": biblionumber_from,
                     "biblionumber_to": biblionumber_to,
+                    "biblionumbers_count": len(biblionumbers or ()),
                 },
             )
             stage = "config_validation"
@@ -131,14 +133,18 @@ class ExportOrchestrator:
                 extra={
                     "biblionumber_from": biblionumber_from,
                     "biblionumber_to": biblionumber_to,
+                    "biblionumbers_count": len(biblionumbers or ()),
                 },
             )
-            candidates = list(
-                self.koha_client.fetch_all_biblios_keyset(
-                    biblionumber_from=biblionumber_from,
-                    biblionumber_to=biblionumber_to,
+            if biblionumbers:
+                candidates = self.koha_client.fetch_biblios_by_numbers(biblionumbers)
+            else:
+                candidates = list(
+                    self.koha_client.fetch_all_biblios_keyset(
+                        biblionumber_from=biblionumber_from,
+                        biblionumber_to=biblionumber_to,
+                    )
                 )
-            )
             candidates_count = len(candidates)
             LOGGER.info(
                 "koha_candidates_fetched", extra={"candidates": candidates_count}

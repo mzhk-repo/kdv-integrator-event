@@ -22,6 +22,7 @@ $(document).ready(function() {
             robotBatchBtn: "Запустити Robot Batch",
             confirmExport: "Запустити експорт Koha? Буде створено XLSX на Google Drive.",
             exportBtn: "Запустити Koha Export",
+            selectedHint: "Якщо відмічені записи, будуть використані вони; інакше — введені ID.",
             success: "✅ Дію завершено успішно!",
             error: "❌ Помилка: ",
             authNeeded: "Потрібна авторизація. Відкрийте вікно, що з'явилося, і повторіть дію."
@@ -68,6 +69,39 @@ $(document).ready(function() {
         return KDV_TOKEN ? { "X-KDV-TOKEN": KDV_TOKEN } : {};
     }
 
+    function getSelectedBiblionumbers() {
+        const ids = new Set();
+        const resultRoots = $("#searchresults, #catalogue_search_results, #search_results, .searchresults")
+            .filter(":visible");
+
+        resultRoots.find("input[type='checkbox']:checked").each(function() {
+            const checkbox = $(this);
+            const row = checkbox.closest("tr, li, .searchresult, .result");
+            const candidates = [
+                checkbox.val(),
+                checkbox.attr("data-biblionumber"),
+                checkbox.attr("data-biblio-number"),
+                checkbox.attr("id")
+            ];
+
+            row.find("a[href]").each(function() {
+                candidates.push($(this).attr("href"));
+            });
+
+            candidates.forEach((candidate) => {
+                const value = String(candidate || "");
+                const direct = value.match(/^\d+$/);
+                const embedded = value.match(/(?:biblionumber|biblio(?:number)?)[=_-](\d+)/i);
+                const fromUrl = value.match(/[?&]biblionumber=(\d+)/i);
+                const match = direct || embedded || fromUrl;
+                const number = match && (direct ? match[0] : match[1]);
+                if (number && Number(number) > 0) ids.add(Number(number));
+            });
+        });
+
+        return Array.from(ids).sort((left, right) => left - right);
+    }
+
     // Точка входу: перевірка сторінки деталей
     if (window.location.href.includes("catalogue/detail.pl")) {
         const urlParams = new URLSearchParams(window.location.search);
@@ -94,6 +128,7 @@ $(document).ready(function() {
                     <strong><i class="fa fa-file-excel-o"></i> Koha Export</strong>
                     <span id="kdv-export-status" class="text-muted"></span>
                 </div>
+                <div class="text-muted" style="margin-bottom: 8px;">${KDV_CONFIG.I18N.selectedHint}</div>
                 <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap;">
                     <label for="kdv-export-from" style="margin-bottom: 0;">Від ID<input type="number" id="kdv-export-from" class="form-control input-sm" min="1" style="width: 120px;"></label>
                     <label for="kdv-export-to" style="margin-bottom: 0;">До ID<input type="number" id="kdv-export-to" class="form-control input-sm" min="1" style="width: 120px;"></label>
@@ -107,14 +142,15 @@ $(document).ready(function() {
 
         $("#kdv-export-btn").click(function(e) {
             e.preventDefault();
+            const selected = getSelectedBiblionumbers();
             const from = $("#kdv-export-from").val();
             const to = $("#kdv-export-to").val();
             const sendEmail = document.getElementById("kdv-export-send-email").checked;
-            if (!from || !to) {
+            if (!selected.length && (!from || !to)) {
                 alert(KDV_CONFIG.I18N.error + "Задайте обидві межі діапазону ID");
                 return;
             }
-            if (from && to && Number(from) > Number(to)) {
+            if (!selected.length && from && to && Number(from) > Number(to)) {
                 alert(KDV_CONFIG.I18N.error + "ID 'Від' не може бути більшим за 'До'");
                 return;
             }
@@ -134,8 +170,9 @@ $(document).ready(function() {
                     contentType: "application/json",
                     data: JSON.stringify({
                         send_email: sendEmail,
-                        biblionumber_from: from || null,
-                        biblionumber_to: to || null,
+                        biblionumbers: selected.length ? selected : null,
+                        biblionumber_from: selected.length ? null : (from || null),
+                        biblionumber_to: selected.length ? null : (to || null),
                         export_mode: "file-links"
                     }),
                     success: (res) => startExportPolling(res.task_id, btn, originalHtml, statusEl),
@@ -166,6 +203,7 @@ $(document).ready(function() {
                     <span id="kdv-robot-status" class="text-muted"></span>
                 </div>
                 <textarea id="kdv-robot-candidates" class="form-control" rows="3" placeholder="100-110&#10;200, 210"></textarea>
+                <div class="text-muted" style="margin-top: 4px;">${KDV_CONFIG.I18N.selectedHint}</div>
                 <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
                     <label for="kdv-robot-parallelism" style="margin-bottom: 0;">
                         Паралелізм
@@ -194,7 +232,10 @@ $(document).ready(function() {
 
         $("#kdv-robot-batch-btn").click(function(e) {
             e.preventDefault();
-            const candidates = ($("#kdv-robot-candidates").val() || "").trim();
+            const selected = getSelectedBiblionumbers();
+            const candidates = selected.length
+                ? selected.join("\n")
+                : ($("#kdv-robot-candidates").val() || "").trim();
             if (!candidates) {
                 alert(KDV_CONFIG.I18N.error + "Не задано candidates");
                 return;

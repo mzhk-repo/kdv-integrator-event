@@ -260,18 +260,25 @@ def _parse_export_payload():
     except ValueError as exc:
         return None, (jsonify({"status": "error", "message": str(exc)}), 400)
 
-    if biblionumber_from is None or biblionumber_to is None:
+    try:
+        selected_biblionumbers = _parse_biblionumbers(payload.get("biblionumbers"))
+    except ValueError as exc:
+        return None, (jsonify({"status": "error", "message": str(exc)}), 400)
+
+    has_selected = bool(selected_biblionumbers)
+    has_range = biblionumber_from is not None and biblionumber_to is not None
+    if not has_selected and not has_range:
         return None, (
             jsonify(
                 {
                     "status": "error",
-                    "message": "biblionumber_from and biblionumber_to are required",
+                    "message": "biblionumbers or both range boundaries are required",
                 }
             ),
             400,
         )
 
-    if (
+    if has_range and (
         biblionumber_from > biblionumber_to
     ):
         return None, (
@@ -295,6 +302,7 @@ def _parse_export_payload():
         dry_run=False,
         biblionumber_from=biblionumber_from,
         biblionumber_to=biblionumber_to,
+        biblionumbers=selected_biblionumbers,
         export_mode=export_mode,
         manual_export=True,
         send_email=send_email,
@@ -315,6 +323,26 @@ def _parse_optional_biblionumber(value, field: str) -> int | None:
     return parsed
 
 
+def _parse_biblionumbers(value) -> tuple[int, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise ValueError("biblionumbers must be a non-empty list")
+
+    parsed = set()
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, str)):
+            raise ValueError("biblionumbers must contain positive integers")
+        try:
+            biblionumber = int(item)
+        except ValueError as exc:
+            raise ValueError("biblionumbers must contain positive integers") from exc
+        if biblionumber <= 0:
+            raise ValueError("biblionumbers must contain positive integers")
+        parsed.add(biblionumber)
+    return tuple(sorted(parsed))
+
+
 def _run_export_task(_task_id: str, options: RuntimeOptions) -> dict:
     from .export_module.orchestrator import ExportOrchestrator
 
@@ -329,6 +357,7 @@ def _run_export_task(_task_id: str, options: RuntimeOptions) -> dict:
             "export_mode": options.export_mode,
             "biblionumber_from": options.biblionumber_from,
             "biblionumber_to": options.biblionumber_to,
+            "biblionumbers": options.biblionumbers,
             "file_path": orchestrator.last_export_path,
             "send_email": options.send_email,
         }

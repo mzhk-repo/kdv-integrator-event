@@ -125,6 +125,24 @@ class KohaApiClient:
         self._raise_for_status(response, f"fetch biblio #{biblionumber} MARCXML")
         return response.text
 
+    def fetch_biblios_by_numbers(
+        self, biblionumbers: tuple[int, ...] | list[int]
+    ) -> list[dict[str, Any]]:
+        biblios = []
+        for biblionumber in biblionumbers:
+            response = self.session.get(
+                self._url(f"/api/v1/biblios/{biblionumber}"),
+                timeout=self.timeout,
+            )
+            self._raise_for_status(response, f"fetch biblio #{biblionumber}")
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise KohaApiClientError(
+                    f"Koha biblio #{biblionumber} returned non-object payload"
+                )
+            biblios.append(payload)
+        return biblios
+
     def _get_json_list(
         self, endpoint: str, params: dict[str, Any]
     ) -> list[dict[str, Any]]:

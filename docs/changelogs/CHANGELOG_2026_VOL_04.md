@@ -283,3 +283,11 @@
 - **Verification:** `python3 -m py_compile src/mapping.py src/core.py src/dspace.py tests/test_core.py tests/test_contracts.py`; `pytest tests/test_core.py tests/test_contracts.py -q` -> `43 passed`; `git diff --check` без зауважень.
 - **Risks:** Крайові Unicode symbols також видаляються, якщо вони стоять безпосередньо на межі значення; URL/handle поля, що використовуються для маршрутизації, не проходять через цю нормалізацію як текстові metadata.
 - **Rollback:** Видалити `strip_metadata_edges()` і його виклики у `src/core.py`/`src/dspace.py`, прибрати додані тести та цей changelog-запис.
+
+## 2026-09-18 — Robot Batch і Koha Export для вибраних записів пошуку
+
+- **Context:** У Koha search results UI Robot Batch і Koha Export приймали лише ручний список або inclusive ID range, без запуску для записів, відмічених галочками.
+- **Change:** `IntranetUser.js` тепер збирає biblionumber із відмічених search-result checkbox-ів і автоматично використовує їх для Robot Batch та Koha Export; ручний ввід лишається fallback. Export API отримав точний список `biblionumbers`, Koha client завантажує лише вибрані biblios, orchestrator обробляє цей список без розширення до діапазону.
+- **Verification:** `python3 -m py_compile src/app.py src/export_module/config.py src/export_module/koha/client.py src/export_module/orchestrator.py tests/test_app.py tests/test_export_koha_client.py tests/test_export_orchestrator.py`; `pytest tests/test_app.py tests/test_export_koha_client.py tests/test_export_orchestrator.py -q` -> `51 passed`; `git diff --check` без зауважень.
+- **Risks:** Вибір залежить від стандартних Koha checkbox/value/data-атрибутів або посилання на `detail.pl?biblionumber=...` у тому самому search-result рядку; якщо тема Koha змінить DOM-контракт, fallback ручного вводу залишиться доступним.
+- **Rollback:** Повернути `IntranetUser.js` до ручного candidates/range режиму, прибрати `biblionumbers` із RuntimeOptions/API/Koha client/orchestrator, видалити тести та цей changelog-запис.

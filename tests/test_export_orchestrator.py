@@ -27,6 +27,10 @@ class _KohaClient:
     def fetch_all_biblios_keyset(self, **kwargs):
         return iter(self.biblios)
 
+    def fetch_biblios_by_numbers(self, biblionumbers):
+        selected = set(biblionumbers)
+        return [biblio for biblio in self.biblios if biblio["biblionumber"] in selected]
+
     def fetch_biblio_marcxml(self, biblionumber):
         return self.marcxml_by_id[biblionumber]
 
@@ -112,6 +116,22 @@ def _rows(repo):
             ORDER BY biblionumber ASC, run_id ASC
             """
         ).fetchall()
+
+
+def test_orchestrator_uses_selected_biblionumbers(tmp_path):
+    koha = _KohaClient(
+        biblios=[{"biblionumber": 101}, {"biblionumber": 202}],
+        marcxml_by_id={101: "<record />", 202: "<record />"},
+    )
+    orchestrator, _, _ = _orchestrator(tmp_path, koha=koha)
+
+    assert orchestrator.run(
+        RuntimeOptions(
+            biblionumbers=(202,),
+            export_mode="file-links",
+            manual_export=True,
+        )
+    ) == 0
 
 
 def _orchestrator(
