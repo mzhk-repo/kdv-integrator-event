@@ -267,3 +267,11 @@
 - **Verification:** `git diff --check -- .github/workflows/main.yml docs/changelogs/CHANGELOG_2026_VOL_04.md` пройшов без зауважень; `actionlint` і Ruby YAML parser недоступні в локальному середовищі.
 - **Risks:** Precheck додає окремий GitHub Actions job і потребує доступу checkout до повної історії; для release перевіряється commit, на який вказує release tag.
 - **Rollback:** Видалити `deploy-change-check`, його `needs` та умови `deploy` у `.github/workflows/main.yml`, потім видалити цей changelog-запис.
+
+## 2026-09-18 — Koha `956$c` для обкладинки, згенерованої з `956$u`
+
+- **Context:** Після генерації обкладинки з PDF, вказаного у `956$u`, URL публічної обкладинки не завжди потрапляв у `956$c`; готова обкладинка з `956$p` працювала коректно.
+- **Change:** Прибрано зовнішній 10-секундний timeout очікування `future_cover` у `src/core.py`; використовується внутрішній timeout/retry guard `CoverService`. Додано regression-тест для generated PDF cover, який перевіряє передачу URL у `set_success()` і подальший запис `956$c`.
+- **Verification:** `python3 -m py_compile src/core.py tests/test_core.py`; focused pytest для `tests/test_core.py` виконано після локальної перевірки залежностей.
+- **Risks:** Якщо внутрішні timeout-и `CoverService` або HTTP-клієнта не спрацюють, основний task чекатиме завершення cover worker; поточний сервіс уже має Poppler та HTTP timeout guards.
+- **Rollback:** Повернути `future_cover.result(timeout=10)` у `src/core.py`, видалити regression-тест і цей changelog-запис.

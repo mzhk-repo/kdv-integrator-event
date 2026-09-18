@@ -38,6 +38,7 @@ class StubKoha:
         self.metadata = {"file_path": "missing.pdf", "collection_uuid": "coll123"}
         self.status_log = []
         self.uploaded_covers = []
+        self.success_cover_urls = []
 
     def get_biblio_metadata(self, num):
         return self.metadata
@@ -52,6 +53,7 @@ class StubKoha:
         self, num, handle_url, item_uuid=None, cover_url=None, primary_download_url=None
     ):
         self.status_log.append((num, "imported", handle_url, primary_download_url))
+        self.success_cover_urls.append(cover_url)
 
     def set_cover_url(self, num, cover_url):
         self.status_log.append((num, "cover", cover_url))
@@ -855,6 +857,33 @@ def test_process_integration_updates_cover_url_when_dspace_fails(
     )
 
 
+def test_process_integration_updates_cover_url_for_generated_pdf_cover(
+    tmp_path, monkeypatch
+):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    pdf = mount / "book.pdf"
+    pdf.write_bytes(b"primary")
+    koha = StubKoha()
+    koha.metadata = {"file_path": "book.pdf", "collection_uuid": "coll"}
+
+    monkeypatch.setattr("src.core.INTEGRATOR_MOUNT_PATH", str(mount))
+    monkeypatch.setattr(
+        "src.core.CoverService.process_book",
+        lambda *args, **kwargs: {"status": "success", "file": str(pdf)},
+    )
+
+    process_integration_logic(
+        "task-id",
+        5,
+        koha_client=koha,
+        dspace_client=StubDSpace(),
+        skip_optimization=True,
+    )
+
+    assert koha.success_cover_urls == ["http://koha/cover.jpg"]
+
+
 def test_run_dspace_uploads_google_additional_with_original_name(tmp_path, monkeypatch):
     mount = tmp_path / "mount"
     mount.mkdir()
@@ -1016,4 +1045,3 @@ def test_process_integration_local_primary_still_moves_to_error_on_failure(
         )
 
     assert (mount / "Error" / "biblio_5_v01.pdf").exists()
-

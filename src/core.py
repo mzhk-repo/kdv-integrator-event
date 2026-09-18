@@ -607,7 +607,8 @@ def process_integration_logic(
 
             # Check Bonus Task (Cover)
             try:
-                cover_res = future_cover.result(timeout=10)
+                # CoverService has its own Poppler/HTTP timeouts and retry guard.
+                cover_res = future_cover.result()
                 logger.info(f"🖼️ [Core] Cover result: {cover_res}")
                 cover_url = _resolve_cover_url(
                     koha,
