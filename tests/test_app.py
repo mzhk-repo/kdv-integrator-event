@@ -306,6 +306,37 @@ def test_export_run_accepts_file_links_options(monkeypatch):
     assert captured["options"].send_email is False
 
 
+def test_export_run_accepts_selected_biblionumbers(monkeypatch):
+    client = app.test_client()
+    captured = {}
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app.ExportConfig.from_env", lambda: type("Config", (), {"enabled": True})())
+
+    def fake_start_task(func, options):
+        captured["options"] = options
+        return "export-selected-task"
+
+    monkeypatch.setattr("src.app.task_manager.start_task", fake_start_task)
+    try:
+        response = client.post(
+            "/kdv/api/export/run",
+            json={
+                "biblionumbers": [301, "302", 301],
+                "export_mode": "file-links",
+            },
+            headers={"X-KDV-TOKEN": "test-token"},
+        )
+    finally:
+        _EXPORT_RUN_LOCK.release()
+
+    assert response.status_code == 202
+    assert captured["options"].biblionumbers == (301, 302)
+    assert captured["options"].biblionumber_from is None
+    assert captured["options"].biblionumber_to is None
+
+
 def test_export_run_rejects_invalid_range(monkeypatch):
     client = app.test_client()
     monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")

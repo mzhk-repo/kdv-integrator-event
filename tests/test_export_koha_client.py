@@ -171,6 +171,26 @@ def test_fetch_biblio_marcxml_uses_marcxml_accept_header():
     }
 
 
+def test_fetch_biblios_by_numbers_fetches_only_selected_records():
+    session = _Session(
+        [
+            _Response({"biblionumber": 42}),
+            _Response({"biblionumber": 99}),
+        ]
+    )
+    client = KohaApiClient(
+        "https://koha.example.org", "user", "pass", session=session
+    )
+
+    records = client.fetch_biblios_by_numbers((42, 99))
+
+    assert records == [{"biblionumber": 42}, {"biblionumber": 99}]
+    assert [call["url"] for call in session.calls] == [
+        "https://koha.example.org/api/v1/biblios/42",
+        "https://koha.example.org/api/v1/biblios/99",
+    ]
+
+
 def test_keyset_range_returns_only_requested_biblionumbers():
     session = _Session(
         [

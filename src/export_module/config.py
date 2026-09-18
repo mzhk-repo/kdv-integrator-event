@@ -145,6 +145,7 @@ class RuntimeOptions:
     dry_run: bool = False
     biblionumber_from: int | None = None
     biblionumber_to: int | None = None
+    biblionumbers: tuple[int, ...] | None = None
     export_mode: str = EXPORT_MODE_ALL
     manual_export: bool = False
     send_email: bool = False
