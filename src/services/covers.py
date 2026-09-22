@@ -147,6 +147,7 @@ class CoverService:
                     last_page=1,
                     dpi=self.DEFAULT_DPI,
                     fmt="jpeg",
+                    use_cropbox=True,
                     timeout=self.GENERATION_TIMEOUT,  # Poppler timeout guard
                 )
                 if images:
