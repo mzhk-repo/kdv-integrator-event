@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import requests
+from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -566,6 +567,21 @@ def test_cover_service_uploads_external_cover_without_pdf_generation(tmp_path):
     assert koha.uploaded == [("42", str(cover))]
     assert koha.checked is False
     generate_mock.assert_not_called()
+
+
+def test_cover_service_generates_from_pdf_cropbox(tmp_path):
+    cs = CoverService()
+    source_image = Image.new("RGB", (900, 600), "red")
+
+    with patch(
+        "src.services.covers.convert_from_path",
+        return_value=[source_image],
+        create=True,
+    ) as convert:
+        cover_path = cs._generate_image("42", "book.pdf", str(tmp_path))
+
+    assert Path(cover_path).is_file()
+    assert convert.call_args.kwargs["use_cropbox"] is True
 
 
 def test_cover_service_initialization():

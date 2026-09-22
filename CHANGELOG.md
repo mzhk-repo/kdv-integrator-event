@@ -5,8 +5,11 @@
 ## Поточний активний том
 
 1. [CHANGELOG_2026_VOL_04.md]
+   - Статус: archived
+   - Рядків: 293
+2. [CHANGELOG_2026_VOL_05.md]
    - Статус: active
-   - Рядків: 261
+   - Контекст: Cover rendering follows the PDF CropBox visible to readers.
 
 ## Політика ротації
 
