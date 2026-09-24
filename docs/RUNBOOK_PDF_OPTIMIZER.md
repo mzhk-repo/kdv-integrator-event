@@ -370,6 +370,38 @@ docker exec <kdv-optimizer-container-id> sh -lc '
 
 ### `/health=200`, але `/ready=503`
 
+An existing `kdv_optimize_data` volume can retain ownership from an older
+optimizer image. The current optimizer runs as UID/GID `10001:10001`; a volume
+owned by `1000:1000` with mode `755` prevents output creation. The Dockerfile
+`chown` applies to the image layer and does not change an existing mounted
+volume. `/health` only confirms the HTTP process; the container healthcheck
+uses `/ready` to detect this condition.
+
+Normal CI/CD deployment through `scripts/deploy-orchestrator-swarm.sh` repairs
+these directories idempotently before updating the stack. It uses a running
+Swarm task on the deployment node to reach the exact mounted local volume and
+fails closed if an existing service has no local running task.
+
+For manual recovery, run the repair through the root API container, which mounts
+the same volume:
+
+```bash
+docker exec --user 0:0 <kdv-api-container-id> sh -ec '
+  for path in /data/kdv_optimize /data/kdv_optimize/input /data/kdv_optimize/output; do
+    mkdir -p "$path"
+    chown 10001:10001 "$path"
+  done
+'
+docker exec <kdv-optimizer-container-id> sh -lc '
+  id
+  curl -fsS http://127.0.0.1:5001/ready
+'
+```
+
+Do not remove or recreate the volume to repair ownership. The API container
+continues to write input PDFs as root, and the optimizer can read them as UID
+`10001`.
+
 Отримати body:
 
 ```bash
