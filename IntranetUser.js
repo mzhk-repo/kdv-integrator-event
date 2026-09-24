@@ -501,3 +501,14 @@ Stats: ${stats}`);
         setTimeout(() => btn.removeClass("btn-danger"), 3000);
     }
 });
+
+$(document).ready(function() {
+    if (window.location.href.includes("catalogue/detail.pl")) {
+        $(".results_summary.description, .description").each(function() {
+            var html = $(this).html();
+            // Додаємо крапку після "с", якщо після неї немає іншого тексту з крапкою
+            html = html.replace(/(\b\d+\s*с)(?![\.\wа-яА-ЯіїєґІЇЄҐ])/g, "$1.");
+            $(this).html(html);
+        });
+    }
+});
