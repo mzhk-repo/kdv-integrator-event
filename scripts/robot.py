@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger("Robot")
 
 API_BASE = "http://localhost:5000/kdv/api"
-DPI_CHOICES = (100, 150, 200, 250, 300, 400, 600)
+DPI_CHOICES = (50, 75, 100, 125, 150, 200, 250)
 
 
 def build_headers():
