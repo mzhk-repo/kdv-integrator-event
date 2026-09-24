@@ -11,7 +11,11 @@ from flask import Flask, jsonify, request
 
 from kdv_optimizer.config import OptimizerConfig
 from kdv_optimizer.services.janitor import TTLJanitor
-from kdv_optimizer.services.pdf import PDFOptimizerService, build_job_paths
+from kdv_optimizer.services.pdf import (
+    PDFOptimizerService,
+    build_job_paths,
+    validate_dpi,
+)
 
 
 logging.basicConfig(
@@ -52,6 +56,11 @@ def _validate_done_result(
     output_size = output_path.stat().st_size
     if output_size <= 0:
         return _status_error("empty_output", result)
+
+    stats = result.get("stats") or {}
+    requested_dpi = job.get("dpi")
+    if requested_dpi is not None and stats.get("raster_dpi") != requested_dpi:
+        return _status_error("exception", result)
 
     if input_path.exists() and output_size > input_path.stat().st_size:
         return _status_error("larger_output", result)
@@ -118,6 +127,9 @@ def _readiness_reasons() -> list[str]:
     if not _command_available("pdfinfo", ["-v"]):
         reasons.append("pdfinfo is not available")
 
+    if not _command_available("prlimit", ["--version"]):
+        reasons.append("prlimit is not available")
+
     return reasons
 
 
@@ -133,6 +145,8 @@ def create_app(start_janitor: bool = True) -> Flask:
     @flask_app.post("/optimize")
     def start_optimize():
         payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return _json_response({"status": "error", "reason": "JSON object expected"}, 400)
         job_id = payload.get("job_id")
         if not isinstance(job_id, str) or not job_id.strip():
             logger.warning("Optimization request rejected: missing job_id")
@@ -147,6 +161,11 @@ def create_app(start_janitor: bool = True) -> Flask:
             return _json_response(
                 {"status": "error", "reason": "invalid job_id"}, 400
             )
+
+        try:
+            dpi = validate_dpi(payload.get("dpi"))
+        except ValueError as exc:
+            return _json_response({"status": "error", "reason": str(exc)}, 400)
 
         if not Path(input_path).is_file():
             logger.warning(
@@ -168,7 +187,7 @@ def create_app(start_janitor: bool = True) -> Flask:
                 input_path,
                 input_size_mb,
             )
-            future = optimizer_service.submit_job(job_id)
+            future = optimizer_service.submit_job(job_id, dpi=dpi)
         except RuntimeError as exc:
             logger.warning(
                 "Optimization job submit failed: job_id=%s reason=%s",
@@ -183,6 +202,7 @@ def create_app(start_janitor: bool = True) -> Flask:
             "future": future,
             "submitted_at": time.time(),
             "input_path": input_path,
+            "dpi": dpi,
             "last_logged_status": "processing",
         }
         logger.info("Optimization job submitted: job_id=%s status=processing", job_id)
@@ -207,7 +227,9 @@ def create_app(start_janitor: bool = True) -> Flask:
                 {"status": "error", "reason": "job_not_found"}, 404
             )
 
-        result = optimizer_service.get_job_status(job_id, job["future"])
+        result = optimizer_service.get_job_status(
+            job_id, job["future"], dpi=job.get("dpi")
+        )
         result = _validate_done_result(job, result)
         status = result.get("status")
         if status in {"done", "error"} and job.get("last_logged_status") != status:

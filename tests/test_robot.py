@@ -36,6 +36,7 @@ def test_robot_help_lists_cli_arguments(capsys):
     assert exc.value.code == 0
     help_text = capsys.readouterr().out
     assert "--skip-optimization" in help_text
+    assert "--dpi" in help_text
     assert "--parallelism" in help_text
     assert "--max-wait" in help_text
 
@@ -80,6 +81,27 @@ def test_robot_default_payload_keeps_optimization_enabled(monkeypatch):
 
     assert result == "SUCCESS"
     assert captured["json"] == {"skip_optimization": False}
+
+
+def test_robot_selected_dpi_sets_payload(monkeypatch):
+    captured = {}
+
+    def fake_post(_url, headers=None, json=None):
+        captured["json"] = json
+        return FakeResponse(202, {"task_id": "task-dpi"})
+
+    def fake_get(_url, headers=None):
+        return FakeResponse(200, {"status": "success", "result": {"handle": "h"}})
+
+    monkeypatch.setattr(robot.requests, "post", fake_post)
+    monkeypatch.setattr(robot.requests, "get", fake_get)
+    monkeypatch.setattr(robot.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(robot, "POLL_INTERVAL", 0)
+
+    result = robot.process_single_biblio("123", dpi=300, max_wait=1)
+
+    assert result == "SUCCESS"
+    assert captured["json"] == {"skip_optimization": False, "dpi": 300}
 
 
 def test_robot_parallelism_falls_back_to_env(monkeypatch):

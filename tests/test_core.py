@@ -218,6 +218,25 @@ class FakeSuccessOptimizer:
         )
 
 
+class FakeDpiOptimizer:
+    def optimize(self, original_path, job_id, dpi=None):
+        import os
+
+        output = os.path.join(os.environ["OUTPUT_DIR"], f"{job_id}.pdf")
+        with open(output, "wb") as stream:
+            stream.write(b"small-rasterized-pdf")
+        return OptimizeResult(
+            success=True,
+            path=output,
+            fallback_reason=None,
+            original_mb=1.0,
+            optimized_mb=0.5,
+            optimization_time_ms=123,
+            thread_wait_ms=10,
+            applied_dpi=dpi,
+        )
+
+
 class FakeExplodingOptimizer:
     def optimize(self, original_path, job_id):
         raise RuntimeError("optimizer exploded")
@@ -424,6 +443,28 @@ def test_run_dspace_success_result_contains_pdf_telemetry(tmp_path, monkeypatch)
     assert dspace.uploaded[0][1] != str(pdf)
     assert list(input_dir.iterdir()) == []
     assert list(output_dir.iterdir()) == []
+
+
+def test_run_dspace_reports_requested_and_applied_dpi(tmp_path, monkeypatch):
+    _prepare_optimizer_dirs(tmp_path, monkeypatch)
+    _force_optimization(monkeypatch)
+    dspace = StubDSpace()
+    pdf = tmp_path / "file.pdf"
+    pdf.write_bytes(b"original-content")
+
+    result = run_dspace_workflow(
+        5,
+        str(pdf),
+        {"collection_uuid": "coll"},
+        koha_client=StubKoha(),
+        dspace_client=dspace,
+        optimizer_client=FakeDpiOptimizer(),
+        dpi=300,
+    )
+
+    assert result["pdf_requested_dpi"] == 300
+    assert result["pdf_applied_dpi"] == 300
+    assert result["pdf_optimized"] == "true"
 
 
 def test_run_dspace_optimized_upload_keeps_rename_first_filename(tmp_path, monkeypatch):

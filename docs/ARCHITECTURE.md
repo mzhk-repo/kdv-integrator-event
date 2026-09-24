@@ -174,6 +174,8 @@ Lifecycle:
 - Google Drive primary `956$u`: temp PDF лишається у `GDRIVE_TMP_DIR`, не переміщується в `Processed/Error`;
 - local/GDrive additional `956$q`: без rename, без optimizer, upload у DSpace ORIGINAL; Google additional errors non-fatal.
 
+PDF optimizer зберігає стандартний `pdfwrite /ebook` режим, якщо клієнт не вказав `dpi`. Koha UI та Robot Batch можуть передати одне з `100, 150, 200, 250, 300, 400, 600`; optimizer тоді створює повносторінковий RGB PDF через `pdfimage24`, обмежує output розміром оригіналу й перевіряє незмінність кількості сторінок. Растеризований PDF не містить текстового шару. Фактичний DPI фіксується в `task.result`; за помилки, завеликого output або невідповідного результату DSpace отримує оригінал.
+
 Observability:
 
 - logs містять `source_type=gdrive`, safe `file_id`, `mime_type`, `size`, `duration_ms`, cache hit/miss або failure reason;

@@ -94,7 +94,7 @@ def _resolve_cover_url(koha, biblionumber, cover_res, update_koha: bool = False)
     return None
 
 
-def _build_pdf_telemetry(pdf_path: str) -> dict:
+def _build_pdf_telemetry(pdf_path: str, requested_dpi: int | None = None) -> dict:
     return {
         "pdf_optimized": "false",
         "pdf_fallback_reason": None,
@@ -104,6 +104,8 @@ def _build_pdf_telemetry(pdf_path: str) -> dict:
         "pdf_optimization_time_ms": None,
         "pdf_thread_wait_ms": None,
         "pdf_disk_free_mb": _disk_free_mb(_optimizer_data_dir()),
+        "pdf_requested_dpi": requested_dpi,
+        "pdf_applied_dpi": None,
     }
 
 
@@ -119,8 +121,9 @@ def _prepare_pdf_for_upload(
     pdf_path: str,
     skip_optimization: bool,
     optimizer_client: PDFOptimizerClient | None = None,
+    dpi: int | None = None,
 ) -> tuple[str, dict, tuple[str, str]]:
-    telemetry = _build_pdf_telemetry(pdf_path)
+    telemetry = _build_pdf_telemetry(pdf_path, requested_dpi=dpi)
     job_id = str(uuid.uuid4())
     input_tmp = os.path.join(_optimizer_input_dir(), f"{job_id}.pdf")
     output_tmp = os.path.join(_optimizer_output_dir(), f"{job_id}.pdf")
@@ -182,7 +185,11 @@ def _prepare_pdf_for_upload(
             output_tmp,
             telemetry["pdf_original_mb"],
         )
-        result = client.optimize(pdf_path, job_id)
+        result = (
+            client.optimize(pdf_path, job_id, dpi=dpi)
+            if dpi is not None
+            else client.optimize(pdf_path, job_id)
+        )
         final_pdf_path = result.path
         telemetry.update(
             {
@@ -192,6 +199,7 @@ def _prepare_pdf_for_upload(
                 "pdf_final_mb": _file_mb(final_pdf_path),
                 "pdf_optimization_time_ms": result.optimization_time_ms,
                 "pdf_thread_wait_ms": result.thread_wait_ms,
+                "pdf_applied_dpi": result.applied_dpi if result.success else None,
             }
         )
         if result.success:
@@ -408,6 +416,7 @@ def run_dspace_workflow(
     skip_optimization: bool = False,
     optimizer_client: PDFOptimizerClient | None = None,
     upload_name: str | None = None,
+    dpi: int | None = None,
 ):
     """Execute metadata extraction and file upload to DSpace.
 
@@ -463,13 +472,14 @@ def run_dspace_workflow(
     )
 
     final_pdf_path = file_path
-    pdf_telemetry = _build_pdf_telemetry(file_path)
+    pdf_telemetry = _build_pdf_telemetry(file_path, requested_dpi=dpi)
     cleanup_paths = ()
     try:
         final_pdf_path, pdf_telemetry, cleanup_paths = _prepare_pdf_for_upload(
             file_path,
             skip_optimization=skip_optimization,
             optimizer_client=optimizer_client,
+            dpi=dpi,
         )
         primary_upload_name = upload_name or os.path.basename(file_path)
         logger.info(
@@ -508,6 +518,7 @@ def process_integration_logic(
     dspace_client=None,
     skip_optimization: bool = False,
     optimizer_client: PDFOptimizerClient | None = None,
+    dpi: int | None = None,
 ):
     """Main orchestration logic executed inside a background thread.
 
@@ -593,6 +604,7 @@ def process_integration_logic(
                 dspace_client=dspace_client,
                 skip_optimization=skip_optimization,
                 optimizer_client=optimizer_client,
+                dpi=dpi,
                 upload_name=primary_source.original_name,
             )
 

@@ -16,6 +16,15 @@ SIZE_RULE_A_MB = 50
 SIZE_RULE_A_KB_PER_PAGE = 500
 SIZE_RULE_B_MB = 100
 PDFINFO_TIMEOUT_SECONDS = 10
+SUPPORTED_DPI = (100, 150, 200, 250, 300, 400, 600)
+
+
+def validate_optimizer_dpi(value: Any) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or value not in SUPPORTED_DPI:
+        raise ValueError(f"dpi must be one of {', '.join(map(str, SUPPORTED_DPI))}")
+    return value
 
 
 def count_pages_with_pdfinfo(filepath: str) -> int:
@@ -79,6 +88,7 @@ class OptimizeResult:
     optimized_mb: float | None = None
     optimization_time_ms: int | None = None
     thread_wait_ms: int | None = None
+    applied_dpi: int | None = None
 
 
 class PDFOptimizerClient:
@@ -94,19 +104,23 @@ class PDFOptimizerClient:
         self.poll_interval = poll_interval
         self._client = session or requests.Session()
 
-    def optimize(self, original_path: str, job_id: str) -> OptimizeResult:
+    def optimize(
+        self, original_path: str, job_id: str, dpi: int | None = None
+    ) -> OptimizeResult:
         try:
+            dpi = validate_optimizer_dpi(dpi)
             logger.info(
                 "Sending PDF optimization request: job_id=%s optimizer_url=%s "
-                "original_path=%s original_mb=%s",
+                "original_path=%s original_mb=%s dpi=%s",
                 job_id,
                 self.base_url,
                 original_path,
                 self._file_mb(original_path),
+                dpi,
             )
             post_resp = self._client.post(
                 f"{self.base_url}/optimize",
-                json={"job_id": job_id},
+                json={"job_id": job_id, **({"dpi": dpi} if dpi is not None else {})},
                 timeout=self.timeout,
             )
             if post_resp.status_code >= 500:
@@ -163,7 +177,7 @@ class PDFOptimizerClient:
                 status = data.get("status")
                 if status == "done":
                     logger.info("PDF optimizer reported success: job_id=%s", job_id)
-                    return self._validate_and_build_result(data, original_path)
+                    return self._validate_and_build_result(data, original_path, dpi)
                 if status == "error":
                     reason = self._reason_from_payload(data)
                     logger.warning(
@@ -188,7 +202,7 @@ class PDFOptimizerClient:
             return self._fallback(original_path, "exception")
 
     def _validate_and_build_result(
-        self, data: dict[str, Any], original_path: str
+        self, data: dict[str, Any], original_path: str, requested_dpi: int | None = None
     ) -> OptimizeResult:
         output_path = data.get("output_path")
         if not isinstance(output_path, str) or not output_path:
@@ -207,6 +221,14 @@ class PDFOptimizerClient:
             return self._fallback(original_path, "larger_output")
 
         stats = data.get("stats") or {}
+        applied_dpi = stats.get("raster_dpi")
+        if requested_dpi is not None and applied_dpi != requested_dpi:
+            logger.warning(
+                "PDF optimizer DPI mismatch: requested=%s reported=%s",
+                requested_dpi,
+                applied_dpi,
+            )
+            return self._fallback(original_path, "exception")
         return OptimizeResult(
             success=True,
             path=output_path,
@@ -216,6 +238,7 @@ class PDFOptimizerClient:
             optimization_time_ms=stats.get("time_ms")
             or stats.get("optimization_time_ms"),
             thread_wait_ms=stats.get("thread_wait_ms"),
+            applied_dpi=applied_dpi,
         )
 
     def _fallback(self, original_path: str, reason: str) -> OptimizeResult:

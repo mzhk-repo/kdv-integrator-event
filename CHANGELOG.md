@@ -9,7 +9,7 @@
    - Рядків: 293
 2. [CHANGELOG_2026_VOL_05.md]
    - Статус: active
-   - Контекст: Cover rendering follows the PDF CropBox visible to readers.
+   - Контекст: Cover rendering follows the PDF CropBox visible to readers; optional archival PDF rasterization DPI is available.
 
 ## Політика ротації
 

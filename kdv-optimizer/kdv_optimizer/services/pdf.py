@@ -19,6 +19,15 @@ SIZE_RULE_MIN_BYTES = 50 * 1024 * 1024
 SIZE_RULE_ALWAYS_BYTES = 100 * 1024 * 1024
 SPECIFIC_WEIGHT_MIN_BYTES_PER_PAGE = 500 * 1024
 DISK_SPACE_MULTIPLIER = 2.5
+SUPPORTED_DPI = (100, 150, 200, 250, 300, 400, 600)
+
+
+def validate_dpi(value: Any) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or value not in SUPPORTED_DPI:
+        raise ValueError(f"dpi must be one of {', '.join(map(str, SUPPORTED_DPI))}")
+    return value
 
 
 def build_job_paths(job_id: str) -> tuple[str, str]:
@@ -96,32 +105,54 @@ def _check_disk_space(filepath: str) -> bool:
     return enough_space
 
 
-def run_ghostscript(input_path: str, output_path: str) -> None:
+def run_ghostscript(
+    input_path: str, output_path: str, dpi: int | None = None
+) -> None:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    logger.info(
-        "Ghostscript optimization started: input_path=%s output_path=%s timeout=%s",
-        input_path,
-        output_path,
-        config.GS_TIMEOUT,
-    )
-    subprocess.run(
+    dpi = validate_dpi(dpi)
+    command = ["nice", "-n", "15", "ionice", "-c", "3"]
+    if dpi is not None:
+        command.extend(
+            ["prlimit", f"--fsize={Path(input_path).stat().st_size}", "--"]
+        )
+        command.extend(
+            [
+                "gs",
+                "-sDEVICE=pdfimage24",
+                f"-r{dpi}",
+                "-sCompression=JPEG",
+                "-dJPEGQ=85",
+                "-dUseCropBox",
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "gs",
+                "-sDEVICE=pdfwrite",
+                "-dCompatibilityLevel=1.4",
+                "-dPDFSETTINGS=/ebook",
+            ]
+        )
+    command.extend(
         [
-            "nice",
-            "-n",
-            "15",
-            "ionice",
-            "-c",
-            "3",
-            "gs",
-            "-sDEVICE=pdfwrite",
-            "-dCompatibilityLevel=1.4",
-            "-dPDFSETTINGS=/ebook",
             "-dSAFER",
             "-dNOPAUSE",
             "-dBATCH",
             f"-sOutputFile={output_path}",
             input_path,
-        ],
+        ]
+    )
+    logger.info(
+        "Ghostscript optimization started: input_path=%s output_path=%s "
+        "dpi=%s timeout=%s",
+        input_path,
+        output_path,
+        dpi,
+        config.GS_TIMEOUT,
+    )
+    subprocess.run(
+        command,
         check=True,
         timeout=config.GS_TIMEOUT,
         stdout=subprocess.PIPE,
@@ -135,14 +166,19 @@ def _mb(size_bytes: int) -> float:
 
 
 def _error_result(
-    reason: str, input_path: str, output_path: str, started_at: float
+    reason: str,
+    input_path: str,
+    output_path: str,
+    started_at: float,
+    dpi: int | None = None,
 ) -> dict[str, Any]:
     original_size = Path(input_path).stat().st_size if Path(input_path).exists() else 0
     return {
         "status": "error",
         "output_path": input_path,
         "stats": {
-            "engine": "ghostscript_ebook",
+            "engine": "ghostscript_pdfimage24" if dpi else "ghostscript_ebook",
+            "raster_dpi": dpi,
             "fallback_reason": reason,
             "original_mb": _mb(original_size),
             "final_mb": _mb(original_size),
@@ -153,9 +189,15 @@ def _error_result(
     }
 
 
-def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
+def _optimize_pdf(
+    input_path: str, output_path: str, dpi: int | None = None
+) -> dict[str, Any]:
+    dpi = validate_dpi(dpi)
     started_at = time.perf_counter()
     original_size = Path(input_path).stat().st_size
+    expected_pages = _count_pages_with_pdfinfo(input_path) if dpi is not None else None
+    if dpi is not None and expected_pages <= 0:
+        return _error_result("exception", input_path, output_path, started_at, dpi)
     logger.info(
         "PDF optimization process started: input_path=%s output_path=%s original_mb=%s",
         input_path,
@@ -163,7 +205,20 @@ def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
         _mb(original_size),
     )
 
-    run_ghostscript(input_path, output_path)
+    try:
+        if dpi is None:
+            run_ghostscript(input_path, output_path)
+        else:
+            run_ghostscript(input_path, output_path, dpi=dpi)
+    except subprocess.CalledProcessError:
+        output = Path(output_path)
+        if dpi is not None and output.exists() and output.stat().st_size >= original_size:
+            return _error_result(
+                "larger_output", input_path, output_path, started_at, dpi
+            )
+        if dpi is not None:
+            return _error_result("exception", input_path, output_path, started_at, dpi)
+        raise
 
     output = Path(output_path)
     if not output.exists():
@@ -174,7 +229,7 @@ def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
             output_path,
             int((time.perf_counter() - started_at) * 1000),
         )
-        return _error_result("missing_output", input_path, output_path, started_at)
+        return _error_result("missing_output", input_path, output_path, started_at, dpi)
 
     optimized_size = output.stat().st_size
     if optimized_size <= 0:
@@ -185,7 +240,7 @@ def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
             output_path,
             int((time.perf_counter() - started_at) * 1000),
         )
-        return _error_result("empty_output", input_path, output_path, started_at)
+        return _error_result("empty_output", input_path, output_path, started_at, dpi)
 
     if optimized_size > original_size:
         logger.warning(
@@ -197,7 +252,15 @@ def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
             _mb(optimized_size),
             int((time.perf_counter() - started_at) * 1000),
         )
-        return _error_result("larger_output", input_path, output_path, started_at)
+        return _error_result("larger_output", input_path, output_path, started_at, dpi)
+
+    if dpi is not None:
+        try:
+            output_pages = _count_pages_with_pdfinfo(output_path)
+        except Exception:
+            return _error_result("exception", input_path, output_path, started_at, dpi)
+        if output_pages != expected_pages:
+            return _error_result("exception", input_path, output_path, started_at, dpi)
 
     reduction_pct = round((1 - (optimized_size / original_size)) * 100, 2)
     time_ms = int((time.perf_counter() - started_at) * 1000)
@@ -215,7 +278,8 @@ def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
         "status": "done",
         "output_path": output_path,
         "stats": {
-            "engine": "ghostscript_ebook",
+            "engine": "ghostscript_pdfimage24" if dpi else "ghostscript_ebook",
+            "raster_dpi": dpi,
             "fallback_reason": None,
             "original_mb": _mb(original_size),
             "final_mb": _mb(optimized_size),
@@ -226,7 +290,8 @@ def _optimize_pdf(input_path: str, output_path: str) -> dict[str, Any]:
 
 
 class PDFOptimizerService:
-    def submit_job(self, job_id: str) -> Future:
+    def submit_job(self, job_id: str, dpi: int | None = None) -> Future:
+        dpi = validate_dpi(dpi)
         input_path, output_path = build_job_paths(job_id)
 
         if not _check_disk_space(input_path):
@@ -243,9 +308,13 @@ class PDFOptimizerService:
             input_path,
             output_path,
         )
-        return _optimizer_pool.submit(_optimize_pdf, input_path, output_path)
+        if dpi is None:
+            return _optimizer_pool.submit(_optimize_pdf, input_path, output_path)
+        return _optimizer_pool.submit(_optimize_pdf, input_path, output_path, dpi)
 
-    def get_job_status(self, job_id: str, future: Future) -> dict[str, Any]:
+    def get_job_status(
+        self, job_id: str, future: Future, dpi: int | None = None
+    ) -> dict[str, Any]:
         build_job_paths(job_id)
 
         if not future.done():
@@ -264,7 +333,8 @@ class PDFOptimizerService:
                 "status": "error",
                 "output_path": None,
                 "stats": {
-                    "engine": "ghostscript_ebook",
+                    "engine": "ghostscript_pdfimage24" if dpi else "ghostscript_ebook",
+                    "raster_dpi": dpi,
                     "fallback_reason": "timeout",
                     "exception": str(exc),
                 },
@@ -275,7 +345,8 @@ class PDFOptimizerService:
                 "status": "error",
                 "output_path": None,
                 "stats": {
-                    "engine": "ghostscript_ebook",
+                    "engine": "ghostscript_pdfimage24" if dpi else "ghostscript_ebook",
+                    "raster_dpi": dpi,
                     "fallback_reason": "exception",
                     "exception": f"{type(exc).__name__}: {exc}",
                 },

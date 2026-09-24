@@ -24,7 +24,7 @@ shared volume                   ProcessPoolExecutor(max_workers=1)
 ```
 
 Контракт безпеки:
-- HTTP передає тільки `job_id` UUID.
+- HTTP передає UUID `job_id` та необов'язковий DPI з allowlist `100, 150, 200, 250, 300, 400, 600`; файлові шляхи не передаються.
 - `kdv-optimizer` сам будує шляхи `input/{job_id}.pdf` і `output/{job_id}.pdf` всередині `/data/kdv_optimize`.
 - Довільні file paths між сервісами не передаються.
 - `kdv-optimizer` не має published ports і доступний тільки через Docker network.
@@ -138,7 +138,9 @@ reservations:
 
 ### Koha UI
 
-У Koha біля кнопки архівації є чекбокс:
+У Koha біля кнопки архівації та у Robot Batch доступні стандартна оптимізація або повносторінкова RGB-растеризація з вибором `100`, `150`, `200`, `250`, `300`, `400` чи `600 DPI`. Стандартний режим вибраний за замовчуванням. Для явно вибраного DPI PDF втрачає текстовий шар; OCR не виконується.
+
+Також є чекбокс:
 
 ```text
 [ ] Не оптимізовувати файл (завантажити оригінал)
@@ -150,6 +152,12 @@ API payload:
 
 ```json
 {"skip_optimization": false}
+```
+
+Для растеризації у 300 DPI:
+
+```json
+{"skip_optimization": false, "dpi": 300}
 ```
 
 Для примусового upload оригіналу:
@@ -196,6 +204,8 @@ ROBOT_MAX_WAIT=900
 ```
 
 Якщо `ROBOT_PARALLELISM > 1` і оптимізація увімкнена, задачі можуть чекати в черзі optimizer-а, бо `kdv-optimizer` обробляє один Ghostscript job одночасно.
+
+CLI також приймає `--dpi 300`; без прапора він лишає стандартну оптимізацію.
 
 ---
 
@@ -276,7 +286,9 @@ docker exec <kdv-optimizer-container-id> sh -lc '
   "pdf_pages": null,
   "pdf_optimization_time_ms": 45000,
   "pdf_thread_wait_ms": 340,
-  "pdf_disk_free_mb": 4096.0
+  "pdf_disk_free_mb": 4096.0,
+  "pdf_requested_dpi": 300,
+  "pdf_applied_dpi": 300
 }
 ```
 

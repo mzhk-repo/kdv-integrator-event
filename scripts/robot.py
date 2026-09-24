@@ -25,6 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger("Robot")
 
 API_BASE = "http://localhost:5000/kdv/api"
+DPI_CHOICES = (100, 150, 200, 250, 300, 400, 600)
 
 
 def build_headers():
@@ -91,6 +92,12 @@ def build_parser():
         action="store_true",
         default=False,
         help="Вимкнути PDF-оптимізацію для всього батчу",
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        choices=DPI_CHOICES,
+        help="Растеризувати PDF у вибраній роздільності",
     )
     parser.add_argument(
         "--parallelism",
@@ -193,7 +200,9 @@ def parse_candidates(filename):
         return parse_candidates_text(f.read())
 
 
-def process_single_biblio(biblionumber, skip_optimization=False, max_wait=MAX_WAIT):
+def process_single_biblio(
+    biblionumber, skip_optimization=False, max_wait=MAX_WAIT, dpi=None
+):
     """
     Виконує повний цикл архівації для однієї книги:
     POST (Start) -> Polling (Wait) -> Result
@@ -203,6 +212,8 @@ def process_single_biblio(biblionumber, skip_optimization=False, max_wait=MAX_WA
     # 1. Ініціація (POST)
     try:
         payload = {"skip_optimization": bool(skip_optimization)}
+        if dpi is not None:
+            payload["dpi"] = dpi
         headers = build_headers()
         resp = requests.post(
             f"{API_BASE}/integrate/{biblionumber}",
@@ -293,6 +304,7 @@ def run_batch_ids(
     skip_optimization=False,
     parallelism=None,
     max_wait=None,
+    dpi=None,
 ):
     parallelism = _normalize_positive_int(
         ROBOT_PARALLELISM if parallelism is None else parallelism,
@@ -315,7 +327,7 @@ def run_batch_ids(
     logger.info(
         f"   Controls: parallelism={parallelism}, batch_delay={BATCH_DELAY}s, "
         f"poll_interval={POLL_INTERVAL}s, max_wait={max_wait}s, "
-        f"skip_optimization={skip_optimization}"
+        f"skip_optimization={skip_optimization}, dpi={dpi}"
     )
     logger.info("=" * 40)
     warn_optimizer_queue_if_needed(parallelism, skip_optimization, max_wait)
@@ -333,11 +345,10 @@ def run_batch_ids(
     if parallelism <= 1:
         for i, bib_id in enumerate(ids):
             logger.info(f"--- Item {i + 1}/{len(ids)} ---")
-            result = process_single_biblio(
-                bib_id,
-                skip_optimization=skip_optimization,
-                max_wait=max_wait,
-            )
+            options = {"skip_optimization": skip_optimization, "max_wait": max_wait}
+            if dpi is not None:
+                options["dpi"] = dpi
+            result = process_single_biblio(bib_id, **options)
 
             key = result if result in stats else "FAILED"
             stats[key] = stats.get(key, 0) + 1
@@ -349,12 +360,10 @@ def run_batch_ids(
             futures = {}
             for i, bib_id in enumerate(ids):
                 logger.info(f"--- Queue item {i + 1}/{len(ids)} ---")
-                fut = executor.submit(
-                    process_single_biblio,
-                    bib_id,
-                    skip_optimization=skip_optimization,
-                    max_wait=max_wait,
-                )
+                options = {"skip_optimization": skip_optimization, "max_wait": max_wait}
+                if dpi is not None:
+                    options["dpi"] = dpi
+                fut = executor.submit(process_single_biblio, bib_id, **options)
                 futures[fut] = bib_id
                 if i < len(ids) - 1:
                     time.sleep(BATCH_DELAY)
@@ -382,6 +391,7 @@ def run_batch(
     skip_optimization=False,
     parallelism=None,
     max_wait=None,
+    dpi=None,
 ):
     ids = parse_candidates(filename)
     return run_batch_ids(
@@ -389,6 +399,7 @@ def run_batch(
         skip_optimization=skip_optimization,
         parallelism=parallelism,
         max_wait=max_wait,
+        dpi=dpi,
     )
 
 
@@ -398,6 +409,7 @@ def run_batch_from_text(
     skip_optimization=False,
     parallelism=None,
     max_wait=None,
+    dpi=None,
 ):
     ids = parse_candidates_text(candidates_text)
     stats = run_batch_ids(
@@ -405,6 +417,7 @@ def run_batch_from_text(
         skip_optimization=skip_optimization,
         parallelism=parallelism,
         max_wait=max_wait,
+        dpi=dpi,
     )
     failures = [
         f"{status}={stats[status]}"
@@ -434,4 +447,5 @@ if __name__ == "__main__":
         skip_optimization=args.skip_optimization,
         parallelism=args.parallelism,
         max_wait=args.max_wait,
+        dpi=args.dpi,
     )
