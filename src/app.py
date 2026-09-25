@@ -26,6 +26,7 @@ from .config import (
     KOHA_OPAC_URL,
 )
 from .core import process_integration_logic, parse_marc_details
+from .services.pdf import validate_optimizer_dpi
 from scripts import robot
 
 # wrappers imported here for DI in web handlers
@@ -196,6 +197,7 @@ def _parse_integrate_payload():
         payload = {}
     return {
         "skip_optimization": bool(payload.get("skip_optimization", False)),
+        "dpi": validate_optimizer_dpi(payload.get("dpi")),
     }
 
 
@@ -226,12 +228,18 @@ def _parse_robot_batch_payload():
     if max_wait < 30:
         return None, (jsonify({"status": "error", "message": "max_wait must be >= 30"}), 400)
 
+    try:
+        dpi = validate_optimizer_dpi(payload.get("dpi"))
+    except ValueError as exc:
+        return None, (jsonify({"status": "error", "message": str(exc)}), 400)
+
     return {
         "candidates_text": candidates_text,
         "ids": ids,
         "skip_optimization": bool(payload.get("skip_optimization", False)),
         "parallelism": parallelism,
         "max_wait": max_wait,
+        "dpi": dpi,
     }, None
 
 
@@ -377,6 +385,10 @@ def _make_clients():
 def archive_record_async(biblionumber):
     try:
         payload = _parse_integrate_payload()
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+    try:
         koha_client, dspace_client = _make_clients()
         task_id = task_manager.start_task(
             process_integration_logic,
@@ -384,6 +396,7 @@ def archive_record_async(biblionumber):
             koha_client=koha_client,
             dspace_client=dspace_client,
             skip_optimization=payload["skip_optimization"],
+            dpi=payload["dpi"],
         )
         return jsonify({"status": "accepted", "task_id": task_id}), 202
     except Exception as e:
@@ -400,6 +413,7 @@ def robot_batch_async():
         robot.run_batch_from_text,
         payload["candidates_text"],
         skip_optimization=payload["skip_optimization"],
+        dpi=payload["dpi"],
         parallelism=payload["parallelism"],
         max_wait=payload["max_wait"],
     )

@@ -317,6 +317,50 @@ verify_swarm_service() {
   exit 1
 }
 
+repair_optimizer_volume_ownership() {
+  local optimizer_service target_service container_ids container_id mount_info
+  optimizer_service="${STACK_NAME}_kdv-optimizer"
+
+  if docker service inspect "${optimizer_service}" >/dev/null 2>&1; then
+    target_service="${optimizer_service}"
+  elif docker service inspect "${SWARM_SERVICE_NAME}" >/dev/null 2>&1; then
+    target_service="${SWARM_SERVICE_NAME}"
+  else
+    log "No existing KDV service; skip optimizer volume ownership repair"
+    return 0
+  fi
+
+  container_ids="$(docker ps \
+    --filter "label=com.docker.swarm.service.name=${target_service}" \
+    --filter status=running \
+    --format '{{.ID}}')"
+  if [[ -z "${container_ids}" ]]; then
+    log "ERROR: no local running task for ${target_service}; cannot safely repair its node-local optimizer volume"
+    docker service ps "${target_service}" --no-trunc || true
+    return 1
+  fi
+
+  while IFS= read -r container_id; do
+    [[ -n "${container_id}" ]] || continue
+    mount_info="$(docker inspect "${container_id}" --format \
+      '{{range .Mounts}}{{if eq .Destination "/data/kdv_optimize"}}{{.Type}} {{.Name}}{{end}}{{end}}')"
+    if [[ "${mount_info}" != "volume "* ]]; then
+      log "ERROR: ${target_service} task ${container_id} has no named /data/kdv_optimize volume mount"
+      return 1
+    fi
+
+    log "Repairing optimizer volume directory ownership through ${target_service} task ${container_id}"
+    # Repair the persistent mount before the new /ready healthcheck is deployed.
+    if ! docker exec --user 0:0 "${container_id}" sh -ec '
+      mkdir -p /data/kdv_optimize/input /data/kdv_optimize/output
+      chown 10001:10001 /data/kdv_optimize /data/kdv_optimize/input /data/kdv_optimize/output
+    '; then
+      log "ERROR: failed to set optimizer volume directories to 10001:10001"
+      return 1
+    fi
+  done <<< "${container_ids}"
+}
+
 # ROLLBACK ІНСТРУКЦІЯ:
 # 1. Вимкнути оптимізацію без відкату коду:
 #    docker service update --env-add OPTIMIZER_URL=disabled ${STACK_NAME}_kdv-api
@@ -375,6 +419,7 @@ deploy_swarm() {
     deploy_args+=(--resolve-image never)
   fi
   deploy_args+=("${STACK_NAME}")
+  repair_optimizer_volume_ownership
   "${deploy_args[@]}"
 
   verify_swarm_service "${SWARM_SERVICE_NAME}"

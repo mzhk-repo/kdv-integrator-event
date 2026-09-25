@@ -3,11 +3,12 @@
 **Документ статус:** Draft → In Review  
 **Автор:** DevOps / Arch Team  
 **Цільовий реліз:** KDV Integrator v0.4.0 (Milestone 8)  
-**Версія документу:** 0.4.0-rev3  
+**Версія документу:** 0.4.0-rev4
 **Changelog документу:**
 - rev1 → Initial draft
 - rev2 → Архітектурний рев'ю: додано `kdv-optimizer` container, ProcessPoolExecutor, виправлено thread starvation, robot.py, disk pre-flight, SLO split, CVE policy, PoC benchmark format
 - rev3 → Уточнено sync HTTP-клієнт, безпечний `job_id` контракт, fallback telemetry у `task.result`, `pdfinfo` евристику, TTL cleanup, health/readiness optimizer, orchestrator/deploy вимоги та release gate для PoC
+- rev4 → Додано необов'язкову повносторінкову растеризацію з вибором DPI в Koha UI та Robot Batch зі збереженням стандартного режиму для старих клієнтів
 
 ---
 
@@ -73,12 +74,12 @@ kdv-api (Flask, 1w×4t)          kdv-optimizer (Flask mini-API)
 
 **Комунікація:**
 - `kdv-api` копіює файл у `/data/kdv_optimize/input/{job_id}.pdf`
-- `kdv-api` → `POST /optimize` з `{ "job_id": "..." }`
+- `kdv-api` → `POST /optimize` з `{ "job_id": "..." }` або `{ "job_id": "...", "dpi": 300 }` для явно вибраної роздільності
 - `kdv-api` → `GET /optimize/{job_id}` (polling з таймаутом 120s, інтервал 2s)
 - `kdv-optimizer` повертає `{ "status": "done|processing|error", "output_path": "...", "stats": { "original_mb": ..., "optimized_mb": ..., "time_ms": ... } }`
 - `kdv-api` → `GET /health` і `GET /ready` для діагностики `kdv-optimizer`
 
-> **Безпечний path contract:** `kdv-api` не передає довільний `input_path`. `kdv-optimizer` приймає тільки `job_id`, валідує його як UUID/allowlisted token і сам будує `input/output` шляхи всередині `/data/kdv_optimize`. Це прибирає ризик випадкового читання/запису поза shared volume.
+> **Безпечний path contract:** `kdv-api` не передає довільний `input_path`. `kdv-optimizer` приймає UUID `job_id` та необов'язковий `dpi` з allowlist `100, 150, 200, 250, 300, 400, 600`; шляхи `input/output` будує сам усередині `/data/kdv_optimize`.
 
 > **Примітка щодо polling vs callback:** Polling обрано свідомо — він відповідає існуючому паттерну `TaskManager` в `kdv-api` і не вимагає callback URL або черги повідомлень. За необхідності в майбутньому можна замінити на webhook без зміни контракту.
 
@@ -109,6 +110,7 @@ future = _optimizer_pool.submit(
     run_ghostscript,   # top-level функція (pickle-сумісна)
     input_path,
     output_path,
+    dpi,  # None зберігає стандартний режим; число вмикає pdfimage24
 )
 ```
 
@@ -178,6 +180,13 @@ PoC скрипт генерує JSON-звіт для кожної пари (ру
 ---
 
 ## 5. Функціональні вимоги (Business Logic)
+
+### 5.5. Необов'язковий DPI вихідного PDF
+
+- API payload може містити ціле `dpi`: `100`, `150`, `200`, `250`, `300`, `400` або `600`. Якщо поле відсутнє, використовується чинний `pdfwrite /ebook` режим.
+- Явно заданий DPI вмикає повносторінковий RGB output через `pdfimage24`, JPEG quality `85` і `CropBox`. Текстовий шар не зберігається; OCR не виконується.
+- Обробка лишається під чинними евристикою, disk pre-flight та 120-секундним timeout. Розмір запису обмежений розміром оригіналу; результат має зберегти кількість сторінок. Будь-який збій або завеликий/неповний output спричиняє fallback на оригінал.
+- `task.result` має `pdf_requested_dpi` та `pdf_applied_dpi`; останнє заповнюється лише коли optimizer підтвердив успішний raster output із тим самим DPI.
 
 Процес втручається в існуючий DSpace Workflow після завантаження PDF з Koha і перед пушем у DSpace.
 
@@ -428,6 +437,9 @@ python scripts/robot.py candidates.txt
 # Вимкнути оптимізацію для всього батчу (наприклад, термінова масова архівація)
 python scripts/robot.py candidates.txt --skip-optimization
 
+# Растеризувати успішно оптимізовані PDF у 300 DPI
+python scripts/robot.py candidates.txt --dpi 300
+
 # Явно задати паралелізм без ENV
 python scripts/robot.py candidates.txt --parallelism 1
 ```
@@ -545,7 +557,9 @@ kdv-integrator-event/
   "pdf_pages": 50,
   "pdf_optimization_time_ms": 45000,
   "pdf_thread_wait_ms": 340,
-  "pdf_disk_free_mb": 4096.0
+  "pdf_disk_free_mb": 4096.0,
+  "pdf_requested_dpi": 300,
+  "pdf_applied_dpi": 300
 }
 ```
 

@@ -136,7 +136,7 @@ def test_optimizer_success_logs_completion(tmp_path, caplog):
     """Optimizer логує старт і успішне завершення без реального Ghostscript."""
     original = tmp_path / "original.pdf"
     output = tmp_path / "optimized.pdf"
-    original.write_bytes(b"original-content")
+    original.write_bytes(b"original-content" * 4)
 
     def fake_run_ghostscript(_input_path, output_path):
         Path(output_path).write_bytes(b"small")
@@ -151,6 +151,66 @@ def test_optimizer_success_logs_completion(tmp_path, caplog):
     assert "PDF optimization process started" in caplog.text
     assert "PDF optimization process completed" in caplog.text
     assert "reduction_pct" in caplog.text
+
+
+def test_optimizer_rasterizes_pages_at_requested_dpi(tmp_path):
+    original = tmp_path / "original.pdf"
+    output = tmp_path / "rasterized.pdf"
+    original.write_bytes(b"original-content" * 4)
+
+    def fake_run_ghostscript(_input_path, output_path, dpi):
+        assert dpi == 300
+        Path(output_path).write_bytes(b"small-rasterized-pdf")
+
+    with patch.object(
+        optimizer_pdf, "_count_pages_with_pdfinfo", side_effect=[4, 4]
+    ), patch.object(optimizer_pdf, "run_ghostscript", side_effect=fake_run_ghostscript):
+        result = optimizer_pdf._optimize_pdf(str(original), str(output), dpi=300)
+
+    assert result["status"] == "done"
+    assert result["stats"]["raster_dpi"] == 300
+    assert result["stats"]["engine"] == "ghostscript_pdfimage24"
+
+
+def test_optimizer_rasterization_rejects_changed_page_count(tmp_path):
+    original = tmp_path / "original.pdf"
+    output = tmp_path / "rasterized.pdf"
+    original.write_bytes(b"original-content" * 4)
+
+    def fake_run_ghostscript(_input_path, output_path, dpi):
+        Path(output_path).write_bytes(b"small-rasterized-pdf")
+
+    with patch.object(
+        optimizer_pdf, "_count_pages_with_pdfinfo", side_effect=[4, 3]
+    ), patch.object(optimizer_pdf, "run_ghostscript", side_effect=fake_run_ghostscript):
+        result = optimizer_pdf._optimize_pdf(str(original), str(output), dpi=300)
+
+    assert result["status"] == "error"
+    assert result["stats"]["fallback_reason"] == "exception"
+
+
+def test_optimizer_raster_command_sets_dpi_and_output_limit(tmp_path):
+    original = tmp_path / "original.pdf"
+    output = tmp_path / "rasterized.pdf"
+    original.write_bytes(b"x" * 1234)
+
+    with patch.object(optimizer_pdf.subprocess, "run") as run:
+        optimizer_pdf.run_ghostscript(str(original), str(output), dpi=250)
+
+    command = run.call_args.args[0]
+    assert command[:8] == [
+        "nice", "-n", "15", "ionice", "-c", "3", "prlimit", "--fsize=1234"
+    ]
+    assert "-sDEVICE=pdfimage24" in command
+    assert "-r250" in command
+    assert "-sCompression=JPEG" in command
+    assert "-dJPEGQ=85" in command
+    assert "-dUseCropBox" in command
+
+
+def test_optimizer_rejects_unsupported_dpi():
+    with pytest.raises(ValueError, match="dpi must be one of"):
+        optimizer_pdf.validate_dpi(301)
 
 
 def test_optimizer_client_unavailable(tmp_path):

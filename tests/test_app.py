@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 # Provide required config env vars before importing src.app
 os.environ.setdefault("KDV_API_TOKEN", "test-token")
 os.environ.setdefault("KOHA_API_URL", "http://koha.local")
@@ -136,6 +138,7 @@ def test_integrate_without_payload_defaults_to_optimization(monkeypatch):
     assert response.get_json()["task_id"] == "task-1"
     assert captured["biblionumber"] == 123
     assert captured["kwargs"]["skip_optimization"] is False
+    assert captured["kwargs"]["dpi"] is None
 
 
 def test_integrate_accepts_skip_optimization_true(monkeypatch):
@@ -161,6 +164,42 @@ def test_integrate_accepts_skip_optimization_true(monkeypatch):
     assert response.status_code == 202
     assert response.get_json()["task_id"] == "task-2"
     assert captured["kwargs"]["skip_optimization"] is True
+
+
+def test_integrate_accepts_supported_dpi(monkeypatch):
+    client = app.test_client()
+    captured = {}
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app._make_clients", lambda: (object(), object()))
+    monkeypatch.setattr(
+        "src.app.task_manager.start_task",
+        lambda _func, _biblionumber, **kwargs: captured.update(kwargs) or "dpi-task",
+    )
+
+    response = client.post(
+        "/kdv/api/integrate/123",
+        json={"dpi": 300},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 202
+    assert captured["dpi"] == 300
+
+
+@pytest.mark.parametrize("dpi", [72, 301, "300", True, 150.0])
+def test_integrate_rejects_unsupported_dpi(dpi, monkeypatch):
+    client = app.test_client()
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+
+    response = client.post(
+        "/kdv/api/integrate/123",
+        json={"dpi": dpi},
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 400
 
 
 def test_robot_batch_rejects_without_token(monkeypatch):
@@ -194,6 +233,7 @@ def test_robot_batch_accepts_valid_payload(monkeypatch):
             "skip_optimization": True,
             "parallelism": 2,
             "max_wait": 1200,
+            "dpi": 200,
         },
         headers={"X-KDV-TOKEN": "test-token"},
     )
@@ -208,6 +248,7 @@ def test_robot_batch_accepts_valid_payload(monkeypatch):
         "skip_optimization": True,
         "parallelism": 2,
         "max_wait": 1200,
+        "dpi": 200,
     }
 
 

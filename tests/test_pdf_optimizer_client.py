@@ -17,8 +17,10 @@ class FakeSession:
         self.post_response = post_response or FakeResponse(202, {"status": "processing"})
         self.get_responses = list(get_responses or [])
         self.post_exc = post_exc
+        self.post_kwargs = None
 
     def post(self, *args, **kwargs):
+        self.post_kwargs = kwargs
         if self.post_exc:
             raise self.post_exc
         return self.post_response
@@ -123,3 +125,55 @@ def test_done_status_returns_valid_output(tmp_path):
     assert result.optimized_mb == 0.5
     assert result.optimization_time_ms == 123
     assert result.thread_wait_ms == 10
+
+
+def test_dpi_request_is_sent_and_acknowledged(tmp_path):
+    original = tmp_path / "original.pdf"
+    output = tmp_path / "rasterized.pdf"
+    original.write_bytes(b"original-content")
+    output.write_bytes(b"small")
+    session = FakeSession(
+        get_responses=[
+            FakeResponse(
+                200,
+                {
+                    "status": "done",
+                    "output_path": str(output),
+                    "stats": {"raster_dpi": 300},
+                },
+            )
+        ]
+    )
+    client = PDFOptimizerClient(
+        "http://optimizer", timeout=1, poll_interval=0, session=session
+    )
+
+    result = client.optimize(str(original), "job-id", dpi=300)
+
+    assert session.post_kwargs["json"] == {"job_id": "job-id", "dpi": 300}
+    assert result.success is True
+    assert result.applied_dpi == 300
+
+
+def test_dpi_request_falls_back_if_optimizer_does_not_confirm_dpi(tmp_path):
+    original = tmp_path / "original.pdf"
+    output = tmp_path / "rasterized.pdf"
+    original.write_bytes(b"original-content")
+    output.write_bytes(b"small")
+    session = FakeSession(
+        get_responses=[
+            FakeResponse(
+                200,
+                {"status": "done", "output_path": str(output), "stats": {}},
+            )
+        ]
+    )
+    client = PDFOptimizerClient(
+        "http://optimizer", timeout=1, poll_interval=0, session=session
+    )
+
+    result = client.optimize(str(original), "job-id", dpi=300)
+
+    assert result.success is False
+    assert result.path == str(original)
+    assert result.fallback_reason == "exception"

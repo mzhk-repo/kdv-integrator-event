@@ -11,7 +11,7 @@ $(document).ready(function() {
         ROBOT_BATCH_ENDPOINT: "/robot/batch",
         EXPORT_RUN_ENDPOINT: "/export/run",
         POLLING_INTERVAL: 2000,
-        MAX_POLLING_ATTEMPTS: 30, // Захист від нескінченного циклу (1 хвилина)
+        MAX_POLLING_ATTEMPTS: 180, // До 6 хвилин для важких PDF
         ROBOT_MAX_POLLING_ATTEMPTS: 1800, // До 1 години для batch-канарейки
         I18N: {
             updateBtn: "Оновити метадані DSpace",
@@ -30,6 +30,34 @@ $(document).ready(function() {
     };
 
     const KDV_TOKEN = (window.KDV_TOKEN || "").trim();
+    const OPTIMIZER_DPI_VALUES = [100, 110, 120, 130, 140, 150];
+
+    function dpiSelectHtml(id) {
+        const options = OPTIMIZER_DPI_VALUES
+            .map((dpi) => `<option value="${dpi}">${dpi} DPI</option>`)
+            .join("");
+        return `<label for="${id}" style="margin-bottom: 0;">Роздільність PDF
+            <select id="${id}" class="form-control input-sm" style="width: 190px;">
+                <option value="">Стандартна оптимізація</option>${options}
+            </select>
+        </label>`;
+    }
+
+    function selectedDpiPayload(id) {
+        const select = document.getElementById(id);
+        if (!select || select.disabled) return {};
+        const value = select.value;
+        return value ? { dpi: Number(value) } : {};
+    }
+
+    function bindSkipDpi(skipId, dpiId) {
+        const skip = document.getElementById(skipId);
+        const dpi = document.getElementById(dpiId);
+        if (!skip || !dpi) return;
+        const update = () => { dpi.disabled = skip.checked; };
+        skip.addEventListener("change", update);
+        update();
+    }
 
     /**
      * Визначає, чи вже є запис у репозиторії
@@ -213,6 +241,7 @@ $(document).ready(function() {
                         Очікування, сек
                         <input type="number" id="kdv-robot-max-wait" class="form-control input-sm" min="30" value="900" style="width: 112px;">
                     </label>
+                    ${dpiSelectHtml("kdv-robot-dpi")}
                     <label for="kdv-robot-skip-optimization" class="checkbox-inline" style="margin-bottom: 6px;">
                         <input type="checkbox" id="kdv-robot-skip-optimization" name="skip_optimization">
                         Не оптимізовувати файл
@@ -229,6 +258,8 @@ $(document).ready(function() {
         } else {
             target.before(panelHtml);
         }
+
+        bindSkipDpi("kdv-robot-skip-optimization", "kdv-robot-dpi");
 
         $("#kdv-robot-batch-btn").click(function(e) {
             e.preventDefault();
@@ -250,12 +281,12 @@ $(document).ready(function() {
 
             ensureAccessSession(() => {
                 startRobotBatchRequest(
-                    {
+                    Object.assign({
                         candidates: candidates,
                         skip_optimization: document.getElementById("kdv-robot-skip-optimization")?.checked ?? false,
                         parallelism: parseInt(document.getElementById("kdv-robot-parallelism")?.value || "1", 10),
                         max_wait: parseInt(document.getElementById("kdv-robot-max-wait")?.value || "900", 10)
-                    },
+                    }, selectedDpiPayload("kdv-robot-dpi")),
                     (res) => {
                         statusEl.text(`Запущено: ${res.candidates_count} записів`);
                         startRobotPolling(res.task_id, btn, originalHtml, statusEl);
@@ -304,15 +335,19 @@ $(document).ready(function() {
             `
             : "";
 
+        const dpiHtml = !isArchived ? dpiSelectHtml("kdv-integrate-dpi") : "";
+
         const btnHtml = `
             <div class="btn-group">
                 ${skipOptimizationHtml}
+                ${dpiHtml}
                 <button id="${btnConfig.id}" class="btn btn-default btn-sm" style="${isArchived ? 'color: #007bff; font-weight: bold;' : ''}">
                     <i class="fa ${btnConfig.icon}"></i> ${btnConfig.text}
                 </button>
             </div>
         `;
         toolbar.append(btnHtml);
+        if (!isArchived) bindSkipDpi("kdv-skip-optimization", "kdv-integrate-dpi");
 
         // Обробник натискання
         $(`#${btnConfig.id}`).click(function(e) {
@@ -331,9 +366,9 @@ $(document).ready(function() {
                     xhrFields: { withCredentials: true },
                     headers: buildHeaders(),
                     contentType: btnConfig.method === "POST" ? "application/json" : undefined,
-                    data: btnConfig.method === "POST" ? JSON.stringify({
+                    data: btnConfig.method === "POST" ? JSON.stringify(Object.assign({
                         skip_optimization: document.getElementById("kdv-skip-optimization")?.checked ?? false
-                    }) : undefined,
+                    }, selectedDpiPayload("kdv-integrate-dpi"))) : undefined,
                     success: (res) => {
                         if (btnConfig.method === "POST" && res.task_id) {
                             startPolling(res.task_id, btn, originalHtml);
@@ -499,5 +534,16 @@ Stats: ${stats}`);
         alert(KDV_CONFIG.I18N.error + msg);
         btn.prop("disabled", false).addClass("btn-danger").html(originalHtml);
         setTimeout(() => btn.removeClass("btn-danger"), 3000);
+    }
+});
+
+$(document).ready(function() {
+    if (window.location.href.includes("catalogue/detail.pl")) {
+        $(".results_summary.description, .description").each(function() {
+            var html = $(this).html();
+            // Додаємо крапку після "с", якщо після неї немає іншого тексту з крапкою
+            html = html.replace(/(\b\d+\s*с)(?![\.\wа-яА-ЯіїєґІЇЄҐ])/g, "$1.");
+            $(this).html(html);
+        });
     }
 });
