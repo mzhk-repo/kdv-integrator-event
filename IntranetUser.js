@@ -30,7 +30,7 @@ $(document).ready(function() {
     };
 
     const KDV_TOKEN = (window.KDV_TOKEN || "").trim();
-    const OPTIMIZER_DPI_VALUES = [100, 150, 200, 250, 300, 400, 600];
+    const OPTIMIZER_DPI_VALUES = [100, 110, 120, 130, 140, 150];
 
     function dpiSelectHtml(id) {
         const options = OPTIMIZER_DPI_VALUES
