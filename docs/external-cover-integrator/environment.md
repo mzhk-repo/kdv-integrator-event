@@ -100,7 +100,9 @@ in this contract or the public template.
 
 The CDN runs as the image's `nginx` user on internal port 8080, with a read-only
 root filesystem, dropped capabilities and a writable `/tmp` tmpfs. No host ports
-are published. The existing Tunnel routes the public hostname to Traefik's
+are published. `/tmp` uses the long mount form (`volumes: type: tmpfs`) required
+for Swarm; the orchestrator converts the serialized size to a Stack-compatible integer.
+The existing Tunnel routes the public hostname to Traefik's
 internal HTTP entrypoint; public TLS and HTTP redirects are handled at Cloudflare.
 See [runbook.md](runbook.md) for the required external setup and acceptance checks.
 

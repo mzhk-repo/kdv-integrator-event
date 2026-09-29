@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,11 +94,45 @@ def test_rendered_cdn_has_only_readonly_assets_and_private_listener():
     assert cdn["user"] == "nginx" and cdn["read_only"]
     assert not any(cdn.get(key) for key in ("ports", "secrets", "environment", "env_file"))
     assert cdn["cap_drop"] == ["ALL"]
-    assert len(cdn["volumes"]) == 1
-    assert all(mount["read_only"] for mount in cdn["volumes"])
-    assert cdn["volumes"][0]["source"].endswith("/assets")
-    assert cdn["volumes"][0]["target"] == "/usr/share/nginx/html"
+    assert not cdn.get("tmpfs")
+    mounts = {mount["target"]: mount for mount in cdn["volumes"]}
+    assert set(mounts) == {"/tmp", "/usr/share/nginx/html"}
+    assert mounts["/tmp"]["type"] == "tmpfs"
+    assert int(mounts["/tmp"]["tmpfs"]["size"]) == 16777216
+    assert not mounts["/tmp"].get("read_only")
+    assert mounts["/usr/share/nginx/html"]["read_only"]
+    assert mounts["/usr/share/nginx/html"]["source"].endswith("/assets")
     assert cdn["configs"] == [{"source": "covers_nginx", "target": "/etc/nginx/nginx.conf"}]
     assert cdn["deploy"]["placement"]["constraints"] == ["node.id == examplenode"]
     assert cdn["deploy"]["labels"]["traefik.http.routers.kdv-covers.rule"] == "Host(`covers.example.org`)"
     assert cdn["deploy"]["labels"]["traefik.http.services.kdv-covers.loadbalancer.server.port"] == "8080"
+
+
+def test_swarm_manifest_keeps_writable_tmpfs_mount():
+    rendered = subprocess.run(
+        ["docker", "compose", "--env-file", ".env.example", "-f", "docker-compose.yml",
+         "-f", "docker-compose.swarm.yml", "config"],
+        cwd=ROOT,
+        env={"PATH": os.environ["PATH"], "COVERS_CDN_HOST": "covers.example.org",
+             "COVERS_SWARM_NODE_ID": "examplenode"},
+        check=True, capture_output=True, text=True,
+    )
+    script = (ROOT / "scripts/deploy-orchestrator-swarm.sh").read_text()
+    name = "normalize_swarm_manifest() {"
+    function = name + script.split(name, 1)[1].split("\n}\n", 1)[0] + "\n}"
+    normalized = subprocess.run(
+        ["bash", "-c", "set -euo pipefail\n" + function + "\nnormalize_swarm_manifest"],
+        input=rendered.stdout, check=True, capture_output=True, text=True,
+    )
+    validated = subprocess.run(
+        ["docker", "stack", "config", "-c", "-"],
+        input=normalized.stdout, check=True, capture_output=True, text=True,
+    )
+    cdn = yaml.safe_load(validated.stdout)["services"]["covers-cdn"]
+    assert cdn["read_only"] and cdn["user"] == "nginx"
+    assert not cdn.get("tmpfs")
+    mounts = {mount["target"]: mount for mount in cdn["volumes"]}
+    assert mounts["/tmp"]["type"] == "tmpfs"
+    assert mounts["/tmp"]["tmpfs"]["size"] == 16777216
+    assert not mounts["/tmp"].get("read_only")
+    assert mounts["/usr/share/nginx/html"]["read_only"]

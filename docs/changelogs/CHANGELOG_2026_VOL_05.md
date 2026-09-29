@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-29 — Preserve CDN writable tmpfs in Swarm deployment
+
+- **Context:** The first CDN deployment stayed at `0/1`. Live nginx logs reported `mkdir() "/tmp/client_body" failed (30: Read-only file system)`; the actual service spec had only the read-only assets bind and no `/tmp` mount. The original short `tmpfs` declaration was not delivered to Swarm. Previous isolated `docker run --tmpfs` checks did not verify service mount conversion.
+- **Change:** Replaced the service-level tmpfs declaration with an explicit `volumes` tmpfs mount at `/tmp`, limited to 16 MiB. Extracted the existing manifest normalization pipeline into `normalize_swarm_manifest()` and added conversion of quoted numeric tmpfs sizes to integers required by the Stack schema. Regression checks now require the mount in both Compose output and the converted `docker stack config` result. Updated the contract, plan and CDN runbook with the failure evidence and post-redeploy checks.
+- **Verification:** Live read-only service logs/spec inspection established the cause. `.venv/bin/python -m pytest -q tests/test_covers_cdn.py tests/test_init_volume.py` — 31 passed. Bash syntax, ShellCheck and `git diff --check` passed. An isolated non-root container with a read-only root filesystem, dropped capabilities and `--mount type=tmpfs` passed nginx syntax/startup, healthcheck and GET `/healthz`; `/tmp` was writable, 16 MiB, with `nosuid,nodev,noexec` observed in `/proc/mounts`. No live service was changed.
+- **Risks:** Live recovery remains unverified until the user redeploys and confirms a `/tmp` tmpfs mount and running task. Public CDN acceptance remains pending. nginx root filesystem and assets remain read-only.
+- **Rollback:** Revert the mount/conversion/test changes; this restores the known failed Swarm mount delivery and is unsuitable for service recovery.
+
 ## 2026-09-29 — External cover CDN skeleton (Task 0.2)
 
 - **Context:** External covers require a static read-only origin behind the existing Traefik/Cloudflare Tunnel path. The user confirmed folder-only access for the existing Google service account and requested preparation only, with deployment performed by the user.

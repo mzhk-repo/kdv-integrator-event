@@ -59,6 +59,8 @@ rg -n 'KOHA_API_URL =|KOHA_OPAC_URL =|DSPACE_API_URL =|DSPACE_UI_URL =' src/conf
 
 **Стан на 2026-09-29:** підготовлено Compose/Swarm service `covers-cdn`, nginx-конфігурацію та orchestrator wiring. Nginx працює без root, з read-only assets і filesystem, без host-портів та secrets. Hostname виводиться з `COVERS_CDN_BASE_URL`; service закріплений за локальним вузлом підготовки storage. Compose validation, цільові тести, `nginx -t` та ізольована HTTP-перевірка пройшли. За вказівкою користувача деплой виконує він сам. Публічний HTTPS, Cloudflare routing/redirect і недоступність origin ще потребують перевірки після деплою; 0.2 та Фаза 0 повністю не закриті. Процедура: [runbook.md](runbook.md).
 
+**Виправлення першого деплою:** фактичний Swarm service не отримав короткий `tmpfs` mount, тому nginx завершувався через read-only `/tmp`. Підготовлено `volumes: type: tmpfs` і нормалізацію його розміру для Stack schema; 31 тест та ізольований запуск з mount-based tmpfs пройшли. Потрібен повторний деплой користувачем і підтвердження `/tmp` у фактичному service spec.
+
 **Acceptance criteria:**
 - Тестовий файл (`/healthz` або аналог) доступний ззовні по HTTPS через `${COVERS_CDN_BASE_URL}`.
 - Origin-сервер недоступний напряму (тільки через тунель).

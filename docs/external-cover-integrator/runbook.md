@@ -20,6 +20,14 @@ configuration is a Docker Config named using the file hash; configuration update
 replace the service's config reference on the next deploy. Old immutable configs
 can remain until separately cleaned up after rollback requirements are satisfied.
 
+Writable `/tmp` must be declared as a `volumes` entry with `type: tmpfs`, target
+`/tmp` and a 16 MiB size. Do not replace it with the service-level short `tmpfs`
+key: that form did not reach the deployed Swarm service's mounts. Docker documents
+that Swarm requires the mount form in its [tmpfs reference](https://docs.docker.com/engine/storage/tmpfs/).
+The orchestrator normalizes numeric tmpfs size strings from Compose to integers
+required by the legacy Stack schema. Tests validate the converted Stack manifest,
+not only Compose output or a separately constructed `docker run` command.
+
 `/healthz` returns `200` with `ok` and `Cache-Control: no-store`. Only flat lowercase
 SHA-256 filenames (`/<64 hex characters>.webp`) are served as assets; successful
 responses use `image/webp` and `public, max-age=31536000, immutable`. Symlinks,
@@ -118,6 +126,32 @@ read-only test assets. GET/HEAD health, the exact asset bytes, MIME/cache header
 write-method rejection, hidden/symlink path rejection and read-only storage were
 checked. No Swarm stack or Cloudflare configuration was changed. Public acceptance
 remains pending the user's deployment.
+
+### First deployment failure and correction (2026-09-29)
+
+Live read-only diagnostics found repeated nginx exits with
+`mkdir() "/tmp/client_body" failed (30: Read-only file system)`.
+`ContainerSpec.Mounts` contained only the assets bind: `/tmp` was absent despite
+the short `tmpfs` key in the rendered configuration. The original isolated smoke
+used `docker run --tmpfs`, which did not validate Swarm mount delivery.
+
+The corrected declaration uses a tmpfs mount entry. The converted Stack manifest
+now retains its target and integer 16 MiB size; 31 targeted tests passed. An
+isolated container using `--mount type=tmpfs` passed nginx syntax/startup and HTTP
+health checks with a read-only root filesystem and dropped capabilities. Its
+actual `/tmp` mount was writable with `nosuid,nodev,noexec` and a 16 MiB limit.
+The live stack was not redeployed by the agent. After the user's normal redeploy,
+confirm mount delivery and task health before public acceptance:
+
+```bash
+docker service inspect kdv_integrator_event_covers-cdn \
+  --format '{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}'
+docker service ps --no-trunc kdv_integrator_event_covers-cdn
+docker service logs --tail 20 kdv_integrator_event_covers-cdn
+```
+
+Use the selected environment's stack name if it differs. Mounts must include a
+writable tmpfs at `/tmp` and a read-only bind at `/usr/share/nginx/html`.
 
 ## Rollback
 

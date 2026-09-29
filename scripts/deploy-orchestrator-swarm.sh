@@ -406,6 +406,13 @@ repair_optimizer_volume_ownership() {
 # 2. Або відкотити compose + передеплоїти попередній GIT_SHA.
 # 3. DSpace/Koha дані не зачіпаються при будь-якому варіанті.
 
+normalize_swarm_manifest() {
+  awk 'NR==1 && $1=="name:" {next} {print}' \
+    | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
+    | sed -E 's/^([[:space:]]*cpus:[[:space:]]*)([0-9]+(\.[0-9]+)?)$/\1"\2"/' \
+    | sed -E 's/^([[:space:]]*size:[[:space:]]*)"([0-9]+)"$/\1\2/'
+}
+
 deploy_swarm() {
   local compose_file swarm_file deploy_args
 
@@ -448,10 +455,7 @@ deploy_swarm() {
     -f "${swarm_file}" \
     config > "${RAW_MANIFEST}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
-    | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
-    | sed -E 's/^([[:space:]]*cpus:[[:space:]]*)([0-9]+(\.[0-9]+)?)$/\1"\2"/' \
-    > "${DEPLOY_MANIFEST}"
+  normalize_swarm_manifest < "${RAW_MANIFEST}" > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
   deploy_args=(docker stack deploy -c "${DEPLOY_MANIFEST}")

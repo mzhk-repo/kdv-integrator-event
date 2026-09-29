@@ -90,9 +90,12 @@ services:
     read_only: true
     cap_drop:
       - ALL
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=16m
     volumes:
+      # Swarm requires a mount entry; the service-level tmpfs key is ignored.
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 16777216
       - type: bind
         source: ${COVERS_STORAGE_HOST_PATH:?COVERS_STORAGE_HOST_PATH is required}/assets
         target: /usr/share/nginx/html
