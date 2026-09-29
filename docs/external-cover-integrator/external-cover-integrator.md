@@ -23,13 +23,15 @@
 Усі значення, специфічні для конкретного інсталяції (домени, base URL Koha/DSpace/CDN, ліміти на кшталт `max_retry_count`), задаються **через змінні середовища/конфіг деплойменту**, а не хардкодяться у коді, MARC-полях чи в цьому документі. У прикладах нижче такі значення позначені як:
 
 ```text
-${KOHA_OPAC_BASE_URL}     — публічний домен OPAC Koha
-${KOHA_STAFF_BASE_URL}    — домен staff-інтерфейсу Koha
-${COVERS_CDN_BASE_URL}    — публічний домен covers-cdn
+${KOHA_OPAC_BASE_URL}     — повний HTTPS base URL OPAC Koha
+${KOHA_STAFF_BASE_URL}    — повний HTTPS base URL staff-інтерфейсу Koha
+${COVERS_CDN_BASE_URL}    — повний HTTPS base URL covers-cdn без кінцевого /
 ${MAX_RETRY_COUNT}        — ліміт повторів для Integrator (розділ 19, 22)
 ```
 
 Конкретні значення (напр. `koha.example.org`) визначаються під час деплойменту (`.env`, secrets manager, Helm values тощо) і не є частиною архітектури.
+
+Контракт цього репозиторію визначений у [environment.md](environment.md): концептуальні `KOHA_OPAC_BASE_URL` і `KOHA_STAFF_BASE_URL` використовують наявні runtime-змінні `KOHA_OPAC_URL` і `KOHA_API_URL` відповідно.
 
 ---
 
@@ -526,7 +528,7 @@ e8bd42a79c4f...
 `CustomCoverImagesURL`:
 
 ```text
-https://${COVERS_CDN_BASE_URL}/{956$c}.webp
+${COVERS_CDN_BASE_URL}/{956$c}.webp
 ```
 
 Таким чином домен та структура сховища не записуються у MARC.
@@ -861,7 +863,7 @@ control-number
 публічне посилання:
 
 ```text
-https://${KOHA_OPAC_BASE_URL}/cgi-bin/koha/opac-search.pl?q=control-number:019f840f-91bd-7ba3-a7bd-a9cae6b9c573
+${KOHA_OPAC_BASE_URL}/cgi-bin/koha/opac-search.pl?q=control-number:019f840f-91bd-7ba3-a7bd-a9cae6b9c573
 ```
 
 Це краще за:
@@ -967,7 +969,7 @@ asset SHA = AAA
 і всі використовуватимуть:
 
 ```text
-https://${COVERS_CDN_BASE_URL}/AAA.webp
+${COVERS_CDN_BASE_URL}/AAA.webp
 ```
 
 Фізично файл зберігається один раз.

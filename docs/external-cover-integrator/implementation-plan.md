@@ -26,6 +26,8 @@
 
 **Опис:** Визначити повний список env-змінних (`KOHA_OPAC_BASE_URL`, `KOHA_STAFF_BASE_URL`, `COVERS_CDN_BASE_URL`, `MAX_RETRY_COUNT`, шлях до Google service-account credentials, Koha/DSpace API endpoints та credentials) і механізм їх постачання в кожен сервіс (Docker secrets / `.env` / vault — на розсуд деплойменту).
 
+**Стан на 2026-09-29:** контракт і заглушки підготовлено в [environment.md](environment.md) та `.env.example`. Концептуальні `KOHA_OPAC_BASE_URL`/`KOHA_STAFF_BASE_URL` відповідають наявним `KOHA_OPAC_URL`/`KOHA_API_URL`; дублікати не вводяться. `COVERS_CDN_BASE_URL` — повний HTTPS URL без кінцевого `/`. Нові cover-параметри підключаються у наступних фазах. Для повного приймання 0.1 ще потрібне підтвердження існування service account і доступу лише до цільової Drive-папки у визначеному середовищі.
+
 **Acceptance criteria:**
 - Існує єдиний документ/файл з переліком усіх env-змінних, їх призначенням і дефолтами (де застосовно).
 - Жоден сервіс не має fallback на хардкоджене значення домену чи хоста в коді.
@@ -33,11 +35,22 @@
 
 **Validation:**
 ```bash
-# Перевірка відсутності хардкоджених доменів у репозиторії
-grep -RniE "\.(ua|com|org|net|buzz)[\"'/ ]" --include="*.py" --include="*.yml" --include="*.yaml" . | grep -v '\${'
+# З кореня репозиторію; перевіряється тільки публічний шаблон, без decrypt/source.
+bash -n .env.example
+python3 - <<'PY'
+from pathlib import Path
+import re
 
-# Перевірка, що всі обов'язкові env-змінні задокументовані і присутні в .env.example
-diff <(grep -oE '^\s*[A-Z_]+=' .env.example | tr -d ' =') <(sort -u required_env_vars.txt)
+template = Path('.env.example').read_text()
+contract = Path('docs/external-cover-integrator/environment.md').read_text()
+keys = re.findall(r'^([A-Z][A-Z0-9_]*)=', template, re.M)
+required = re.findall(r'^\| `([A-Z][A-Z0-9_]*)` \|', contract, re.M)
+assert len(keys) == len(set(keys)), 'Duplicate template variables'
+assert not (set(required) - set(keys)), 'Missing contract variables'
+print(f'OK: {len(required)} contract variables present; no duplicate template keys')
+PY
+# Переглянути URL consumers без розкриття секретів: endpoints мають бути env-required.
+rg -n 'KOHA_API_URL =|KOHA_OPAC_URL =|DSPACE_API_URL =|DSPACE_UI_URL =' src/config.py
 ```
 
 ### Задача 0.2 — Базова мережа: Traefik + Cloudflare Tunnel + covers-cdn skeleton
@@ -51,8 +64,8 @@ diff <(grep -oE '^\s*[A-Z_]+=' .env.example | tr -d ' =') <(sort -u required_env
 
 **Validation:**
 ```bash
-curl -sI "https://${COVERS_CDN_BASE_URL}/healthz" | head -1        # очікується 200
-curl -sI "http://${COVERS_CDN_BASE_URL}/healthz" | grep -i location # очікується redirect на https
+curl -sI "${COVERS_CDN_BASE_URL}/healthz" | head -1        # очікується 200
+curl -sI "http://${COVERS_CDN_BASE_URL#https://}/healthz" | grep -i location # очікується redirect на https
 # Перевірка, що прямий доступ до origin IP не проходить (якщо є публічний IP для тесту)
 ```
 
@@ -88,7 +101,7 @@ misc/migration_tools/bulkmarcimport.pl -file test_record.mrc -match 001 -test -v
 
 ### Задача 1.2 — Sysprefs для CustomCoverImages
 
-**Опис:** Налаштувати `CustomCoverImages = Show`, `OPACCustomCoverImages = Show`, `CustomCoverImagesURL = https://${COVERS_CDN_BASE_URL}/{956$c}.webp` (розділ 15).
+**Опис:** Налаштувати `CustomCoverImages = Show`, `OPACCustomCoverImages = Show`, `CustomCoverImagesURL = ${COVERS_CDN_BASE_URL}/{956$c}.webp` (розділ 15).
 
 **Acceptance criteria:**
 - Обидва системні preference активні.
@@ -101,7 +114,7 @@ koha-mysql <instance> -e \
   "SELECT variable, value FROM systempreferences
    WHERE variable IN ('CustomCoverImages','OPACCustomCoverImages','CustomCoverImagesURL');"
 
-curl -s "https://${KOHA_OPAC_BASE_URL}/cgi-bin/koha/opac-detail.pl?biblionumber=<test_id>" \
+curl -s "${KOHA_OPAC_URL}/cgi-bin/koha/opac-detail.pl?biblionumber=<test_id>" \
   | grep -o "${COVERS_CDN_BASE_URL}/[a-f0-9]\+\.webp"
 ```
 
@@ -330,8 +343,8 @@ sqlite3 state.db "SELECT status, COUNT(*) FROM records GROUP BY status;"  # ін
 
 **Validation:**
 ```bash
-curl -sI "https://${COVERS_CDN_BASE_URL}/<sha>.webp" | grep -i cache-control
-curl -s -X PUT "https://${COVERS_CDN_BASE_URL}/<sha>.webp" -o /dev/null -w "%{http_code}\n"  # очікується 403/405
+curl -sI "${COVERS_CDN_BASE_URL}/<sha>.webp" | grep -i cache-control
+curl -s -X PUT "${COVERS_CDN_BASE_URL}/<sha>.webp" -o /dev/null -w "%{http_code}\n"  # очікується 403/405
 ```
 
 ---
@@ -385,7 +398,7 @@ curl -s "https://${DSPACE_BASE_URL}/server/api/core/bitstreams/<old_bitstream_uu
 
 **Validation:**
 ```bash
-curl -s "https://${KOHA_OPAC_BASE_URL}/cgi-bin/koha/opac-search.pl?q=control-number:<uuid>" \
+curl -s "${KOHA_OPAC_URL}/cgi-bin/koha/opac-search.pl?q=control-number:<uuid>" \
   | grep -c "opac-detail.pl?biblionumber="   # очікується 1
 ```
 
@@ -427,7 +440,7 @@ ls /data/koha-covers/assets/<shared_sha>.webp
 ```bash
 ./scripts/manual_cover_override.sh <sha> new_cover.webp --operator "ivan" --reason "wrong scan uploaded"
 ls /data/koha-covers/assets/<sha>.webp.bak.*        # backup створено
-curl -s "https://${COVERS_CDN_BASE_URL}/<sha>.webp" | sha256sum                # має збігатись з новим файлом
+curl -s "${COVERS_CDN_BASE_URL}/<sha>.webp" | sha256sum                # має збігатись з новим файлом
 grep "<sha>" overrides.log | tail -1                                          # запис у лозі override
 ```
 
@@ -443,7 +456,7 @@ grep "<sha>" overrides.log | tail -1                                          # 
 ```bash
 python -m integrator.rollback --record test-uid-1 --to-run <run_id>
 sqlite3 state.db "SELECT cover_asset_sha256 FROM records WHERE record_uid='test-uid-1';"
-curl -sI "https://${COVERS_CDN_BASE_URL}/$(sqlite3 state.db "SELECT cover_asset_sha256 FROM records WHERE record_uid='test-uid-1';").webp" | head -1
+curl -sI "${COVERS_CDN_BASE_URL}/$(sqlite3 state.db "SELECT cover_asset_sha256 FROM records WHERE record_uid='test-uid-1';").webp" | head -1
 ```
 
 ---

@@ -84,6 +84,12 @@ No canonical repository tree is defined by the supplied sources. Do not invent o
 
 Referenced/expected artifacts include `.env.example` (or equivalent), env-variable validation, an `integrator` module/CLI namespace in examples, tests/fixtures, deployment configs, and admin scripts/runbooks.
 
+Task 0.1 now defines the repository-specific contract in `environment.md` and
+placeholder values in `.env.example`. Reuse `KOHA_API_URL` / `KOHA_OPAC_URL` for the
+conceptual staff / OPAC base URLs. `COVERS_CDN_BASE_URL` is a full HTTPS URL.
+New cover settings are not yet wired into runtime; service-account folder access
+still requires environment verification before Task 0.1 is fully accepted.
+
 Runtime storage is not repository structure:
 - `/data/koha-covers/assets/` — published assets;
 - `/data/koha-covers/.incoming/` — temporary publish area;
@@ -93,6 +99,7 @@ Runtime storage is not repository structure:
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.
+- `environment.md` — repository-specific environment contract and existing secret delivery; distinguishes configuration preparation from external acceptance.
 - `SPEC.md`, `ROADMAP.md`, ADRs — when present, detailed source documents; they override this summary.
 
 Do not reread all documents by default. Open the relevant source section when changing an invariant, external contract, failure behavior, deployment behavior, or acceptance criterion.
@@ -141,4 +148,4 @@ Record architecture-affecting choices in the proper source document/ADR, not onl
 
 ## Last Updated
 
-2026-09-27
+2026-09-29

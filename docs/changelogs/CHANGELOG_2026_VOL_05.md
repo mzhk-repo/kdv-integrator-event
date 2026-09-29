@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-29 — External Cover Integrator environment contract (Task 0.1)
+
+- **Context:** The external cover implementation plan needed a repository-specific environment and secret delivery contract before adding CDN/storage/state components. Conceptual Koha variable names differed from existing runtime settings, and CDN examples treated a base URL as a bare hostname.
+- **Change:** Added six placeholder cover settings to `.env.example` for the full HTTPS CDN base URL, host/container cover storage, host/container state storage and record retry limit. Added `docs/external-cover-integrator/environment.md` documenting 29 new/reused parameters, existing SOPS/Vault-to-Docker-Secret delivery, component access boundaries and the legacy URL-to-SHA transition in `956$c`. Updated the concept, AI context and implementation plan with consistent URL examples, executable template validation and the outstanding service-account acceptance criterion.
+- **Verification:** `bash -n .env.example` passed. Standard-library checks confirmed all 29 documented parameters exist, template keys are unique, new path placeholders are absolute, the CDN URL is HTTPS and the retry limit is positive. The validation embedded in Task 0.1 ran successfully; local contract links resolved; `src/config.py` inspection confirmed required Koha/DSpace endpoint settings without hostname defaults. `git diff --check` passed.
+- **Risks:** These settings are configuration preparation; later phases must implement consumers, mounts and runtime validation. Service-account existence and folder-only access are not verified in an environment, so Task 0.1 is not marked fully accepted. Encrypted env files and deployed services were not changed.
+- **Rollback:** Remove the cover placeholder block and environment contract, and revert the related concept/context/plan documentation changes. No runtime or infrastructure rollback is required.
+
 ## 2026-09-24 — Detect optimizer volume ownership drift
 
 - **Context:** Two 109.47 MiB PDF jobs with 200 and 100 DPI reached Ghostscript but returned `missing_output`. Live diagnostics showed optimizer UID/GID `10001:10001`, while the existing shared volume and its `input`/`output` directories were `1000:1000` with mode `755`; `/ready` returned 503 while `/health` returned 200. The pre-existing volume masked the image-layer ownership set in the Dockerfile.
