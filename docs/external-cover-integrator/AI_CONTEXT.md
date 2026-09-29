@@ -88,8 +88,11 @@ Task 0.1 now defines the repository-specific contract in `environment.md` and
 placeholder values in `.env.example`. Reuse `KOHA_API_URL` / `KOHA_OPAC_URL` for the
 conceptual staff / OPAC base URLs. `COVERS_CDN_BASE_URL` is a full HTTPS URL.
 The host storage settings are consumed by `scripts/init-volume.sh` before Swarm
-deploy; API consumers and Compose mounts remain future work. Service-account
-folder access still requires environment verification before Task 0.1 is fully accepted.
+deploy. Task 0.2 adds a non-root, read-only `covers-cdn` on the existing proxy
+network, pinned to the local storage node. Routing hostname and versioned nginx
+config name are derived by the orchestrator. API cover/state consumers remain
+future work. On 2026-09-29 the user confirmed folder-only service-account access;
+public CDN HTTPS, redirect and origin isolation await the user's deployment.
 
 Runtime storage is not repository structure:
 - `/data/koha-covers/assets/` — published assets;
@@ -101,6 +104,7 @@ Runtime storage is not repository structure:
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.
 - `environment.md` — repository-specific environment contract and existing secret delivery; distinguishes configuration preparation from external acceptance.
+- `runbook.md` — CDN deployment prerequisites, Cloudflare routing and external acceptance; records preparation evidence without claiming deployment.
 - `SPEC.md`, `ROADMAP.md`, ADRs — when present, detailed source documents; they override this summary.
 
 Do not reread all documents by default. Open the relevant source section when changing an invariant, external contract, failure behavior, deployment behavior, or acceptance criterion.
@@ -137,7 +141,7 @@ Do not reread all documents by default. Open the relevant source section when ch
 
 Intentionally unspecified/deployment-specific; do not guess silently:
 - canonical repository/package layout;
-- secret delivery mechanism (`.env`, Docker secrets, vault, etc.);
+- deployment-specific secret values and external Cloudflare settings (repository secret delivery is defined in `environment.md`);
 - concrete URLs, retry limit, retention values, paths, and credentials;
 - whether/when hash-sharded asset directories are needed;
 - exact PDF optimization tooling/policy;

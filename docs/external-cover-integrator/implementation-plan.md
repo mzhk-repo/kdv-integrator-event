@@ -26,7 +26,7 @@
 
 **Опис:** Визначити повний список env-змінних (`KOHA_OPAC_BASE_URL`, `KOHA_STAFF_BASE_URL`, `COVERS_CDN_BASE_URL`, `MAX_RETRY_COUNT`, шлях до Google service-account credentials, Koha/DSpace API endpoints та credentials) і механізм їх постачання в кожен сервіс (Docker secrets / `.env` / vault — на розсуд деплойменту).
 
-**Стан на 2026-09-29:** контракт і заглушки підготовлено в [environment.md](environment.md) та `.env.example`. Концептуальні `KOHA_OPAC_BASE_URL`/`KOHA_STAFF_BASE_URL` відповідають наявним `KOHA_OPAC_URL`/`KOHA_API_URL`; дублікати не вводяться. `COVERS_CDN_BASE_URL` — повний HTTPS URL без кінцевого `/`. Нові cover-параметри підключаються у наступних фазах. Для повного приймання 0.1 ще потрібне підтвердження існування service account і доступу лише до цільової Drive-папки у визначеному середовищі.
+**Стан на 2026-09-29:** конфігураційний контракт і заглушки підготовлено та перевірено в [environment.md](environment.md) і `.env.example`. Користувач підтвердив, що наявний service account має доступ лише до цільової Drive-папки; це підтвердження користувача, а не результат нового API-запиту агента. Концептуальні `KOHA_OPAC_BASE_URL`/`KOHA_STAFF_BASE_URL` відповідають наявним `KOHA_OPAC_URL`/`KOHA_API_URL`; дублікати не вводяться. `COVERS_CDN_BASE_URL` — повний HTTPS origin без кінцевого `/`. Репозиторна частина 0.1 завершена; host-шляхи використовуються у pre-deploy, інші споживачі підключаються у відповідних фазах.
 
 **Acceptance criteria:**
 - Існує єдиний документ/файл з переліком усіх env-змінних, їх призначенням і дефолтами (де застосовно).
@@ -56,6 +56,8 @@ rg -n 'KOHA_API_URL =|KOHA_OPAC_URL =|DSPACE_API_URL =|DSPACE_UI_URL =' src/conf
 ### Задача 0.2 — Базова мережа: Traefik + Cloudflare Tunnel + covers-cdn skeleton
 
 **Опис:** Підняти nginx (read-only, поки без реального контенту), проксі через Traefik, публічний доступ через Cloudflare Tunnel на `${COVERS_CDN_BASE_URL}`.
+
+**Стан на 2026-09-29:** підготовлено Compose/Swarm service `covers-cdn`, nginx-конфігурацію та orchestrator wiring. Nginx працює без root, з read-only assets і filesystem, без host-портів та secrets. Hostname виводиться з `COVERS_CDN_BASE_URL`; service закріплений за локальним вузлом підготовки storage. Compose validation, цільові тести, `nginx -t` та ізольована HTTP-перевірка пройшли. За вказівкою користувача деплой виконує він сам. Публічний HTTPS, Cloudflare routing/redirect і недоступність origin ще потребують перевірки після деплою; 0.2 та Фаза 0 повністю не закриті. Процедура: [runbook.md](runbook.md).
 
 **Acceptance criteria:**
 - Тестовий файл (`/healthz` або аналог) доступний ззовні по HTTPS через `${COVERS_CDN_BASE_URL}`.

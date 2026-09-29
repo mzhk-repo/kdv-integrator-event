@@ -6,9 +6,10 @@ are placeholders. Deployment values belong in `env.dev.enc` or `env.prod.enc`.
 
 ## Variables
 
-The cover host paths are now consumed by the pre-deploy `scripts/init-volume.sh`.
-Other new cover variables are a contract for subsequent implementation phases;
-they are not yet consumed by the API or mounted by Compose. Required values have
+The cover host paths are consumed by the pre-deploy `scripts/init-volume.sh`.
+The CDN URL/image and assets host path are used by the orchestrator and
+Compose/Swarm CDN service. State DB and Integrator cover pipeline settings remain
+a contract for subsequent phases. Required values have
 no implicit fallback to an installation-specific domain or host.
 
 | Variable | Purpose and constraints | Default / delivery |
@@ -22,7 +23,8 @@ no implicit fallback to an installation-specific domain or host.
 | `DSPACE_API_USER` | Existing DSpace integration account. | Required; runtime payload |
 | `DSPACE_API_PASS` | Existing DSpace integration account password. | Required secret; runtime payload |
 | `DSPACE_SUBMISSION_SECTION` | Existing submission section used by the DSpace client. | `traditionalpageone`; runtime payload |
-| `COVERS_CDN_BASE_URL` | Full public HTTPS base URL, without a trailing slash, query or fragment. Asset URL: `${COVERS_CDN_BASE_URL}/{956$c}.webp`. | Required in cover deployment; runtime payload and deployment config |
+| `COVERS_CDN_BASE_URL` | Full public HTTPS origin: hostname only after `https://`, without credentials, port, path, whitespace, query or fragment. Asset URL: `${COVERS_CDN_BASE_URL}/{956$c}.webp`. | Required in cover deployment; runtime payload and deployment config |
+| `COVERS_CDN_IMAGE` | Official nginx Alpine image used by the static CDN. Set a tested tag/digest for reproducible deployment. | `nginx:alpine`; deployment config |
 | `COVERS_STORAGE_HOST_PATH` | Absolute host bind source for the cover storage root. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
 | `COVERS_STORAGE_PATH` | Absolute Integrator container storage root; contains `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. | Required in cover deployment; runtime payload and deployment config |
 | `COVER_STATE_HOST_PATH` | Absolute host bind source for durable cover state; separate from Koha Export state. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
@@ -49,6 +51,15 @@ optimizer and Koha Export variables retain their existing `.env.example` contrac
 Storage paths and retry values are deployment choices; the example does not create
 directories or grant permissions.
 
+`COVERS_CDN_HOST`, `COVERS_SWARM_NODE_ID` and `COVERS_NGINX_CONFIG_NAME` are derived Compose inputs, not new
+user-managed dotenv settings. The orchestrator validates the configured HTTPS
+origin and extracts its hostname for the Traefik router. It obtains the local
+Swarm node ID from Docker and pins the CDN there so the host assets exist on the
+selected node. nginx configuration is delivered as a Docker Config named using
+its SHA-256 prefix; a configuration change therefore updates the service instead
+of leaving an unchanged bind mount with stale loaded configuration. Direct Compose validation
+requires these derived inputs explicitly; normal deployment computes them.
+
 `scripts/deploy-orchestrator-swarm.sh` passes both host paths from the process
 environment (preferred) or `ORCHESTRATOR_ENV_FILE` into `scripts/init-volume.sh`
 before secret rendering, image builds and stack deployment. Missing paths stop
@@ -64,8 +75,9 @@ Host paths must be absolute, below a top-level directory, disjoint and free of
 symlinks, including existing ancestor directories and managed cover children.
 The deployment account needs permission to create directories and adjust their
 modes. The script does not elevate privileges and fails if these permissions are
-unavailable. It prepares only this node's host paths; Swarm placement must target
-the prepared node, or every eligible node must be initialized separately.
+unavailable. It prepares only this node's host paths; the CDN is pinned to that
+node. Future Integrator/state mounts need matching placement or storage prepared
+on every eligible node.
 
 ## Secret delivery and component access
 
@@ -86,6 +98,12 @@ Google secret, state DB or `.incoming` directory. Traefik and Cloudflare Tunnel
 reuse their existing deployment configuration; tunnel credentials do not belong
 in this contract or the public template.
 
+The CDN runs as the image's `nginx` user on internal port 8080, with a read-only
+root filesystem, dropped capabilities and a writable `/tmp` tmpfs. No host ports
+are published. The existing Tunnel routes the public hostname to Traefik's
+internal HTTP entrypoint; public TLS and HTTP redirects are handled at Cloudflare.
+See [runbook.md](runbook.md) for the required external setup and acceptance checks.
+
 ## Validation and external acceptance
 
 Repository validation for Task 0.1 checks that every variable in the table exists
@@ -103,6 +121,10 @@ access elsewhere. Read-only OAuth scopes do not themselves restrict access to on
 folder. Record only a secret-free result and the selected environment; never paste
 JSON keys or tokens into evidence. Account creation or permission changes require
 separate authorization. Repository placeholders do not prove this criterion.
+
+On 2026-09-29 the user confirmed that the existing service account has access only
+to the target Drive folder. This records user-provided acceptance evidence;
+the agent did not perform a new Google API or permission audit.
 
 ## Transition compatibility
 

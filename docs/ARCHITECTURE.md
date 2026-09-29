@@ -42,6 +42,18 @@ graph TD
     end
 
 
+### External cover CDN skeleton (Task 0.2)
+
+`covers-cdn` joins the existing Swarm proxy network: Cloudflare Tunnel -> Traefik
+`web` entrypoint -> non-root nginx on internal port 8080. It publishes no host
+ports and receives only the read-only `assets/` directory and a versioned Docker
+Config. The orchestrator derives the router hostname from `COVERS_CDN_BASE_URL`
+and pins the service to the node where host storage was initialized. Public TLS,
+hostname routing and HTTPS redirects belong to the existing Cloudflare setup.
+The static service exposes `/healthz` and content-addressed WebP files; migration
+and Integrator writer/state changes remain later phases. Deployment and external
+acceptance are documented in [the CDN runbook](external-cover-integrator/runbook.md).
+
 ⚡ Деталі Реалізації (M2-M7)
 
 ### 1. Асинхронність (Async Core) + DI

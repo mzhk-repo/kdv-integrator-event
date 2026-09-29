@@ -6,6 +6,7 @@
 - Головний orchestration-скрипт для `ORCHESTRATOR_MODE=swarm`.
 - Виконує pre-deploy перевірки: `healthcheck.sh` і `import src.config`.
 - Runs `scripts/init-volume.sh` with the two required cover host paths before secret rendering and image builds; initialization failure stops deployment.
+- Validates `COVERS_CDN_BASE_URL`, derives its Traefik hostname, pins `covers-cdn` to the local storage node and versions its Docker Config by content hash. Verifies CDN replicas after deployment; public TLS/redirect/origin acceptance follows [the CDN runbook](external-cover-integrator/runbook.md).
 - Викликає `scripts/render-versioned-env-secret.sh` перед render manifest, щоб Swarm service отримував versioned runtime env secret з актуального `ORCHESTRATOR_ENV_FILE`.
 - Перед оновленням стека ідемпотентно виправляє owner каталогів shared optimizer volume на `10001:10001` через локальний Swarm task; якщо чинний task відсутній на вузлі запуску, зупиняє deploy.
 - Рендерить swarm manifest через `docker compose config` і виконує `docker stack deploy`.

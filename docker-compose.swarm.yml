@@ -75,6 +75,24 @@ services:
           cpus: "0.5"
           memory: 512M
 
+  covers-cdn:
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.kdv-covers.rule=Host(`${COVERS_CDN_HOST:?Use the orchestrator to derive COVERS_CDN_HOST}`)"
+        - "traefik.http.routers.kdv-covers.entrypoints=web"
+        - "traefik.http.services.kdv-covers.loadbalancer.server.port=8080"
+        - "traefik.swarm.network=${EXTERNAL_NETWORK}"
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.id == ${COVERS_SWARM_NODE_ID:?Use the orchestrator to select the storage node}
+
 volumes:
   kdv-drive:
     driver: rclone

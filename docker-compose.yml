@@ -82,6 +82,37 @@ services:
           cpus: "0.5"
           memory: 512M
 
+  covers-cdn:
+    image: ${COVERS_CDN_IMAGE:-nginx:alpine}
+    user: nginx
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;"]
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - type: bind
+        source: ${COVERS_STORAGE_HOST_PATH:?COVERS_STORAGE_HOST_PATH is required}/assets
+        target: /usr/share/nginx/html
+        read_only: true
+    configs:
+      - source: covers_nginx
+        target: /etc/nginx/nginx.conf
+    networks:
+      - proxy-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--timeout=2", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+configs:
+  covers_nginx:
+    file: ./config/covers-cdn/nginx.conf
+    name: ${COVERS_NGINX_CONFIG_NAME:-covers_nginx}
+
 networks:
   proxy-net:
     external: true

@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-29 — External cover CDN skeleton (Task 0.2)
+
+- **Context:** External covers require a static read-only origin behind the existing Traefik/Cloudflare Tunnel path. The user confirmed folder-only access for the existing Google service account and requested preparation only, with deployment performed by the user.
+- **Change:** Added `covers-cdn` using the official nginx Alpine image as a non-root user with a read-only filesystem, dropped capabilities, private port 8080 and read-only assets mount. nginx exposes `/healthz` and SHA-256-named WebP files, applies immutable caching to successful asset responses, blocks writes and rejects other/symlink paths. The orchestrator validates the full HTTPS origin, derives the Traefik hostname, pins the CDN to the local storage node, versions its Docker Config by SHA prefix and verifies CDN replicas. Added the image placeholder, configuration tests and CDN runbook; updated environment/architecture/context/plan documentation with user-confirmed Task 0.1 evidence and pending external Task 0.2 acceptance.
+- **Verification:** `.venv/bin/python -m pytest -q tests/test_covers_cdn.py tests/test_init_volume.py` — 30 passed. Compose rendering and `docker stack config` validation passed after the orchestrator's existing CPU-string conversion. Bash syntax, ShellCheck and `git diff --check` passed. `nginx -t` and isolated HTTP smoke passed with the official image digest recorded in the runbook: GET/HEAD health, healthcheck, exact asset bytes, WebP/cache headers, method rejection, hidden/symlink rejection and read-only storage. The container had no external network or host ports; no stack or Cloudflare settings were changed.
+- **Risks:** Public hostname/DNS routing, Cloudflare TLS/HTTPS redirect, public read access and origin isolation require setup/verification after the user's deployment. Task 0.2 and Phase 0 remain open until that evidence exists. The CDN is node-local; its pinned storage node must stay schedulable. The example image tag is mutable; deployment can pin a tested tag/digest.
+- **Rollback:** Revert the CDN service/config and orchestrator wiring and use the existing deployment procedure. Preserve assets/state; any Cloudflare hostname removal is a separate authorized change. Koha fields and the current legacy cover writer are unchanged.
+
 ## 2026-09-29 — Initialize cover host storage before Swarm deployment
 
 - **Context:** Future cover and SQLite state bind mounts need their host directories prepared consistently before deployment.

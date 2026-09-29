@@ -164,6 +164,39 @@ run_deploy_adjacent_scripts() {
     bash "${SCRIPT_DIR}/init-volume.sh"
 }
 
+configure_covers_cdn() {
+  local base_url
+  base_url="${COVERS_CDN_BASE_URL:-$(read_env_value COVERS_CDN_BASE_URL)}"
+  COVERS_CDN_HOST="$(python3 - "${base_url}" <<'PY'
+import re
+import sys
+from urllib.parse import urlsplit
+
+try:
+    assert not any(char.isspace() for char in sys.argv[1])
+    url = urlsplit(sys.argv[1])
+    host = url.hostname or ""
+    assert url.scheme == "https" and url.netloc.lower() == host
+    assert not url.path and not url.query and not url.fragment
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host)
+    assert ".." not in host
+except (ValueError, AssertionError):
+    sys.exit("COVERS_CDN_BASE_URL must be a full HTTPS origin without credentials, port, path, query or fragment")
+print(host)
+PY
+  )"
+  COVERS_SWARM_NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
+  if [[ ! "${COVERS_SWARM_NODE_ID}" =~ ^[a-z0-9]+$ ]]; then
+    log "ERROR: cannot determine the local Swarm node for cover storage"
+    return 1
+  fi
+  # Export the exact same host paths used by init-volume, including overrides.
+  export COVERS_STORAGE_HOST_PATH="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
+  export COVER_STATE_HOST_PATH="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
+  COVERS_NGINX_CONFIG_NAME="${STACK_NAME}_covers_nginx_$(sha256sum "${SCRIPT_DIR}/../config/covers-cdn/nginx.conf" | cut -c1-12)"
+  export COVERS_CDN_HOST COVERS_SWARM_NODE_ID COVERS_NGINX_CONFIG_NAME
+}
+
 run_ansible_secrets_if_configured() {
   local infra_repo_path environment inventory_env inventory_path playbook_path
 
@@ -401,6 +434,7 @@ deploy_swarm() {
   fi
 
   load_orchestrator_settings
+  configure_covers_cdn
   run_ansible_secrets_if_configured
   run_validation_scripts
   run_deploy_adjacent_scripts
@@ -430,6 +464,7 @@ deploy_swarm() {
 
   verify_swarm_service "${SWARM_SERVICE_NAME}"
   verify_swarm_service "${STACK_NAME}_kdv-optimizer"
+  verify_swarm_service "${STACK_NAME}_covers-cdn"
 
   log "Swarm deploy completed"
 }
