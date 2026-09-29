@@ -5,6 +5,7 @@
 ### Бізнес-логіка
 - Головний orchestration-скрипт для `ORCHESTRATOR_MODE=swarm`.
 - Виконує pre-deploy перевірки: `healthcheck.sh` і `import src.config`.
+- Runs `scripts/init-volume.sh` with the two required cover host paths before secret rendering and image builds; initialization failure stops deployment.
 - Викликає `scripts/render-versioned-env-secret.sh` перед render manifest, щоб Swarm service отримував versioned runtime env secret з актуального `ORCHESTRATOR_ENV_FILE`.
 - Перед оновленням стека ідемпотентно виправляє owner каталогів shared optimizer volume на `10001:10001` через локальний Swarm task; якщо чинний task відсутній на вузлі запуску, зупиняє deploy.
 - Рендерить swarm manifest через `docker compose config` і виконує `docker stack deploy`.
@@ -18,6 +19,32 @@ ORCHESTRATOR_MODE=swarm ENVIRONMENT_NAME=development ORCHESTRATOR_ENV_FILE="${EN
 echo $?
 rm -f "${ENV_TMP}"
 ```
+
+## `scripts/init-volume.sh` (host storage preparation)
+
+Creates `COVERS_STORAGE_HOST_PATH`, its `assets/` and `.incoming/` directories,
+and `COVER_STATE_HOST_PATH`. Repeated runs repair directory modes without changing
+existing ownership or stored files: cover root and `assets/` use `0755`;
+`.incoming/` and state use `0700`. New directories belong to the caller. The current
+Integrator runs as container root; nginx will receive only `assets/`, read-only.
+
+Both paths are required, absolute, disjoint and below a top-level directory.
+Symlinks in the paths and managed children are rejected. The deployment account
+must be able to create directories and change their modes. No privilege escalation
+is performed. The orchestrator reads these values from its environment or selected
+dotenv file without sourcing that file.
+
+For an explicitly selected test environment, pass its actual storage paths:
+
+```bash
+COVERS_STORAGE_HOST_PATH=/tmp/kdv-cover-smoke/covers \
+COVER_STATE_HOST_PATH=/tmp/kdv-cover-smoke/state \
+  bash scripts/init-volume.sh
+```
+
+Initialization affects only the node running the script. Initialize every eligible
+Swarm node or constrain future cover/state services to the prepared node. This
+script prepares storage; Compose mounts and the CDN are implemented separately.
 
 ## `scripts/render-versioned-env-secret.sh` (deploy-adjacent, reusable)
 

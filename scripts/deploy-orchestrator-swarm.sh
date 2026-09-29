@@ -155,7 +155,13 @@ run_python_config_validation() {
 }
 
 run_deploy_adjacent_scripts() {
-  log "No deploy-adjacent scripts configured for this repository; skipping Category 1b phase"
+  local covers_path state_path
+  covers_path="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
+  state_path="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
+
+  log "Initializing cover storage and state directories on the deployment host"
+  COVERS_STORAGE_HOST_PATH="${covers_path}" COVER_STATE_HOST_PATH="${state_path}" \
+    bash "${SCRIPT_DIR}/init-volume.sh"
 }
 
 run_ansible_secrets_if_configured() {

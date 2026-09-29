@@ -6,8 +6,9 @@ are placeholders. Deployment values belong in `env.dev.enc` or `env.prod.enc`.
 
 ## Variables
 
-The new cover variables are a contract for subsequent implementation phases.
-They are not yet consumed by the API or mounted by Compose. Required values have
+The cover host paths are now consumed by the pre-deploy `scripts/init-volume.sh`.
+Other new cover variables are a contract for subsequent implementation phases;
+they are not yet consumed by the API or mounted by Compose. Required values have
 no implicit fallback to an installation-specific domain or host.
 
 | Variable | Purpose and constraints | Default / delivery |
@@ -22,9 +23,9 @@ no implicit fallback to an installation-specific domain or host.
 | `DSPACE_API_PASS` | Existing DSpace integration account password. | Required secret; runtime payload |
 | `DSPACE_SUBMISSION_SECTION` | Existing submission section used by the DSpace client. | `traditionalpageone`; runtime payload |
 | `COVERS_CDN_BASE_URL` | Full public HTTPS base URL, without a trailing slash, query or fragment. Asset URL: `${COVERS_CDN_BASE_URL}/{956$c}.webp`. | Required in cover deployment; runtime payload and deployment config |
-| `COVERS_STORAGE_HOST_PATH` | Absolute host bind source for the cover storage root. | Required in Phase 0.2; deployment config |
+| `COVERS_STORAGE_HOST_PATH` | Absolute host bind source for the cover storage root. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
 | `COVERS_STORAGE_PATH` | Absolute Integrator container storage root; contains `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. | Required in cover deployment; runtime payload and deployment config |
-| `COVER_STATE_HOST_PATH` | Absolute host bind source for durable cover state; separate from Koha Export state. | Required when implementing Phase 2; deployment config |
+| `COVER_STATE_HOST_PATH` | Absolute host bind source for durable cover state; separate from Koha Export state. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
 | `COVER_STATE_DB_PATH` | Absolute container path to the SQLite DB inside the durable state mount. Its directory must support DB, WAL and SHM files. | Required when implementing Phase 2; runtime payload |
 | `MAX_RETRY_COUNT` | Positive integer limiting failed record cycles. Independent of the export module's `MAX_RETRIES`. | Required when implementing Phase 2; template example `5`, not an implicit runtime default |
 | `INTEGRATOR_MOUNT_PATH` | Existing root for supported relative local sources; absolute source paths and traversal remain forbidden. | `/mnt/drive`; runtime payload / existing Swarm mount |
@@ -47,6 +48,24 @@ introduce duplicate settings with competing values. General API authentication,
 optimizer and Koha Export variables retain their existing `.env.example` contract.
 Storage paths and retry values are deployment choices; the example does not create
 directories or grant permissions.
+
+`scripts/deploy-orchestrator-swarm.sh` passes both host paths from the process
+environment (preferred) or `ORCHESTRATOR_ENV_FILE` into `scripts/init-volume.sh`
+before secret rendering, image builds and stack deployment. Missing paths stop
+deployment. The script creates or repairs only the storage directories:
+cover root and `assets/` use `0755`, `.incoming/` and the state root use `0700`.
+Existing ownership and stored files are preserved; new directories belong to the
+deployment account. This supports the current root Integrator and read-only nginx
+asset access. Asset files must also be published with readable permissions by the
+future cover pipeline. A future non-root Integrator needs an explicit ownership
+migration before changing its runtime UID/GID.
+
+Host paths must be absolute, below a top-level directory, disjoint and free of
+symlinks, including existing ancestor directories and managed cover children.
+The deployment account needs permission to create directories and adjust their
+modes. The script does not elevate privileges and fails if these permissions are
+unavailable. It prepares only this node's host paths; Swarm placement must target
+the prepared node, or every eligible node must be initialized separately.
 
 ## Secret delivery and component access
 

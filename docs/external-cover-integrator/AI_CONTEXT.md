@@ -87,8 +87,9 @@ Referenced/expected artifacts include `.env.example` (or equivalent), env-variab
 Task 0.1 now defines the repository-specific contract in `environment.md` and
 placeholder values in `.env.example`. Reuse `KOHA_API_URL` / `KOHA_OPAC_URL` for the
 conceptual staff / OPAC base URLs. `COVERS_CDN_BASE_URL` is a full HTTPS URL.
-New cover settings are not yet wired into runtime; service-account folder access
-still requires environment verification before Task 0.1 is fully accepted.
+The host storage settings are consumed by `scripts/init-volume.sh` before Swarm
+deploy; API consumers and Compose mounts remain future work. Service-account
+folder access still requires environment verification before Task 0.1 is fully accepted.
 
 Runtime storage is not repository structure:
 - `/data/koha-covers/assets/` — published assets;

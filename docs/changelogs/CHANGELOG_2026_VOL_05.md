@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-29 — Initialize cover host storage before Swarm deployment
+
+- **Context:** Future cover and SQLite state bind mounts need their host directories prepared consistently before deployment.
+- **Change:** Added `scripts/init-volume.sh` and called it from the orchestrator's existing deploy-adjacent phase before secret rendering and image builds. Both host paths are required and read from environment overrides or the selected dotenv file without sourcing it. The script creates or repairs cover root/assets modes to `0755` and incoming/state modes to `0700`, preserves existing ownership and files, and rejects missing, relative, top-level, overlapping, non-directory and symlink paths. Updated the environment template, contract, AI context and script runbook.
+- **Verification:** `.venv/bin/python -m pytest -q tests/test_init_volume.py` — 15 passed, covering repeated initialization, mode repair, file/ownership preservation, path guards and orchestrator dotenv/override behavior. `bash -n scripts/init-volume.sh scripts/deploy-orchestrator-swarm.sh .env.example`, ShellCheck for both scripts and `git diff --check` passed. Filesystem tests used temporary directories; no live storage or Swarm deployment was changed.
+- **Risks:** The deployment account needs creation/chmod permissions; initialization fails without them. Existing encrypted environments must define both host paths before their next Swarm deployment. Directory permissions support the current root Integrator; switching to a non-root writer requires an ownership migration. Host storage is node-local; prepare all eligible nodes or constrain service placement.
+- **Rollback:** Remove the init script call and associated script/tests/documentation. Created directories and their contents are preserved; revert directory modes manually only after assessing running services.
+
 ## 2026-09-29 — External Cover Integrator environment contract (Task 0.1)
 
 - **Context:** The external cover implementation plan needed a repository-specific environment and secret delivery contract before adding CDN/storage/state components. Conceptual Koha variable names differed from existing runtime settings, and CDN examples treated a base URL as a bare hostname.
