@@ -61,6 +61,8 @@ rg -n 'KOHA_API_URL =|KOHA_OPAC_URL =|DSPACE_API_URL =|DSPACE_UI_URL =' src/conf
 
 **Виправлення першого деплою:** фактичний Swarm service не отримав короткий `tmpfs` mount, тому nginx завершувався через read-only `/tmp`. Підготовлено `volumes: type: tmpfs` і нормалізацію його розміру для Stack schema; 31 тест та ізольований запуск з mount-based tmpfs пройшли. Потрібен повторний деплой користувачем і підтвердження `/tmp` у фактичному service spec.
 
+**Перевірка після повторного деплою:** підтверджено healthy nginx, `/tmp` tmpfs та `200 ok` на публічному HTTPS `/healthz` і через внутрішній Traefik із CDN Host header. `404` на `/` — очікувана відповідь nginx. HTTP `/healthz` повертає `200` без redirect: потрібне hostname-scoped правило HTTPS redirect у Cloudflare. Повне приймання ще очікує redirect та зовнішню перевірку origin isolation.
+
 **Acceptance criteria:**
 - Тестовий файл (`/healthz` або аналог) доступний ззовні по HTTPS через `${COVERS_CDN_BASE_URL}`.
 - Origin-сервер недоступний напряму (тільки через тунель).
@@ -82,7 +84,7 @@ curl -sI "http://${COVERS_CDN_BASE_URL#https://}/healthz" | grep -i location # �
 **Deliverables:**
 - Підтверджено: усі активні записи мають `001 = UUIDv7`.
 - Налаштовані sysprefs `CustomCoverImages`/`OPACCustomCoverImages`/`CustomCoverImagesURL`.
-- `MARCOverlayRules` захищають `956`/`856` від затирання під час звичайного MARC-імпорту (окрім самого Integrator).
+- `MARCOverlayRules` захищають `957`/`856` від затирання під час звичайного MARC-імпорту (окрім самого Integrator); джерельне поле `956` лишається каталогізаційним.
 
 ### Задача 1.1 — Валідація `001 = UUIDv7` та matchpoint
 
@@ -105,12 +107,12 @@ misc/migration_tools/bulkmarcimport.pl -file test_record.mrc -match 001 -test -v
 
 ### Задача 1.2 — Sysprefs для CustomCoverImages
 
-**Опис:** Налаштувати `CustomCoverImages = Show`, `OPACCustomCoverImages = Show`, `CustomCoverImagesURL = ${COVERS_CDN_BASE_URL}/{956$c}.webp` (розділ 15).
+**Опис:** Налаштувати `CustomCoverImages = Show`, `OPACCustomCoverImages = Show`, `CustomCoverImagesURL = ${COVERS_CDN_BASE_URL}/{957$c}.webp` (розділ 15).
 
 **Acceptance criteria:**
 - Обидва системні preference активні.
 - URL-шаблон використовує env-змінну, а не хардкоджений домен.
-- Тестовий запис із заповненим `956$c` показує обкладинку в OPAC.
+- Тестовий запис із заповненим `957$c` показує обкладинку в OPAC.
 
 **Validation:**
 ```bash
@@ -124,23 +126,24 @@ curl -s "${KOHA_OPAC_URL}/cgi-bin/koha/opac-detail.pl?biblionumber=<test_id>" \
 
 ### Задача 1.3 — Захист integration-managed полів (MARCOverlayRules)
 
-**Опис:** Налаштувати `MARCOverlayRules` так, щоб звичайний каталогізаторський bulk-імпорт не перезаписував `956`/`856`, керовані Integrator-ом (розділ 26).
+**Опис:** Налаштувати `MARCOverlayRules` так, щоб звичайний каталогізаторський bulk-імпорт не перезаписував `957`/`856`, керовані Integrator-ом (розділ 26). `956` містить джерела та статуси і не захищається як цілісне поле.
 
 **Acceptance criteria:**
-- Bulk-імпорт запису без Integrator-джерела не змінює наявні `956$c`/`856$u`, якщо вони вже виставлені Integrator-ом.
+- Bulk-імпорт запису без Integrator-джерела не змінює наявні `957$c`/`856$u`, якщо вони вже виставлені Integrator-ом.
 - Сам Integrator (окремий процес/user-agent) як і раніше може оновлювати ці поля.
+- До застосування правила значення з legacy `956$c`/`956$3` перенесені й перевірені у `957$c`/`957$3`; масове оновлення MARC є окремою операцією.
 
 **Validation:**
 ```bash
-# До імпорту: зберегти поточні 956/856
+# До імпорту: зберегти поточні 957/856
 koha-mysql <instance> -e "SELECT biblio_metadata.metadata FROM biblio_metadata WHERE biblionumber=<test_id>;" > before.xml
 
 # Виконати bulk-імпорт тестового файлу без Integrator-полів
 misc/migration_tools/bulkmarcimport.pl -file catalog_update.mrc -match 001 -v
 
-# Порівняти 956/856 до і після — мають лишитись незмінними
+# Порівняти 957/856 до і після — мають лишитись незмінними
 koha-mysql <instance> -e "SELECT biblio_metadata.metadata FROM biblio_metadata WHERE biblionumber=<test_id>;" > after.xml
-diff <(grep -A2 'tag="956"' before.xml) <(grep -A2 'tag="956"' after.xml)
+diff <(grep -A2 'tag="957"' before.xml) <(grep -A2 'tag="957"' after.xml)
 ```
 
 ---
@@ -240,12 +243,12 @@ sqlite3 state.db "SELECT status, retry_count FROM records WHERE record_uid='test
 
 ## Фаза 4 — Cover pipeline + Koha write-back
 
-**Мета:** повний цикл: зміна в Drive → WebP → content-addressed asset → `956$c` у Koha.
+**Мета:** повний цикл: зміна в Drive → WebP → content-addressed asset → `957$c` у Koha.
 
 **Deliverables:**
 - Download → normalize → WebP (розділ 9, 10).
 - Atomic publish у content-addressed сховище (розділ 11, 14).
-- Запис `956$c` у Koha через `pending → ok` патерн (розділ 15, 22).
+- Запис `957$c` у Koha через `pending → ok` патерн (розділ 15, 22).
 
 ### Задача 4.1 — Download, normalize, WebP
 
@@ -277,7 +280,7 @@ sha256sum /data/koha-covers/assets/*.webp | sort | uniq -c -w64 | awk '$1>1'   #
 ls /data/koha-covers/assets/ | grep -E '\.tmp$|\.partial$'   # очікується порожньо
 ```
 
-### Задача 4.3 — Koha `956$c` write-back через `pending → ok`
+### Задача 4.3 — Koha `957$c` write-back через `pending → ok`
 
 **Опис:** Перед записом у Koha — `status = pending` у state DB; після підтвердженого успіху REST API — `status = ok` (розділ 15, 22).
 
@@ -423,7 +426,7 @@ curl -s "${KOHA_OPAC_URL}/cgi-bin/koha/opac-search.pl?q=control-number:<uuid>" \
 
 **Acceptance criteria:**
 - N записів з однаковим cover → 1 файл у сховищі.
-- Зміна source одного з них не змінює `956$c` інших.
+- Зміна source одного з них не змінює `957$c` інших.
 
 **Validation:**
 ```bash
@@ -453,7 +456,7 @@ grep "<sha>" overrides.log | tail -1                                          # 
 **Опис:** Rollback запису до попереднього asset SHA через журнал (`record_uid, old_asset_sha, new_asset_sha, changed_at, run_id`) (розділ 29).
 
 **Acceptance criteria:**
-- Rollback повертає `956$c` до попереднього значення.
+- Rollback повертає `957$c` до попереднього значення.
 - Старий asset фізично доступний у сховищі (не видалений GC на момент rollback-тесту).
 
 **Validation:**
@@ -549,13 +552,13 @@ rsync -avn /data/koha-covers/assets/ /backups/assets/ | tail -20   # dry-run dif
 **Мета:** перенести legacy BLOB-обкладинки на новий pipeline (розділ 33).
 
 **Deliverables:**
-- Усі legacy covers мігровані у content-addressed сховище з відповідним `956$c`.
+- Усі legacy covers мігровані у content-addressed сховище з відповідним `957$c`.
 - `LocalCoverImages`/`OPACLocalCoverImages` вимкнені лише після підтвердженої міграції.
 
 ### Задача 11.1 — Скрипт міграції legacy covers
 
 **Acceptance criteria:**
-- Кожен legacy BLOB конвертовано у WebP, опубліковано content-addressed, `956$c` заповнено.
+- Кожен legacy BLOB конвертовано у WebP, опубліковано content-addressed, `957$c` заповнено.
 - Кількість мігрованих записів збігається з кількістю legacy covers "до".
 - Legacy BLOB видаляється з БД лише після цієї перевірки.
 

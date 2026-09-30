@@ -16,8 +16,8 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - Canonical record ID: MARC `001 = UUIDv7`; Koha `biblionumber` is local only.
 - MARC integration fields:
   - `956$p` cover source; `956$u` PDF source;
-  - `956$c` final WebP SHA-256;
-  - `956$3` DSpace Item UUID;
+  - `957$c` final WebP SHA-256;
+  - `957$3` DSpace Item UUID;
   - `856$u` DSpace public/Handle links.
 - Google Drive File ID is the fast dirty-check.
   - unchanged ID + `status=ok` => immediate NO-OP, no checksum/download/downstream writes;
@@ -31,7 +31,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - Emergency overwrite of a shared asset is a documented exception requiring backup, targeted CDN purge, and audit log.
 - DSpace replacement: upload new -> verify -> update Koha links -> delete old -> finalize state.
 - UID -> Koha resolver uses existing Elasticsearch `control-number` search; no separate resolver service.
-- Protect Integrator-managed `956$c`, `956$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
+- Protect Integrator-managed `957$c`, `957$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
 
 ## Architecture Snapshot
 

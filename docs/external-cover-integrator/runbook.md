@@ -153,6 +153,20 @@ docker service logs --tail 20 kdv_integrator_event_covers-cdn
 Use the selected environment's stack name if it differs. Mounts must include a
 writable tmpfs at `/tmp` and a read-only bind at `/usr/share/nginx/html`.
 
+### Post-redeploy routing verification (2026-09-29)
+
+Live read-only checks after the user's redeploy confirmed a running, healthy
+nginx task and the `/tmp` tmpfs mount with a 16 MiB limit. Public HTTPS `/healthz`
+returned `200` with `ok`, using curl's normal certificate verification. The same
+request through internal `http://traefik:80` with the configured CDN Host header
+returned `200`. The root `/` returned nginx's configured `404`, both internally
+and publicly; this is expected and does not indicate a missing Traefik route.
+No Traefik configuration change was needed.
+
+Public HTTP `/healthz` returned `200` without an HTTPS redirect. Configure the
+hostname-scoped Cloudflare redirect and repeat its acceptance check. Full Phase 0
+acceptance remains pending that redirect and external origin-isolation evidence.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use

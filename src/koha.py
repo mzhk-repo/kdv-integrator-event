@@ -101,13 +101,16 @@ class KohaClient:
             return None
 
         field = fields_956[0]
+        fields_957 = record.get_fields("957")
+        managed_field = fields_957[0] if fields_957 else None
         return {
             "file_path": self._get_subfield_safe(field, "u"),
             "cover_path": self._get_subfield_safe(field, "p"),
             "additional_files": self._get_subfield_safe(field, "q"),
             "collection_uuid": self._get_subfield_safe(field, "x"),
             "status": self._get_subfield_safe(field, "y"),
-            "dspace_uuid": self._get_subfield_safe(field, "3"),
+            "dspace_uuid": self._get_subfield_safe(managed_field, "3")
+            or self._get_subfield_safe(field, "3"),
         }
 
     def get_biblio_timestamp(self, biblio_id: int):
@@ -363,19 +366,19 @@ class KohaClient:
             if log_msg:
                 f956.add_subfield("z", str(log_msg)[:100])
 
+        if item_uuid or cover_url:
+            fields_957 = record.get_fields("957")
+            f957 = fields_957[0] if fields_957 else Field(
+                tag="957", indicators=[" ", " "], subfields=[]
+            )
+            if not fields_957:
+                record.add_ordered_field(f957)
             if item_uuid:
-                try:
-                    f956.delete_subfield("3")
-                except Exception:
-                    pass
-                f956.add_subfield("3", item_uuid)
-
+                f957.delete_subfield("3")
+                f957.add_subfield("3", item_uuid)
             if cover_url:
-                try:
-                    f956.delete_subfield("c")
-                except Exception:
-                    pass
-                f956.add_subfield("c", cover_url)
+                f957.delete_subfield("c")
+                f957.add_subfield("c", cover_url)
 
         if handle_url or primary_download_url:
             for f in record.get_fields("856"):

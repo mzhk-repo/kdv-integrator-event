@@ -54,7 +54,7 @@ columns:
     
   - name: "url_cover"
     sources:
-      - field: "956"
+      - field: "957"
         subfields: ["c"]
 
   - name: "isbn"

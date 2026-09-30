@@ -152,7 +152,7 @@
   │   │  ─────────────     │   │   ─────────────      │  │
   │   │  fetch PDF         │   │   pdf2image → JPG    │  │
   │   │  map MARC→DC       │   │   upload via CGI     │  │
-  │   │  create DSpace item│   │   write 956$c        │  │
+  │   │  create DSpace item│   │   write 957$c        │  │
   │   │  optimize PDF       │   │                      │  │
   │   │  upload bitstream  │   │                      │  │
   │   │  write 856 links   │   └─────────────────────┘  │
@@ -279,7 +279,7 @@ kdv-integrator-event/
   │ (intra)  │     │  (repo)     │
   └──────────┘     └─────────────┘
         ▲
-        │ 956$c (cover URL) + 856$u (file + handle)
+        │ 957$c (cover URL) + 856$u (file + handle)
         └── MARC update (зворотній запис)
 
   ┌──────────────────────────────────────┐

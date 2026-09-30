@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Move Integrator-managed MARC values to field 957
+
+- **Context:** Koha `MARCOverlayRules` protects a whole MARC field, so protecting `956` would also block ordinary updates to its source and status subfields.
+- **Change:** The Integrator now reads/writes its DSpace Item UUID in `957$3` and cover value in `957$c`; sources and status remain in `956`. Updated architecture, implementation plan, AI context, environment contract and OPAC mapping. Existing `956$c`/`956$3` values require a separately verified migration before enabling the overlay rule for `957`.
+- **Verification:** Not run. Existing focused contract expectations were updated; runtime and Koha overlay behavior remain unverified.
+- **Risks:** Legacy records may still have Integrator values in `956`; preserve compatibility when reading `956$3` until migration is complete. Do not enable whole-field `957` protection until existing values are migrated.
+- **Rollback:** Revert the `957` writer/reader mapping and related documentation. Do not bulk-move MARC values as part of rollback.
+
+## 2026-09-29 — Verify CDN routing after tmpfs redeployment
+
+- **Context:** The user reported a running nginx task but a public root-path 404 and requested inspection of the CDN and `/opt/Traefik/docker-compose.yml`.
+- **Change:** Recorded post-redeploy evidence in the CDN runbook and implementation plan. No runtime configuration was changed: the existing Traefik Swarm provider/web entrypoint and CDN Host rule route correctly, while nginx intentionally returns 404 at `/`.
+- **Verification:** Live service inspection confirmed a running CDN task, healthy container, writable `/tmp` tmpfs mount limited to 16 MiB and read-only assets. Public HTTPS `/healthz` returned `200 ok` with normal TLS certificate validation; the internal Traefik request with the configured CDN Host header returned the same. Public and internal `/` returned nginx's expected 404. Public HTTP `/healthz` returned 200 without an HTTPS redirect.
+- **Risks:** Task 0.2 acceptance still requires a hostname-scoped Cloudflare HTTPS redirect and external origin-isolation evidence. No Traefik or Cloudflare production settings were changed.
+- **Rollback:** Remove only these documentation evidence updates; runtime state is unaffected.
+
 ## 2026-09-29 — Preserve CDN writable tmpfs in Swarm deployment
 
 - **Context:** The first CDN deployment stayed at `0/1`. Live nginx logs reported `mkdir() "/tmp/client_body" failed (30: Read-only file system)`; the actual service spec had only the read-only assets bind and no `/tmp` mount. The original short `tmpfs` declaration was not delivered to Swarm. Previous isolated `docker run --tmpfs` checks did not verify service mount conversion.

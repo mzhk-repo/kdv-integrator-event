@@ -23,7 +23,7 @@ no implicit fallback to an installation-specific domain or host.
 | `DSPACE_API_USER` | Existing DSpace integration account. | Required; runtime payload |
 | `DSPACE_API_PASS` | Existing DSpace integration account password. | Required secret; runtime payload |
 | `DSPACE_SUBMISSION_SECTION` | Existing submission section used by the DSpace client. | `traditionalpageone`; runtime payload |
-| `COVERS_CDN_BASE_URL` | Full public HTTPS origin: hostname only after `https://`, without credentials, port, path, whitespace, query or fragment. Asset URL: `${COVERS_CDN_BASE_URL}/{956$c}.webp`. | Required in cover deployment; runtime payload and deployment config |
+| `COVERS_CDN_BASE_URL` | Full public HTTPS origin: hostname only after `https://`, without credentials, port, path, whitespace, query or fragment. Asset URL: `${COVERS_CDN_BASE_URL}/{957$c}.webp`. | Required in cover deployment; runtime payload and deployment config |
 | `COVERS_CDN_IMAGE` | Official nginx Alpine image used by the static CDN. Set a tested tag/digest for reproducible deployment. | `nginx:alpine`; deployment config |
 | `COVERS_STORAGE_HOST_PATH` | Absolute host bind source for the cover storage root. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
 | `COVERS_STORAGE_PATH` | Absolute Integrator container storage root; contains `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. | Required in cover deployment; runtime payload and deployment config |
@@ -130,7 +130,8 @@ the agent did not perform a new Google API or permission audit.
 
 ## Transition compatibility
 
-The current pipeline writes a cover URL into `956$c`; the new pipeline writes a
-WebP SHA-256. Adding configuration does not switch that meaning. Before enabling
-the new writer or changing Koha's cover template, the migration phase must prevent
-the old URL writer from overwriting hash values and verify migrated records.
+The Integrator now writes its cover value to `957$c`; existing records may still
+have legacy values in `956$c` and `956$3`. Migrate and verify those values before
+enabling a Koha overlay rule that protects `957` while allowing `956` updates.
+The new cover pipeline stores a WebP SHA-256 in `957$c`, so the legacy URL writer
+must not run against records after that transition.

@@ -207,7 +207,7 @@ def test_koha_success_writes_file_856_before_handle_856(monkeypatch):
     assert fields_856[1]["y"] == "Запис в репозиторії"
 
 
-def test_koha_set_cover_url_updates_only_956c(monkeypatch):
+def test_koha_set_cover_url_writes_957c(monkeypatch):
     client = KohaClient()
     captured = {}
     xml = (
@@ -235,8 +235,10 @@ def test_koha_set_cover_url_updates_only_956c(monkeypatch):
     assert ok is True
     updated = client._parse_marc(captured["data"])
     field_956 = updated.get_fields("956")[0]
+    field_957 = updated.get_fields("957")[0]
     fields_856 = updated.get_fields("856")
-    assert field_956["c"] == "http://koha.local/cover.jpg"
+    assert field_957["c"] == "http://koha.local/cover.jpg"
+    assert field_956.get("c") is None
     assert field_956["y"] == "error"
     assert field_956["z"] == "File missing"
     assert len(fields_856) == 1
