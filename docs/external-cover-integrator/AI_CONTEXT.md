@@ -124,7 +124,8 @@ zero retries (including manual reset) are immediately eligible. Existing resourc
 columns survive transitions. SQLite writes are transactional, but selection is
 not a worker claim; the future pipeline must serialize each complete record cycle.
 39 focused state/schema/export tests passed on temporary DBs on 2026-09-30.
-External pipeline wiring remains future work.
+The API/Robot core now invokes the Drive gate and serializes configured cycles
+with a shared `.workflow.lock` in the state DB directory.
 
 Task 3.1 adds read-only `StateMachine.check_source(record_uid, incoming_file_id,
 source="cover"|"file")` before `mark_pending` and external client construction.
@@ -134,7 +135,7 @@ Use the existing `GoogleDriveUrlParser` for URL-to-ID extraction. Results:
 (no deletion). Check cover/PDF independently and preserve retry cutoff/backoff.
 38 dirty-check/state/schema tests passed on 2026-09-30; a 100-record fixture
 confirmed 200 source-level NO-OPs, zero mock Drive/downstream calls and unchanged
-state. Task 3.2 consumes this gate; legacy runtime is not wired.
+state. Task 3.2 consumes this gate; API/Robot core wiring is implemented locally.
 
 Task 3.2 implements `check_drive_metadata` in `src/cover_state/drive.py` using
 lazy `GoogleDriveSource.get_metadata` with explicit `sha256Checksum` fields.
@@ -151,8 +152,15 @@ live binary SHA retrieval and comparison, same-content identity update, and zero
 additional calls for the following NO-OP. Google Doc/shortcut missing checksums
 and timeout were mocked as authorized by the user; permanent cutoff and one
 retry increment passed. Temporary DB cleanup was confirmed by the smoke output.
-Task 3.2 gate acceptance is complete; automatic API workflow invocation remains
-pending. The target environment was not identified as dev/prod.
+Task 3.2 gate acceptance is complete. Automatic API/Robot core wiring now requires
+MARC `001` UUIDv7 for Drive, checks retries once per locked cycle, reuses metadata,
+verifies downloaded SHA and skips confirmed sources. It commits identities/UUIDs
+and `ok` only after confirmed required processing and true Koha write-back.
+Local/additional sources keep their processing path. Changed PDFs that only link
+an existing DSpace Item fail closed until bitstream replacement is implemented.
+122 related tests passed with 17 tests deselected; two additional existing API
+DPI tests fail against the current allowlist. Deployment/API runtime smoke of
+this wiring remains pending. The environment was not identified as dev/prod.
 
 ## Important Documents
 

@@ -185,3 +185,25 @@ class StateMachine:
             )
             if cursor.rowcount != 1:
                 raise KeyError(record_uid)
+
+    def complete_cycle(self, record_uid: str, sources: dict, result: dict) -> None:
+        """Commit source identities only after confirmed downstream write-back."""
+        self._validate_uid(record_uid)
+        assignments = ["status='ok'", "retry_count=0", "updated_at=CURRENT_TIMESTAMP"]
+        values = []
+        for source, (file_id, checksum) in sources.items():
+            if source not in ("cover", "file") or not file_id or not checksum:
+                raise ValueError("confirmed source ID and SHA are required")
+            assignments.extend([f"{source}_source_id=?", f"{source}_source_sha256=?"])
+            values.extend([file_id, checksum])
+        for column, key in (("dspace_item_uuid", "uuid"), ("dspace_bitstream_uuid", "bitstream_uuid")):
+            if result.get(key):
+                assignments.append(f"{column}=?")
+                values.append(result[key])
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE records SET {', '.join(assignments)} WHERE record_uid=?",
+                (*values, record_uid),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(record_uid)

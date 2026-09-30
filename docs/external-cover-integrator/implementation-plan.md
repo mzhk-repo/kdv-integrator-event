@@ -215,7 +215,8 @@ SQL повертає запис у вибірку одразу, зберігаю
 39 цільових state/schema/export тестів пройшли на тимчасових БД, включно з
 persistence, cutoff, backoff, reset та атомарними concurrent increments.
 Вибірка не резервує записи: майбутній pipeline має використовувати один
-writer-процес або per-record lock на весь цикл. Зовнішні API не підключено;
+writer-процес або per-record lock на весь цикл. API/Robot core тепер використовує
+спільний filesystem workflow lock; metadata gate підключено до цього шляху;
 runtime-схема 2.1 прийнята за наданим користувачем виводом. Фаза 2 завершена.
 
 **Acceptance criteria:**
@@ -256,8 +257,8 @@ gate викликається до `mark_pending` та створення/вик
 залишаються обов'язковими для retry callers. 38 dirty-check/state/schema тестів
 пройшли на тимчасових БД; 100 незмінених записів дали 200 NO-OP для cover/PDF,
 нуль mock Drive/downstream calls і незмінну state DB. Приймання 3.1 завершено.
-Metadata/SHA-перевірка належить задачі 3.2; legacy API/downloader не підключено
-до нового gate, тому ці тести не є доказом зміни deployed legacy workflow.
+Metadata/SHA-перевірка належить задачі 3.2; API/Robot core тепер підключено
+до gate. Локальні тести не є доказом деплою цієї зміни.
 
 **Acceptance criteria:**
 - Незмінений File ID + `status=ok` не спричиняє жодного виклику Google Drive API (перевіряється лічильником викликів/логом).
@@ -298,9 +299,23 @@ checksum → permanent failure (`failed`, retries щонайменше на лі
 моками: відсутній checksum дав `failed` та cutoff; mocked timeout дав
 `failed/retry_count=1`. Тимчасову state DB видалено. Приймання 3.2 завершено
 для metadata gate; live Doc/shortcut не перевірялися. Автоматичний виклик gate
-з API workflow ще не підключено; smoke викликав модуль безпосередньо.
-Dev/prod середовище не визначено. Download/conversion/write-back належать
-наступним фазам.
+на момент smoke не було підключено; smoke викликав модуль безпосередньо.
+Тепер gate підключено в спільному API/Robot core: `001` має бути UUIDv7,
+cycle lock серіалізує configured runs, retry eligibility перевіряється один раз
+на цикл, metadata перевикористовується при download, байти перевіряються за SHA.
+Повністю незмінені Drive-only цикли повертають `noop`, cutoff/backoff — `deferred`.
+Зміна лише cover пропускає незмінений PDF та DSpace; local/additional sources
+зберігають свій processing path. Source ID/SHA та `ok` фіксуються атомарно лише
+після підтверджених required steps і `Koha write-back=True`. Помилки downstream
+збільшують retries один раз. Changed/new PDF + лише `linked_existing` у DSpace
+відхиляється: поточний workflow не замінює bitstream; replacement/recovery
+належать DSpace-фазі. JPEG/CGI pipeline збережено; WebP/CDN — наступні задачі.
+122 пов'язаних тести пройшли, 17 виключено (15 optimizer та дві наявні API DPI
+перевірки, що не відповідають поточному allowlist). Тести включають реальний
+authenticated route → core зі stub клієнтами, NO-OP, same-content, cover-only,
+checksum/write-back failures, two-source retry та concurrent requests.
+Потрібні редеплой користувачем і API runtime smoke у вибраному середовищі.
+Dev/prod середовище не визначено.
 
 **Acceptance criteria:**
 - Реальний binary-файл: SHA коректно отримано і порівняно.

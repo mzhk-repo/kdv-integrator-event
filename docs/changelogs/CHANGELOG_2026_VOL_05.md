@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Connect Drive gate to automatic API/Robot workflow
+
+- **Context:** The metadata gate passed direct deployed smoke checks but was not invoked by the automatic integration workflow.
+- **Change:** Wired the shared core entry point used by authenticated API and Robot to the gate using MARC 001 UUIDv7. Added a shared filesystem cycle lock, single eligibility check per cycle, metadata reuse, downloaded SHA verification, Drive cover resolution and selective cover/PDF processing. Confirmed IDs/SHA and DSpace UUIDs commit atomically only after required processing and true Koha write-back. Unchanged cycles return noop; cutoff/backoff return deferred. Changed PDFs that merely link existing DSpace Items fail closed because bitstream replacement is not implemented. Updated architecture/context/environment/plan.
+- **Verification:** Related API/gate/core/services/state tests — 122 passed, 17 deselected. Route-to-core invocation, zero-work second request, same-content ID update, cover-only processing, checksum and write-back failures, missing UID/checksum, two-source retries and concurrent requests passed. Two included API DPI tests initially failed due to the existing allowlist mismatch; the 15 optimizer tests were excluded as previously documented. `git diff --check` passed. No deployment, live DB or external write was performed.
+- **Risks:** API runtime acceptance requires user-run redeployment and smoke in an identified environment. Global locking serializes configured cycles. Local/additional sources remain outside Drive identity tracking. Existing DSpace PDF replacement/recovery and WebP/CDN publishing require their planned phases; a retry does not substitute for replacement.
+- **Rollback:** Revert the workflow wiring/state completion and Drive cover changes with related tests/docs; preserve state DB/resources and assess previously confirmed entries before enabling gate again.
+
 ## 2026-09-30 — Verify deployed Drive metadata gate (Task 3.2)
 
 - **Context:** The user supplied a binary Drive file and authorized mocks for Google Doc/shortcut cases, then ran the prepared container smoke after agent Docker exec access was denied.

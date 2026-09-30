@@ -91,9 +91,9 @@ exponential backoff of 1, 2, 4, ... seconds from UTC `updated_at`. Zero retries
 bypass backoff, including after a deliberate reset. `reset_retry_count()` retains
 status and resource columns; the documented direct SQL reset works too.
 Connections close after each operation, and SQLite transactions serialize writes.
-Selection does not claim work: the future pipeline must use a single writer
-process or per-record locking across the complete processing cycle. The module
-is tested independently; external pipeline wiring belongs to later phases.
+Selection does not claim work. The API/Robot core holds a shared filesystem
+workflow lock across complete configured cycles; independent callers must also
+serialize processing. The state module is tested independently and through the API.
 
 ### External cover fast dirty-check (Task 3.1)
 
@@ -109,8 +109,8 @@ An absent source returns `no_source` and never deletes stored resources.
 Retry callers still enforce cutoff/backoff through state eligibility; `resume`
 does not authorize an exhausted attempt. Cover and PDF are checked separately;
 a source-level `noop` does not skip work required by another source. Task 3.2
-consumes these decisions for metadata/SHA checks. This gate is not yet wired
-into the legacy downloader or API integration flow.
+consumes these decisions for metadata/SHA checks. The shared API/Robot core now
+invokes it before Drive materialization.
 
 ### External cover Drive metadata/SHA gate (Task 3.2)
 
@@ -138,7 +138,39 @@ NO-OP with zero additional Drive calls. The same smoke used mocks for missing
 checksums in Google Doc/shortcut responses and a network timeout; permanent
 cutoff and a single retry increment passed. The temporary DB was removed.
 This verifies the deployed gate directly, not automatic invocation by the API
-workflow; external pipeline wiring remains pending. Dev/prod was not identified.
+workflow at that time. API/Robot core wiring is now implemented and tested
+locally; deployment of that wiring remains unverified. Dev/prod was not identified.
+
+### Automatic API/Robot Drive gate
+
+When `COVER_STATE_DB_PATH` is configured, `process_integration_logic()` reads
+MARC `001` through `KohaClient.get_biblio_metadata()` and requires a UUIDv7 for
+Drive sources. A `.workflow.lock` in the state DB directory serializes complete
+configured cycles across threads/processes sharing that filesystem. The core
+checks record retry eligibility once before checking both sources, so the first
+source's pending timestamp cannot accidentally defer the second source.
+The existing authenticated API/task/polling contract and Robot caller use this
+same core entry point. An all-confirmed unchanged Drive-only cycle returns
+`status=noop`; exhausted or waiting retries return `status=deferred` without
+downstream work or another retry increment. Local paths and additional files
+are not included in the identity gate and retain their processing path.
+Drive `956$p` image sources are resolved/materialized with an image MIME allowlist.
+Gate metadata is reused during materialization; downloaded bytes must match
+source SHA before downstream processing. Unchanged explicit covers are skipped;
+cover-only changes can update Koha without materializing an unchanged PDF or
+calling DSpace. Existing CGI/JPEG cover behavior remains the output pipeline;
+WebP/CDN publishing is still Phase 4 work.
+`complete_cycle()` atomically commits source IDs/SHA, returned DSpace UUIDs,
+`ok` and zero retries only after confirmed required cover processing and a true
+Koha write-back result. Downstream failures retain unconfirmed identities and
+increment retries once. A changed/new PDF that merely links an existing DSpace
+Item is rejected before successful Koha write-back, since the existing workflow
+does not replace that Item's bitstream. Safe replacement/recovery of this case
+belongs to the DSpace phase; manual retry alone does not implement replacement.
+Local API tests cover route-to-core invocation, NO-OP, same-content identity
+changes, cover-only work, checksum mismatch, write-back failure, missing UID,
+missing checksum, two-source retry and concurrent duplicate requests. Runtime
+proof requires a user-run image redeployment and API smoke in a selected environment.
 
 ⚡ Деталі Реалізації (M2-M7)
 

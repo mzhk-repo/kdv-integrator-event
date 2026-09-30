@@ -141,7 +141,7 @@ from the already-loaded runtime environment. Explicit `db_path` and integer
 `max_retry_count` constructor arguments support isolated tests and callers with
 existing configuration. Missing/invalid retry limits fail before DB migration;
 no default limit is supplied. The API startup migration requires only the DB path;
-the state machine is not yet called by the external processing pipeline.
+the API/Robot core uses the state machine when `COVER_STATE_DB_PATH` is configured.
 Retry selection applies exponential delays of 1, 2, 4, ... seconds after failures,
 without sleeping. An operator reset to zero bypasses the delay while preserving
 status and resource identities. Pipeline callers must serialize complete record
@@ -154,7 +154,13 @@ No new env variables are required. Permanent checksum failures are encoded as
 `failed` with `retry_count >= MAX_RETRY_COUNT` in the unchanged version-1 schema.
 An explicit reset is required after fixing the source; transient failures increment
 once and remain subject to backoff/cutoff. The metadata gate does not download
-files and is not yet called by the legacy API integration flow.
+files itself; the API/Robot core now invokes it before materialization. No new
+environment settings are required for wiring. Drive records require MARC `001`
+UUIDv7. The state directory must also allow creation of `.workflow.lock`;
+all cooperating API/Robot processes must share the same durable state filesystem.
+Configured cycles are serialized by this lock. Invocations without a state DB
+configuration retain the legacy path; normal API startup requires the configured
+DB migration. Deployment of the wiring has not yet been verified.
 
 Before marking Task 0.1 fully accepted in an environment, confirm that the selected
 service account exists and can read the target Drive folder and a sample binary

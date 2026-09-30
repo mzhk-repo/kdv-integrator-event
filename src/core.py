@@ -1,4 +1,6 @@
 import contextlib
+import fcntl
+import hashlib
 import os
 import logging
 import re
@@ -24,6 +26,8 @@ from .services.pdf import (
     needs_optimization,
 )
 from .mapping import METADATA_RULES, TYPE_CONVERSION, strip_metadata_edges
+from .cover_state.drive import DriveMetadataError, check_drive_metadata
+from .cover_state.state_machine import StateMachine
 
 logger = logging.getLogger("KDV-Core")
 
@@ -452,6 +456,7 @@ def run_dspace_workflow(
             "handle": final_link,
             "uuid": item_uuid,
             "status": "linked_existing",
+            "bitstream_uuid": primary_bitstream.get("uuid") if primary_bitstream else None,
             "primary_download_url": _primary_download_url(primary_bitstream),
         }
         result.update(
@@ -504,6 +509,7 @@ def run_dspace_workflow(
     result = {
         "handle": final_link,
         "uuid": item_uuid,
+        "bitstream_uuid": primary_bitstream.get("uuid"),
         "primary_download_url": primary_download_url,
     }
     result.update(pdf_telemetry)
@@ -512,6 +518,99 @@ def run_dspace_workflow(
 
 
 def process_integration_logic(
+    task_id, biblionumber, koha_client=None, dspace_client=None,
+    skip_optimization: bool = False, optimizer_client: PDFOptimizerClient | None = None,
+    dpi: int | None = None, state_machine: StateMachine | None = None,
+):
+    """Apply the durable Drive gate before the existing asynchronous workflow."""
+    options = dict(koha_client=koha_client, dspace_client=dspace_client,
+                   skip_optimization=skip_optimization, optimizer_client=optimizer_client, dpi=dpi)
+    if state_machine is None and not os.environ.get("COVER_STATE_DB_PATH"):
+        return _run_integration_logic(task_id, biblionumber, **options)
+    state = state_machine or StateMachine()
+    # ponytail: one writer across API/Robot processes; use per-record locks if throughput requires it.
+    with open(os.path.join(os.path.dirname(state.db_path), '.workflow.lock'), 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        koha = koha_client or KohaClient()
+        options['koha_client'] = koha
+        meta = koha.get_biblio_metadata(biblionumber)
+        resolver = _source_resolver()
+        refs = {
+            'file': resolver.gdrive_parser.parse(meta.get('file_path'), '956$u') if meta else None,
+            'cover': resolver.gdrive_parser.parse(meta.get('cover_path'), '956$p') if meta else None,
+        }
+        if not any(refs.values()):
+            return _run_integration_logic(task_id, biblionumber, meta=meta, resolver=resolver, **options)
+        uid = meta.get('record_uid')
+        try:
+            if not uid or uuid.UUID(uid).version != 7:
+                raise ValueError('Drive workflow requires MARC 001 UUIDv7')
+            uid = str(uuid.UUID(uid))
+        except (ValueError, AttributeError):
+            raise ValueError('Drive workflow requires MARC 001 UUIDv7') from None
+        checks = {}
+        downstream_started = False
+        try:
+            existing = state.get(uid)
+            if existing is not None and existing['status'] != 'ok' and not state.is_retry_eligible(uid):
+                return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
+            for source, ref in refs.items():
+                if ref is not None:
+                    checks[source] = check_drive_metadata(
+                        state, uid, ref.file_id, source=source, resource_key=ref.resource_key,
+                        drive_source=resolver.gdrive_source,
+                        retry_checked=True,
+                    )
+                    logger.info('Drive gate record_uid=%r source=%s action=%s', uid, source, checks[source].action)
+                    if checks[source].action == 'deferred':
+                        return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
+            file_work = bool(meta.get('file_path')) and (
+                'file' not in checks or checks['file'].action not in ('noop', 'same_content')
+            )
+            # Additional/local sources are not covered by the Drive identity gate.
+            file_work = file_work or bool(meta.get('additional_files'))
+            cover_work = (
+                checks['cover'].action not in ('noop', 'same_content') if 'cover' in checks
+                else bool(meta.get('cover_path')) or file_work
+            )
+            if not file_work and not cover_work:
+                return {'status': 'noop', 'reason': 'confirmed_sources_unchanged'}
+            if not state.mark_pending(uid):
+                return {'status': 'deferred', 'reason': 'retry_cutoff'}
+            downstream_started = True
+            current = state.get(uid)
+            sources = {
+                source: (ref.file_id, checks[source].sha256 or current[f'{source}_source_sha256'])
+                for source, ref in refs.items() if ref is not None
+            }
+            result = _run_integration_logic(
+                task_id, biblionumber, meta=meta, resolver=resolver, checks=checks,
+                file_work=file_work, cover_work=cover_work, strict=True,
+                source_shas={source: value[1] for source, value in sources.items()}, **options,
+            )
+            state.complete_cycle(uid, sources, result)
+            return result
+        except Exception as error:
+            # Metadata failures already incremented/saturated their own retry state.
+            if downstream_started:
+                state.record_result(uid, success=False, partial=True)
+            if isinstance(error, DriveMetadataError):
+                koha.set_status(biblionumber, 'error', str(error))
+            raise
+
+
+def _verify_drive_download(path, checksum):
+    if not checksum:
+        raise RuntimeError('Confirmed Drive SHA is required before processing')
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    if digest.hexdigest() != checksum:
+        raise RuntimeError('Downloaded Drive content does not match sha256Checksum')
+
+
+def _run_integration_logic(
     task_id,
     biblionumber,
     koha_client=None,
@@ -519,6 +618,8 @@ def process_integration_logic(
     skip_optimization: bool = False,
     optimizer_client: PDFOptimizerClient | None = None,
     dpi: int | None = None,
+    *, meta=None, resolver=None, checks=None, file_work=True, cover_work=True, strict=False,
+    source_shas=None,
 ):
     """Main orchestration logic executed inside a background thread.
 
@@ -535,16 +636,41 @@ def process_integration_logic(
 
     try:
         # --- 1. SERIAL PHASE: Checks & Rename ---
-        meta = koha.get_biblio_metadata(biblionumber)
+        meta = meta if meta is not None else koha.get_biblio_metadata(biblionumber)
         if not meta:
             raise Exception("No 956 field found")
 
         file_rel_path = meta["file_path"]
         cover_rel_path = meta.get("cover_path")
-        source_resolver = _source_resolver()
-        cover_source = source_resolver.resolve_cover(cover_rel_path)
+        source_resolver = resolver or _source_resolver()
+        checks = checks or {}
+        source_shas = source_shas or {}
+        cover_source = source_resolver.resolve_cover(cover_rel_path) if cover_work else None
+        if cover_source and cover_source.source_type == 'gdrive':
+            cover_source = source_resolver.materialize(
+                cover_source, metadata=checks.get('cover').metadata if checks.get('cover') else None,
+                allowed_mime_types={'image/jpeg', 'image/png', 'image/webp'},
+            )
+            if strict:
+                _verify_drive_download(cover_source.local_path, source_shas.get('cover'))
+        if not file_work:
+            if not cover_source:
+                raise ValueError('Cover-only workflow requires an explicit cover source')
+            cover_res = cover_service.process_book(
+                str(biblionumber), None, os.path.dirname(cover_source.local_path),
+                cover_source_path=cover_source.local_path,
+            )
+            cover_url = _resolve_cover_url(koha, biblionumber, cover_res)
+            if not cover_url or koha.set_cover_url(biblionumber, cover_url) is not True:
+                raise RuntimeError('Koha cover write-back was not confirmed')
+            return {'status': 'cover_updated'}
         primary_source = source_resolver.resolve_primary(file_rel_path)
-        primary_source = source_resolver.materialize(primary_source)
+        if 'file' in checks:
+            primary_source = source_resolver.materialize(primary_source, metadata=checks['file'].metadata)
+        else:
+            primary_source = source_resolver.materialize(primary_source)
+        if strict and primary_source and primary_source.source_type == 'gdrive':
+            _verify_drive_download(primary_source.local_path, source_shas.get('file'))
         cover_source_path = cover_source.local_path if cover_source else None
         original_full_path = primary_source.local_path if primary_source else None
 
@@ -592,7 +718,7 @@ def process_integration_logic(
                 current_active_path,
                 pdf_dir,
                 cover_source_path=cover_source_path,
-            )
+            ) if cover_work else None
 
             # Task B: DSpace
             future_dspace = executor.submit(
@@ -621,32 +747,52 @@ def process_integration_logic(
             # Check Bonus Task (Cover)
             try:
                 # CoverService has its own Poppler/HTTP timeouts and retry guard.
-                cover_res = future_cover.result()
+                cover_res = future_cover.result() if future_cover else {'status': 'skipped'}
                 logger.info(f"🖼️ [Core] Cover result: {cover_res}")
                 cover_url = _resolve_cover_url(
                     koha,
                     biblionumber,
                     cover_res,
                     update_koha=dspace_error is not None,
-                )
+                ) if future_cover else None
+                if strict and future_cover and (
+                    not (cover_res.get('status') == 'success' or (
+                        cover_res.get('status') == 'skipped' and cover_res.get('reason') == 'exists_in_koha'
+                    )) or not cover_url
+                ):
+                    raise RuntimeError('Cover processing was not confirmed')
 
             except concurrent.futures.TimeoutError:
                 logger.warning("⚠️ [Core] Cover generation timeout.")
+                if strict:
+                    raise
             except Exception as e:
                 logger.warning(f"⚠️ [Core] Cover Thread warning: {e}")
+                if strict:
+                    raise
 
             if dspace_error is not None:
                 raise dspace_error
 
         # --- 3. FINALIZE ---
+        if strict and not dspace_result:
+            raise RuntimeError('DSpace processing was not confirmed')
         if dspace_result:
-            koha.set_success(
+            if strict and dspace_result.get('additional_files_failed'):
+                raise RuntimeError('Additional file processing was not confirmed')
+            if strict and dspace_result.get('status') == 'linked_existing' and (
+                checks.get('file') and checks['file'].action == 'resource_changed'
+            ):
+                raise RuntimeError('Changed Drive PDF requires DSpace bitstream replacement; existing link is insufficient')
+            confirmed = koha.set_success(
                 biblionumber,
                 dspace_result["handle"],
                 item_uuid=dspace_result["uuid"],
                 cover_url=cover_url,
                 primary_download_url=dspace_result.get("primary_download_url"),
             )
+            if strict and confirmed is not True:
+                raise RuntimeError('Koha write-back was not confirmed')
 
         return dspace_result
 

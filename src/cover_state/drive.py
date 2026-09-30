@@ -36,18 +36,21 @@ def check_drive_metadata(
     source: Literal["cover", "file"],
     resource_key: str | None = None,
     drive_source: GoogleDriveSource | None = None,
+    retry_checked: bool = False,
 ) -> DriveCheckResult:
     """Gate Drive calls, compare SHA and persist failures without downloads.
 
     Callers serialize complete record cycles. Changed source identities/hashes
     remain uncommitted until downstream success; only confirmed same-content
     identity updates are persisted here.
+    retry_checked is only for a locked caller that validated eligibility once
+    before checking all sources in that cycle.
     """
     decision = state.check_source(record_uid, incoming_file_id, source=source)
     if decision in ("noop", "no_source"):
         return DriveCheckResult(decision)
     record = state.get(record_uid)
-    if record is not None and record["status"] != "ok" and not state.is_retry_eligible(record_uid):
+    if not retry_checked and record is not None and record["status"] != "ok" and not state.is_retry_eligible(record_uid):
         return DriveCheckResult("deferred")
     if decision == "resume":
         return DriveCheckResult("resume")

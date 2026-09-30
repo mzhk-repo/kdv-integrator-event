@@ -104,6 +104,7 @@ class KohaClient:
         fields_957 = record.get_fields("957")
         managed_field = fields_957[0] if fields_957 else None
         return {
+            "record_uid": record["001"].data.strip() if "001" in record else None,
             "file_path": self._get_subfield_safe(field, "u"),
             "cover_path": self._get_subfield_safe(field, "p"),
             "additional_files": self._get_subfield_safe(field, "q"),
