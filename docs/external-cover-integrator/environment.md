@@ -160,7 +160,9 @@ UUIDv7. The state directory must also allow creation of `.workflow.lock`;
 all cooperating API/Robot processes must share the same durable state filesystem.
 Configured cycles are serialized by this lock. Invocations without a state DB
 configuration retain the legacy path; normal API startup requires the configured
-DB migration. Deployment of the wiring has not yet been verified.
+DB migration. User-provided post-redeploy output on 2026-09-30 confirmed deployed
+code, active API health/readiness and isolated API/task/gate execution with live
+Drive metadata and temporary state; live downstream writes were not exercised.
 
 Before marking Task 0.1 fully accepted in an environment, confirm that the selected
 service account exists and can read the target Drive folder and a sample binary

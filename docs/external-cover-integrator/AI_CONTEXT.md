@@ -160,7 +160,13 @@ Local/additional sources keep their processing path. Changed PDFs that only link
 an existing DSpace Item fail closed until bitstream replacement is implemented.
 122 related tests passed with 17 tests deselected; two additional existing API
 DPI tests fail against the current allowlist. Deployment/API runtime smoke of
-this wiring remains pending. The environment was not identified as dev/prod.
+this wiring was verified by user-provided post-redeploy output on 2026-09-30:
+matching code hashes, active API health/readiness 200, persistent WAL/version 1,
+and isolated Flask route -> real background task -> gate -> polling. Temporary
+state/stub Koha/DSpace clients produced NO-OP with zero Drive calls and a
+same-content identity update using live SHA with no downstream calls; cleanup
+completed. No integration POST to active Gunicorn or live downstream writes was
+tested. The environment was not identified as dev/prod.
 
 ## Important Documents
 

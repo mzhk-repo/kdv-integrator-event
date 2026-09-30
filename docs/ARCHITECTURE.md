@@ -139,7 +139,8 @@ checksums in Google Doc/shortcut responses and a network timeout; permanent
 cutoff and a single retry increment passed. The temporary DB was removed.
 This verifies the deployed gate directly, not automatic invocation by the API
 workflow at that time. API/Robot core wiring is now implemented and tested
-locally; deployment of that wiring remains unverified. Dev/prod was not identified.
+locally. User-provided post-redeploy smoke output confirmed deployment of that
+wiring on 2026-09-30; dev/prod was not identified.
 
 ### Automatic API/Robot Drive gate
 
@@ -169,8 +170,17 @@ does not replace that Item's bitstream. Safe replacement/recovery of this case
 belongs to the DSpace phase; manual retry alone does not implement replacement.
 Local API tests cover route-to-core invocation, NO-OP, same-content identity
 changes, cover-only work, checksum mismatch, write-back failure, missing UID,
-missing checksum, two-source retry and concurrent duplicate requests. Runtime
-proof requires a user-run image redeployment and API smoke in a selected environment.
+missing checksum, two-source retry and concurrent duplicate requests.
+User-run post-redeploy smoke on 2026-09-30 confirmed matching code hashes,
+HTTP 200 health/readiness on the active server, and WAL/version 1 in persistent
+state. In a separate process inside the deployed container, the Flask test client
+invoked the API route, actual background task and polling using temporary state
+and stub Koha/DSpace clients: unchanged source returned NO-OP with zero Drive
+calls; a seeded same-content identity change used live Drive SHA and updated
+only temporary state without downstream work. Cleanup completed. This verifies
+deployed route/core execution in isolation, not an integration POST to the running
+Gunicorn server or live Koha/DSpace writes. Active external authentication modes,
+Robot execution and changed-content write-back were not exercised by this smoke.
 
 ⚡ Деталі Реалізації (M2-M7)
 

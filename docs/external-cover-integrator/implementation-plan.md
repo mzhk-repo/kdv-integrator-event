@@ -314,7 +314,15 @@ cycle lock серіалізує configured runs, retry eligibility переві�
 перевірки, що не відповідають поточному allowlist). Тести включають реальний
 authenticated route → core зі stub клієнтами, NO-OP, same-content, cover-only,
 checksum/write-back failures, two-source retry та concurrent requests.
-Потрібні редеплой користувачем і API runtime smoke у вибраному середовищі.
+Користувач виконав редеплой та надав smoke-вивід 2026-09-30: deployed hashes
+збігаються; активний API health/readiness повертає 200; persistent DB має
+WAL/version 1. В окремому процесі deployed-контейнера Flask test client
+виконав route → реальну background task → gate → polling з тимчасовою БД
+і stub Koha/DSpace: `noop` з нулем Drive calls; same-content порівняння з
+live SHA оновило лише тимчасовий source ID без downstream work. Cleanup пройшов.
+Підключення gate підтверджено в deployed runtime для цього ізольованого шляху.
+Integration POST до активного Gunicorn, live Koha/DSpace writes, Robot runtime
+та changed-content write-back цим smoke не перевірялися.
 Dev/prod середовище не визначено.
 
 **Acceptance criteria:**

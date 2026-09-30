@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Verify deployed API route and Drive gate after redeployment
+
+- **Context:** The user redeployed the workflow wiring and supplied output from the prepared container smoke after agent Docker exec access was denied.
+- **Change:** Recorded deployed-code and isolated API/task/gate execution evidence in architecture, AI context, environment contract and implementation plan.
+- **Verification:** User output confirms matching workflow code hashes, HTTP 200 health/readiness on the active API, persistent SQLite WAL/version 1 and live binary checksum availability. A Flask test client in a separate deployed-container process invoked the API route, actual background task and status polling with temporary state/stub Koha/DSpace: NO-OP caused zero Drive calls; a same-content identity change compared live SHA and updated only temporary state with zero downstream calls. Temporary DB cleanup completed. `git diff --check` passed.
+- **Risks:** The integration requests ran in the isolated process, not against active Gunicorn. Live Koha/DSpace writes, changed-content write-back, active external authentication modes and Robot execution were not exercised. Dev/prod was not identified; persistent application state and external records were untouched.
+- **Rollback:** Revert this documentation evidence only; runtime state is unaffected.
+
 ## 2026-09-30 — Connect Drive gate to automatic API/Robot workflow
 
 - **Context:** The metadata gate passed direct deployed smoke checks but was not invoked by the automatic integration workflow.
