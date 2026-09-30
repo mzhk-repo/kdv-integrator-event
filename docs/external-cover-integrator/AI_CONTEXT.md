@@ -126,6 +126,16 @@ not a worker claim; the future pipeline must serialize each complete record cycl
 39 focused state/schema/export tests passed on temporary DBs on 2026-09-30.
 External pipeline wiring remains future work.
 
+Task 3.1 adds read-only `StateMachine.check_source(record_uid, incoming_file_id,
+source="cover"|"file")` before `mark_pending` and external client construction.
+Use the existing `GoogleDriveUrlParser` for URL-to-ID extraction. Results:
+`noop` only for matching ID + `ok`; `needs_sha_check` for new/changed IDs;
+`resume` for matching IDs in unfinished cycles; `no_source` for empty sources
+(no deletion). Check cover/PDF independently and preserve retry cutoff/backoff.
+38 dirty-check/state/schema tests passed on 2026-09-30; a 100-record fixture
+confirmed 200 source-level NO-OPs, zero mock Drive/downstream calls and unchanged
+state. Metadata/SHA consumption belongs to Task 3.2; legacy runtime is not wired.
+
 ## Important Documents
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.

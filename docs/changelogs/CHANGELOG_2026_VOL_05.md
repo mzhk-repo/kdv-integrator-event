@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Fast Drive File ID dirty-check (Task 3.1)
+
+- **Context:** The external pipeline needs a zero-work gate for unchanged sources, while unfinished cycles must still reconcile even when their Drive ID matches.
+- **Change:** Added read-only `StateMachine.check_source()` for cover/PDF IDs. Matching ID plus confirmed `ok` returns `noop`; new/changed IDs require SHA checks; matching unfinished IDs return `resume`; empty sources are skipped without deletion. Existing Drive URL parsing is reused. Updated architecture, AI context and plan with actual validation and invocation order.
+- **Verification:** `.venv/bin/python -m pytest -q tests/test_cover_dirty_check.py tests/test_state_machine.py tests/test_cover_state_schema.py` — 38 passed. A temporary-DB batch of 100 records produced 200 cover/PDF NO-OPs, zero mock Drive/downstream calls and identical persisted state. Tests also cover changed/new IDs, unfinished states, exhausted retry guards, empty sources, missing stored IDs, argument validation and supported URL formats. `git diff --check` passed.
+- **Risks:** Call the gate before `mark_pending` and Drive client construction. Retry callers must still enforce cutoff/backoff, and each source is checked independently. Metadata/SHA handling is Task 3.2; this gate is not yet wired into the legacy API/downloader. No live service or DB was changed.
+- **Rollback:** Revert `check_source`, its tests and related documentation; preserve the unchanged state schema and DB.
+
 ## 2026-09-30 — Durable cover state transitions and retry cutoff (Task 2.2)
 
 - **Context:** Phase 2 requires reusable cycle state and bounded retries before adding external Drive/Koha/DSpace processing.

@@ -7,6 +7,7 @@ import os
 import sqlite3
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
+from typing import Literal
 
 from src.cover_state.schema import migrate
 
@@ -50,6 +51,30 @@ class StateMachine:
                 "SELECT * FROM records WHERE record_uid = ?", (record_uid,)
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def check_source(
+        self,
+        record_uid: str,
+        incoming_file_id: str | None,
+        *,
+        source: Literal["cover", "file"],
+    ) -> Literal["noop", "needs_sha_check", "resume", "no_source"]:
+        """Compare an already-parsed Drive ID without API calls or state writes.
+
+        Call before mark_pending. Retry callers must still obey eligibility;
+        resume is not permission to bypass cutoff/backoff.
+        """
+        self._validate_uid(record_uid)
+        if source not in ("cover", "file"):
+            raise ValueError("source must be 'cover' or 'file'")
+        if incoming_file_id is None or incoming_file_id == "":
+            return "no_source"
+        if not isinstance(incoming_file_id, str) or not incoming_file_id.strip():
+            raise ValueError("incoming_file_id must be a non-empty string or None")
+        record = self.get(record_uid)
+        if record is None or incoming_file_id != record[f"{source}_source_id"]:
+            return "needs_sha_check"
+        return "noop" if record["status"] == "ok" else "resume"
 
     def mark_pending(self, record_uid: str) -> bool:
         """Start/resume a cycle without resetting failures or durable resources.

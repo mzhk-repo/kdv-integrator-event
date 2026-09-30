@@ -95,6 +95,23 @@ Selection does not claim work: the future pipeline must use a single writer
 process or per-record locking across the complete processing cycle. The module
 is tested independently; external pipeline wiring belongs to later phases.
 
+### External cover fast dirty-check (Task 3.1)
+
+`StateMachine.check_source(record_uid, incoming_file_id, source="cover"|"file")`
+reads the corresponding `cover_source_id` or `file_source_id` without state writes
+or external calls. Call it with a parsed Drive ID before `mark_pending()` and
+before constructing/calling Drive clients. The existing `GoogleDriveUrlParser`
+in `src/services/sources.py` already parses supported Drive URLs without network
+access. An unchanged ID with confirmed `status=ok` returns `noop`; a new/changed
+ID returns `needs_sha_check`. An unchanged ID with unfinished status returns
+`resume`, preserving reconciliation rather than silently skipping partial work.
+An absent source returns `no_source` and never deletes stored resources.
+Retry callers still enforce cutoff/backoff through state eligibility; `resume`
+does not authorize an exhausted attempt. Cover and PDF are checked separately;
+a source-level `noop` does not skip work required by another source. Task 3.2
+will consume these decisions for metadata/SHA checks. This gate is not yet wired
+into the legacy downloader or API integration flow.
+
 ⚡ Деталі Реалізації (M2-M7)
 
 ### 1. Асинхронність (Async Core) + DI

@@ -246,15 +246,29 @@ runtime-схема 2.1 прийнята за наданим користувач
 
 **Опис:** Порівняння `incoming_file_id` зі `stored_file_id`; NO-OP без жодного додаткового API-виклику, якщо збігається.
 
+**Стан на 2026-09-30:** задачу 3.1 реалізовано через read-only
+`StateMachine.check_source(record_uid, incoming_file_id, source="cover"|"file")`.
+Для витягування ID з URL перевикористовується наявний `GoogleDriveUrlParser`;
+gate викликається до `mark_pending` та створення/виклику Drive-клієнта.
+Незмінений ID + `ok` → `noop`; новий/змінений ID → `needs_sha_check`;
+незмінений ID + `pending/failed` → `resume`. Відсутнє джерело → `no_source`,
+без видалення даних. Cover/PDF перевіряються окремо; retry cutoff/backoff
+залишаються обов'язковими для retry callers. 38 dirty-check/state/schema тестів
+пройшли на тимчасових БД; 100 незмінених записів дали 200 NO-OP для cover/PDF,
+нуль mock Drive/downstream calls і незмінну state DB. Приймання 3.1 завершено.
+Metadata/SHA-перевірка належить задачі 3.2; legacy API/downloader не підключено
+до нового gate, тому ці тести не є доказом зміни deployed legacy workflow.
+
 **Acceptance criteria:**
-- Незмінений File ID не спричиняє жодного виклику Google Drive API (перевіряється лічильником викликів/логом).
+- Незмінений File ID + `status=ok` не спричиняє жодного виклику Google Drive API (перевіряється лічильником викликів/логом).
 - Змінений File ID коректно позначається як "потребує SHA-перевірки".
 
 **Validation:**
 ```bash
-# Запустити Integrator на наборі з 100% незмінених record'ів
-python -m integrator.run --dry-run --input fixtures/unchanged.json
-grep -c "drive_api_call" integrator.log   # очікується 0
+# Тимчасова SQLite DB; 100 записів з незміненими cover/PDF IDs та status=ok.
+# Перевіряє нуль mock Drive/downstream calls і незмінність усіх state-полів;
+# також нові/змінені IDs, pending/failed, empty source і наявний URL parser.
+.venv/bin/python -m pytest -q tests/test_cover_dirty_check.py tests/test_state_machine.py tests/test_cover_state_schema.py
 ```
 
 ### Задача 3.2 — Metadata + sha256Checksum, обробка відсутнього checksum
