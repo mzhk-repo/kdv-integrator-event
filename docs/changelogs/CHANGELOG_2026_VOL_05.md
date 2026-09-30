@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Apply cover state migration during API startup
+
+- **Context:** Post-redeploy inspection confirmed the persistent state mount but found no `state.db`; a separate manual migration would leave future fresh deployments dependent on an operator step.
+- **Change:** The API container entrypoint now applies the idempotent cover-state migration after loading runtime secrets and before starting the server. Migration errors fail startup, which the orchestrator's existing API health gate detects. The orchestration host does not run SQLite against a potentially different node-local bind path. Updated deployment and migration documentation.
+- **Verification:** `bash -n scripts/entrypoint.sh scripts/deploy-orchestrator-swarm.sh`, Compose rendering for local and Swarm manifests, and `git diff --check` passed. No live stack or database was changed; the next user-run image redeployment will create the DB and is required for runtime schema/WAL confirmation.
+- **Risks:** Every API start runs the lightweight migration; SQLite WAL and version checks must succeed on the mounted storage. A migration failure keeps the API task from reaching the desired replica count, so orchestration verification fails.
+- **Rollback:** Revert the entrypoint/Dockerfile migration wiring and documentation. Preserve any created state DB and journal files.
+
+## 2026-09-30 — Verify API cover-state mount after redeployment
+
+- **Context:** The user redeployed the stack and authorized Docker API access for verification.
+- **Change:** Recorded live read-only evidence for the cover-state mount and schema delivery in the architecture, AI context and implementation plan.
+- **Verification:** All three KDV services were at `1/1`; the active API task was on `pinokew`. Container inspection confirmed a read-write bind at `/data/kdv_cover_state`. The directory existed with mode `0700`, and hashes of both deployed schema/runner files matched the repository. Internal API health/readiness, optimizer readiness and CDN health each returned HTTP 200. The configured state DB file did not exist, so its schema/WAL migration is still pending. No live data, service or permissions were changed; the runtime configuration did not identify dev/prod.
+- **Risks:** Health endpoints do not prove end-to-end Koha/Drive/DSpace processing. Task 2.1 runtime acceptance requires the explicit migration and subsequent schema/WAL checks. Node-local placement constraints still apply.
+- **Rollback:** Remove this documentation evidence only; runtime state is unaffected.
+
 ## 2026-09-30 — Integrator SQLite state schema (Task 2.1)
 
 - **Context:** Phase 2 needs durable integration state. The user requested reuse of the export SQLite migration code with a separate `COVER_STATE_DB_PATH` file.

@@ -61,10 +61,17 @@ acceptance are documented in [the CDN runbook](external-cover-integrator/runbook
 transactional DDL, schema version 1, required WAL, a unique `record_uid` primary
 key and a `status` index. `EXPORT_DB_PATH` and `exported_records` remain separate.
 Both Compose files mount `COVER_STATE_HOST_PATH` read-write in `kdv-api` at
-`/data/kdv_cover_state`. Run the migration explicitly with
-`python -m src.cover_state.schema` after setting the path, or use `--db-path`.
-Repository verification uses temporary databases; the Compose mount has not been
-deployed or verified on a running task. Because the host path is node-local, API
+`/data/kdv_cover_state`. `scripts/entrypoint.sh` runs
+`python -m src.cover_state.schema` after loading runtime secrets and before
+starting the API; a migration failure stops API startup and therefore blocks a
+successful deployment. The CLI remains available for explicit maintenance with
+`COVER_STATE_DB_PATH` or `--db-path`.
+Repository schema verification uses temporary databases. Read-only post-redeploy
+checks on 2026-09-30 confirmed the API's read-write state mount and deployed schema
+code; at that time the live state DB did not exist. The new startup migration will
+create it on the next image redeployment; runtime schema/WAL confirmation remains
+pending.
+Because the host path is node-local, API
 placement must use the node with that path or shared storage with the same durable
 data on each eligible node. The processing state machine is not yet wired into runtime.
 

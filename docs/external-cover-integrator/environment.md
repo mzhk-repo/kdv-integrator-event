@@ -122,12 +122,14 @@ same-filesystem publication and a positive integer retry limit. Phase 0.2 verifi
 mounts/networking; Phase 2 implements state configuration and retry enforcement.
 
 Task 2.1 reuses `src.export_module.db.schema.MigrationManager` for the separate
-cover schema in `src/cover_state/schema.py`. Apply it with
-`python -m src.cover_state.schema` after exporting `COVER_STATE_DB_PATH`, or pass
-`--db-path` with an absolute file path. The CLI does not load dotenv files or
-require Koha/Drive/DSpace credentials. Migration creates missing parent directories,
-checks WAL and records schema version 1 atomically with the table/index DDL.
-Export keeps its own schema and journal mode. Before environment use, provide a
+cover schema in `src/cover_state/schema.py`. `scripts/entrypoint.sh` runs
+`python -m src.cover_state.schema` after loading runtime env and before starting
+the API. A migration error fails API startup so deployment health checks fail.
+The CLI remains available for explicit maintenance with `COVER_STATE_DB_PATH`
+or `--db-path`; it does not load dotenv files or require Koha/Drive/DSpace
+credentials. Migration creates missing parent directories, checks WAL and records
+schema version 1 atomically with the table/index DDL. Export keeps its own schema
+and journal mode. Before environment use, provide a
 persistent directory mount for the cover DB, including WAL and SHM. Both Compose
 files mount the prepared host directory read-write at `/data/kdv_cover_state` in
 the API. Confirm node placement and the service's actual mount before running the

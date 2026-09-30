@@ -105,8 +105,13 @@ export module's `MigrationManager` with WAL enabled. Run
 Both Compose files mount `COVER_STATE_HOST_PATH` read-write in API at
 `/data/kdv_cover_state`; export and cover state use separate files and tables.
 Schema version is 1; `record_uid` is the primary key and `status` has an index.
-Tests use temporary DBs; the Compose mount has not been deployed. Since host bind
-paths are node-local, API placement must use the prepared node or shared storage.
+The API entrypoint runs this idempotent migration after loading runtime secrets
+and before starting the server; migration errors fail startup. Tests use temporary
+DBs. Post-redeploy read-only checks on 2026-09-30 confirmed the API's read-write
+state mount and deployed schema code; at that time the live DB was absent. The
+startup migration needs an image redeployment, then runtime schema/WAL checks.
+Since host bind paths are node-local,
+API placement must use the prepared node or shared storage.
 The processing state machine remains future work.
 
 ## Important Documents

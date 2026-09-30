@@ -113,10 +113,10 @@ python3 scripts/validate_sops_encrypted.py env.dev.enc env.prod.enc
 echo $?
 ```
 
-## `scripts/entrypoint.sh` (out-of-scope, container entrypoint)
+## `scripts/entrypoint.sh` (container entrypoint)
 
 ### Бізнес-логіка
-- Стартовий wrapper контейнера: спочатку розгортає dotenv payload `/run/secrets/app_env_payload` у runtime ENV, потім зберігає сумісність зі старими one-secret-per-env файлами з `/run/secrets/*` і запускає основний процес (`exec "$@"`).
+- Стартовий wrapper контейнера: розгортає dotenv payload `/run/secrets/app_env_payload` у runtime ENV, зберігає сумісність зі старими one-secret-per-env файлами з `/run/secrets/*`, застосовує ідемпотентну схему cover state DB, тоді запускає основний процес (`exec "$@"`). Помилка міграції завершує старт до запуску API.
 
 ### Ручний запуск
 ```bash
