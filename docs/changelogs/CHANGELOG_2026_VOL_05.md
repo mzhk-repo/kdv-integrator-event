@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Integrator SQLite state schema (Task 2.1)
+
+- **Context:** Phase 2 needs durable integration state. The user requested reuse of the export SQLite migration code with a separate `COVER_STATE_DB_PATH` file.
+- **Change:** Added `src/cover_state/schema.py` with all 11 `records` columns, `ok/pending/failed` constraints, non-negative retries, timestamp default, unique record UID and status index. Extended the existing export `MigrationManager` with selectable schema and optional required WAL, transactional DDL, schema version 1, newer-version rejection and explicit connection closure. Added a migration CLI using the configured cover path; export keeps its separate schema/file and existing journal mode. Added a read-write bind mount of `COVER_STATE_HOST_PATH` at `/data/kdv_cover_state` to the API in both Compose files. Updated the architecture, environment contract, AI context and plan.
+- **Verification:** `.venv/bin/python -m pytest -q tests/test_cover_state_schema.py tests/test_export_schema.py tests/test_export_repository.py tests/test_export_cli.py` — 23 passed, including repeated migration, persistence, export preservation, constraints and transaction rollback. CLI checks using temporary storage confirmed WAL, version 1, 11 columns, unique UID/status indexes and rejection of missing configuration. Compose rendering verified the API mount. `git diff --check` passed. No live DB or service was changed.
+- **Risks:** The Compose mount has not been deployed or observed on a running task. Since the host path is node-local and the API can schedule on manager nodes, ensure all eligible nodes provide the same durable directory or constrain API placement before deployment. SQLite backups must account for WAL. State-machine/retry behavior belongs to Task 2.2.
+- **Rollback:** Revert the schema/runner changes while preserving state files; no table or DB deletion is included.
+
 ## 2026-09-30 — Move Integrator-managed MARC values to field 957
 
 - **Context:** Koha `MARCOverlayRules` protects a whole MARC field, so protecting `956` would also block ordinary updates to its source and status subfields.

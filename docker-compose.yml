@@ -25,6 +25,9 @@ services:
         source: ${EXPORT_STATE_HOST_PATH:-/srv/kdv-integrator/export-state}
         target: /data/kdv_export_state
       - type: bind
+        source: ${COVER_STATE_HOST_PATH:?COVER_STATE_HOST_PATH is required}
+        target: /data/kdv_cover_state
+      - type: bind
         source: ${EXPORT_CONFIG_HOST_PATH:-./config}
         target: /app/config
         read_only: true

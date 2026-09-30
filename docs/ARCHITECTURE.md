@@ -54,6 +54,20 @@ The static service exposes `/healthz` and content-addressed WebP files; migratio
 and Integrator writer/state changes remain later phases. Deployment and external
 acceptance are documented in [the CDN runbook](external-cover-integrator/runbook.md).
 
+### External cover state schema (Task 2.1)
+
+`src/cover_state/schema.py` defines the separate `records` SQLite table at
+`COVER_STATE_DB_PATH`. It reuses the export module's `MigrationManager`, with
+transactional DDL, schema version 1, required WAL, a unique `record_uid` primary
+key and a `status` index. `EXPORT_DB_PATH` and `exported_records` remain separate.
+Both Compose files mount `COVER_STATE_HOST_PATH` read-write in `kdv-api` at
+`/data/kdv_cover_state`. Run the migration explicitly with
+`python -m src.cover_state.schema` after setting the path, or use `--db-path`.
+Repository verification uses temporary databases; the Compose mount has not been
+deployed or verified on a running task. Because the host path is node-local, API
+placement must use the node with that path or shared storage with the same durable
+data on each eligible node. The processing state machine is not yet wired into runtime.
+
 ⚡ Деталі Реалізації (M2-M7)
 
 ### 1. Асинхронність (Async Core) + DI
@@ -353,7 +367,7 @@ src/export_module/           # Koha Export Module (CLI/batch, ізольован
 ├── orchestrator.py          # ExportOrchestrator: staged pipeline
 ├── config.py                # ExportConfig + RuntimeOptions (SOPS bootstrap)
 ├── db/
-│   ├── schema.py            # DDL: exported_records, SCHEMA_V1, MigrationManager
+│   ├── schema.py            # Export DDL and shared SQLite MigrationManager
 │   └── repository.py        # ExportRepository: staged state transitions
 ├── koha/
 │   ├── client.py            # KohaApiClient: keyset pagination, optional range

@@ -97,7 +97,17 @@ public CDN HTTPS, redirect and origin isolation await the user's deployment.
 Runtime storage is not repository structure:
 - `/data/koha-covers/assets/` — published assets;
 - `/data/koha-covers/.incoming/` — temporary publish area;
-- SQLite `state.db` — deployment path is configurable.
+- SQLite `state.db` — separate file configured by `COVER_STATE_DB_PATH`.
+
+Task 2.1 implements `records` schema in `src/cover_state/schema.py`, reusing the
+export module's `MigrationManager` with WAL enabled. Run
+`python -m src.cover_state.schema` with `COVER_STATE_DB_PATH` (or `--db-path`).
+Both Compose files mount `COVER_STATE_HOST_PATH` read-write in API at
+`/data/kdv_cover_state`; export and cover state use separate files and tables.
+Schema version is 1; `record_uid` is the primary key and `status` has an index.
+Tests use temporary DBs; the Compose mount has not been deployed. Since host bind
+paths are node-local, API placement must use the prepared node or shared storage.
+The processing state machine remains future work.
 
 ## Important Documents
 
@@ -153,4 +163,4 @@ Record architecture-affecting choices in the proper source document/ADR, not onl
 
 ## Last Updated
 
-2026-09-29
+2026-09-30

@@ -160,6 +160,18 @@ diff <(grep -A2 'tag="957"' before.xml) <(grep -A2 'tag="957"' after.xml)
 
 **Опис:** Створити SQLite-схему з полями `record_uid, cover_source_id, cover_source_sha256, cover_asset_sha256, file_source_id, file_source_sha256, dspace_item_uuid, dspace_bitstream_uuid, status, retry_count, updated_at` (розділ 19).
 
+**Стан на 2026-09-30:** репозиторну частину 2.1 реалізовано у `src/cover_state/schema.py`.
+Перевикористовується `MigrationManager` з export-модуля, але файл БД окремий —
+`${COVER_STATE_DB_PATH}`; `${EXPORT_DB_PATH}` лишається тільки для export.
+Міграція транзакційна та ідемпотентна, фіксує `PRAGMA user_version=1` і перевіряє WAL.
+Унікальний індекс `record_uid` створюється через `PRIMARY KEY`; `status` має окремий індекс.
+Міграцію перевірено на тимчасових БД: 23 тести schema/export regression пройшли;
+CLI підтвердив `wal`, версію 1, 11 колонок та обидва індекси.
+Розгортання в цільовому середовищі не виконувалось.
+Перед застосуванням у контейнері директорія БД має бути змонтована для постійного
+зберігання БД, WAL та SHM. Compose mount підготовлений; перевірка його доставки
+у deployed Swarm task лишається за ручним деплоєм користувача.
+
 **Acceptance criteria:**
 - Схема застосована через міграцію (не ручний SQL за замовчуванням у продакшені).
 - `PRAGMA journal_mode` повертає `wal`.
@@ -167,9 +179,15 @@ diff <(grep -A2 'tag="957"' before.xml) <(grep -A2 'tag="957"' after.xml)
 
 **Validation:**
 ```bash
-sqlite3 state.db "PRAGMA journal_mode;"                 # очікується: wal
-sqlite3 state.db ".schema records"
-sqlite3 state.db "SELECT sql FROM sqlite_master WHERE type='index';"
+# У вибраному середовищі; спочатку перевірити persistent mount директорії БД.
+python -m src.cover_state.schema  # використовує COVER_STATE_DB_PATH, без зовнішніх API
+sqlite3 "$COVER_STATE_DB_PATH" "PRAGMA journal_mode;"  # очікується: wal
+sqlite3 "$COVER_STATE_DB_PATH" ".schema records"
+sqlite3 "$COVER_STATE_DB_PATH" "PRAGMA index_list(records);"
+sqlite3 "$COVER_STATE_DB_PATH" "SELECT sql FROM sqlite_master WHERE type='index';"
+
+# Локальна перевірка на тимчасових БД, без production-змін.
+.venv/bin/python -m pytest -q tests/test_cover_state_schema.py tests/test_export_schema.py tests/test_export_repository.py tests/test_export_cli.py
 ```
 
 ### Задача 2.2 — State machine: `ok`/`pending`/`failed` + `${MAX_RETRY_COUNT}`

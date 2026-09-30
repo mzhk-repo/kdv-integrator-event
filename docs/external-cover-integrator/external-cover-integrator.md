@@ -631,6 +631,11 @@ Cloudflare cache purge не потрібний.
 
 Integrator потребує невелику SQLite DB.
 
+Task 2.1 uses the export module's SQLite migration runner, with a separate file
+at `${COVER_STATE_DB_PATH}`. `src/cover_state/schema.py` owns the `records` schema;
+export retains `${EXPORT_DB_PATH}` and `exported_records`. Apply the cover migration
+with `python -m src.cover_state.schema`; it checks WAL and sets schema version 1.
+
 Не потрібно дублювати в ній всю Koha або DSpace metadata.
 
 Достатньо зберігати технічний стан:

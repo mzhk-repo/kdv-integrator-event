@@ -8,8 +8,10 @@ are placeholders. Deployment values belong in `env.dev.enc` or `env.prod.enc`.
 
 The cover host paths are consumed by the pre-deploy `scripts/init-volume.sh`.
 The CDN URL/image and assets host path are used by the orchestrator and
-Compose/Swarm CDN service. State DB and Integrator cover pipeline settings remain
-a contract for subsequent phases. Required values have
+Compose/Swarm CDN service. Task 2.1 adds an explicit state-schema migration and
+bind mount for the API using `COVER_STATE_DB_PATH` and `COVER_STATE_HOST_PATH`;
+pipeline consumers remain future work.
+Required values have
 no implicit fallback to an installation-specific domain or host.
 
 | Variable | Purpose and constraints | Default / delivery |
@@ -27,8 +29,8 @@ no implicit fallback to an installation-specific domain or host.
 | `COVERS_CDN_IMAGE` | Official nginx Alpine image used by the static CDN. Set a tested tag/digest for reproducible deployment. | `nginx:alpine`; deployment config |
 | `COVERS_STORAGE_HOST_PATH` | Absolute host bind source for the cover storage root. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
 | `COVERS_STORAGE_PATH` | Absolute Integrator container storage root; contains `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. | Required in cover deployment; runtime payload and deployment config |
-| `COVER_STATE_HOST_PATH` | Absolute host bind source for durable cover state; separate from Koha Export state. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
-| `COVER_STATE_DB_PATH` | Absolute container path to the SQLite DB inside the durable state mount. Its directory must support DB, WAL and SHM files. | Required when implementing Phase 2; runtime payload |
+| `COVER_STATE_HOST_PATH` | Absolute host bind source mounted read-write in API at `/data/kdv_cover_state`; separate from Koha Export state. Prepared by `init-volume.sh`. Must be available on every node eligible to run API, or API placement must be constrained to the prepared node. | Required by Swarm pre-deploy; deployment config |
+| `COVER_STATE_DB_PATH` | Absolute file path for the separate cover state SQLite DB, normally `/data/kdv_cover_state/state.db`; never reuse `EXPORT_DB_PATH`. The directory must support DB, WAL and SHM files. | Required by Task 2.1 migration CLI; runtime payload |
 | `MAX_RETRY_COUNT` | Positive integer limiting failed record cycles. Independent of the export module's `MAX_RETRIES`. | Required when implementing Phase 2; template example `5`, not an implicit runtime default |
 | `INTEGRATOR_MOUNT_PATH` | Existing root for supported relative local sources; absolute source paths and traversal remain forbidden. | `/mnt/drive`; runtime payload / existing Swarm mount |
 | `GDRIVE_ENABLED` | Existing Google Drive source switch. | `false`; runtime payload |
@@ -76,8 +78,11 @@ symlinks, including existing ancestor directories and managed cover children.
 The deployment account needs permission to create directories and adjust their
 modes. The script does not elevate privileges and fails if these permissions are
 unavailable. It prepares only this node's host paths; the CDN is pinned to that
-node. Future Integrator/state mounts need matching placement or storage prepared
-on every eligible node.
+node. The API bind mount is also node-local unless the host path is backed by
+shared storage. Ensure the API task runs on a node where `COVER_STATE_HOST_PATH`
+resolves to the same durable data, by preparing every eligible node or constraining
+the API service to the prepared node. Do not allow Swarm to create independent,
+empty local directories on different candidate nodes.
 
 ## Secret delivery and component access
 
@@ -115,6 +120,19 @@ Future consumers must validate required cover values when their feature is used:
 HTTPS base URL, absolute storage paths, writable Integrator storage/state,
 same-filesystem publication and a positive integer retry limit. Phase 0.2 verifies
 mounts/networking; Phase 2 implements state configuration and retry enforcement.
+
+Task 2.1 reuses `src.export_module.db.schema.MigrationManager` for the separate
+cover schema in `src/cover_state/schema.py`. Apply it with
+`python -m src.cover_state.schema` after exporting `COVER_STATE_DB_PATH`, or pass
+`--db-path` with an absolute file path. The CLI does not load dotenv files or
+require Koha/Drive/DSpace credentials. Migration creates missing parent directories,
+checks WAL and records schema version 1 atomically with the table/index DDL.
+Export keeps its own schema and journal mode. Before environment use, provide a
+persistent directory mount for the cover DB, including WAL and SHM. Both Compose
+files mount the prepared host directory read-write at `/data/kdv_cover_state` in
+the API. Confirm node placement and the service's actual mount before running the
+migration. Use SQLite's backup API or a coherent backup of the DB and journal files;
+copying only a live WAL-mode DB can omit updates.
 
 Before marking Task 0.1 fully accepted in an environment, confirm that the selected
 service account exists and can read the target Drive folder and a sample binary
