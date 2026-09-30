@@ -95,27 +95,69 @@ class StateMachine:
             )
         return cursor.rowcount == 1
 
-    def record_result(self, record_uid: str, *, success: bool, partial: bool = False) -> None:
+    def record_result(
+        self, record_uid: str, *, success: bool, partial: bool = False, permanent: bool = False
+    ) -> None:
         """Apply a confirmed cycle result; partial errors preserve pending state."""
         self._validate_uid(record_uid)
-        if type(success) is not bool or type(partial) is not bool:
-            raise ValueError("success and partial must be booleans")
+        if any(type(value) is not bool for value in (success, partial, permanent)):
+            raise ValueError("success, partial and permanent must be booleans")
+        if success and permanent:
+            raise ValueError("a successful result cannot be a permanent failure")
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE records
                 SET status = CASE
                         WHEN ? THEN 'ok'
+                        WHEN ? THEN 'failed'
                         WHEN ? AND retry_count + 1 < ? THEN 'pending'
                         ELSE 'failed' END,
-                    retry_count = CASE WHEN ? THEN 0 ELSE retry_count + 1 END,
+                    retry_count = CASE WHEN ? THEN 0
+                        WHEN ? THEN MAX(retry_count + 1, ?)
+                        ELSE retry_count + 1 END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE record_uid = ?
                 """,
-                (success, partial, self.max_retry_count, success, record_uid),
+                (success, permanent, partial, self.max_retry_count,
+                 success, permanent, self.max_retry_count, record_uid),
             )
             if cursor.rowcount != 1:
                 raise KeyError(record_uid)
+
+    def update_source_id(
+        self, record_uid: str, file_id: str, sha256: str, *, source: Literal["cover", "file"]
+    ) -> bool:
+        """Remember a new ID only for confirmed, identical source content."""
+        self._validate_uid(record_uid)
+        if source not in ("cover", "file"):
+            raise ValueError("source must be 'cover' or 'file'")
+        if not isinstance(file_id, str) or not file_id.strip():
+            raise ValueError("file_id must be a non-empty string")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE records SET {source}_source_id = ?, updated_at = CURRENT_TIMESTAMP "
+                f"WHERE record_uid = ? AND status = 'ok' AND {source}_source_sha256 = ?",
+                (file_id, record_uid, sha256),
+            )
+        return cursor.rowcount == 1
+
+    @staticmethod
+    def _retry_due(record, now: datetime) -> bool:
+        updated_at = datetime.fromisoformat(record["updated_at"]).replace(tzinfo=timezone.utc)
+        elapsed = (now - updated_at).total_seconds()
+        # Compare in log space to avoid overflow for large configured limits.
+        return record["retry_count"] == 0 or (
+            elapsed >= 1 and record["retry_count"] - 1 <= math.log2(elapsed)
+        )
+
+    def is_retry_eligible(self, record_uid: str) -> bool:
+        record = self.get(record_uid)
+        return bool(
+            record is not None and record["status"] in ("pending", "failed")
+            and record["retry_count"] < self.max_retry_count
+            and self._retry_due(record, datetime.now(timezone.utc))
+        )
 
     def get_retry_eligible(self, *, now: datetime | None = None) -> list[dict]:
         """Return unfinished, unexhausted records whose backoff has elapsed."""
@@ -131,16 +173,7 @@ class StateMachine:
                 """,
                 (self.max_retry_count,),
             ).fetchall()
-        eligible = []
-        for row in rows:
-            updated_at = datetime.fromisoformat(row["updated_at"]).replace(tzinfo=timezone.utc)
-            elapsed = (now - updated_at).total_seconds()
-            # Compare in log space to avoid overflow for large configured limits.
-            if row["retry_count"] == 0 or (
-                elapsed >= 1 and row["retry_count"] - 1 <= math.log2(elapsed)
-            ):
-                eligible.append(dict(row))
-        return eligible
+        return [dict(row) for row in rows if self._retry_due(row, now)]
 
     def reset_retry_count(self, record_uid: str) -> None:
         """Explicit operator reset after fixing the cause; retain status/resources."""

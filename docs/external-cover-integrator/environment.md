@@ -147,6 +147,15 @@ without sleeping. An operator reset to zero bypasses the delay while preserving
 status and resource identities. Pipeline callers must serialize complete record
 cycles; selecting eligible rows does not lock them for processing.
 
+Task 3.2 `check_drive_metadata()` reuses the existing `GDRIVE_ENABLED` and
+`GDRIVE_SERVICE_ACCOUNT_FILE` contract through `GoogleDriveSource`; authentication
+remains read-only. Tests can inject `drive_source` and its existing `drive_client`.
+No new env variables are required. Permanent checksum failures are encoded as
+`failed` with `retry_count >= MAX_RETRY_COUNT` in the unchanged version-1 schema.
+An explicit reset is required after fixing the source; transient failures increment
+once and remain subject to backoff/cutoff. The metadata gate does not download
+files and is not yet called by the legacy API integration flow.
+
 Before marking Task 0.1 fully accepted in an environment, confirm that the selected
 service account exists and can read the target Drive folder and a sample binary
 file. Review its folder shares and inherited access to ensure it has no unnecessary

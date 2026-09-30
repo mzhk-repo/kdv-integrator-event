@@ -109,8 +109,30 @@ An absent source returns `no_source` and never deletes stored resources.
 Retry callers still enforce cutoff/backoff through state eligibility; `resume`
 does not authorize an exhausted attempt. Cover and PDF are checked separately;
 a source-level `noop` does not skip work required by another source. Task 3.2
-will consume these decisions for metadata/SHA checks. This gate is not yet wired
+consumes these decisions for metadata/SHA checks. This gate is not yet wired
 into the legacy downloader or API integration flow.
+
+### External cover Drive metadata/SHA gate (Task 3.2)
+
+`src/cover_state/drive.py:check_drive_metadata()` calls the fast gate first and
+constructs `GoogleDriveSource` lazily only when metadata is needed. Its public
+`get_metadata()` reuses existing read-only service-account authentication and
+requests `sha256Checksum` explicitly. Drive resource keys use the documented
+`X-Goog-Drive-Resource-Keys` request header for metadata and download requests.
+Confirmed same-content sources update only their corresponding source ID and
+timestamp, preserving `ok` and downstream resources. Changed content returns
+`resource_changed` with metadata/SHA and enters `pending`, without committing
+unconfirmed source IDs/hashes. Matching hashes in unfinished cycles return
+`resume`; matching IDs resume durable work without another metadata call.
+The gate checks retry eligibility first; cutoff/backoff return `deferred`.
+Missing, empty or malformed checksums raise `MissingChecksumError`, log a safe
+reason and persist `failed` with the retry count at least at the configured
+limit, requiring an explicit reset. This encodes permanent failures using the
+existing version-1 schema. API/client failures raise `DriveMetadataError` and
+increment retries once; API exception text is not logged. No downloads, asset
+processing, DSpace writes or Koha write-back are performed by this gate.
+Tests use temporary SQLite DBs, mocks and offline real SDK request construction;
+live Drive acceptance and external pipeline deployment remain unverified.
 
 ⚡ Деталі Реалізації (M2-M7)
 

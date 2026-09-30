@@ -315,7 +315,16 @@ class GoogleDriveSource:
             cache_discovery=False,
         )
 
-    def _get_metadata(self, client, file_id: str, resource_key: str | None) -> dict:
+    def get_metadata(self, file_id: str, resource_key: str | None = None) -> dict:
+        """Fetch binary source metadata/checksum without downloading content."""
+        if not self.enabled:
+            raise GoogleDriveDownloadError("Google Drive source is disabled")
+        client = self.drive_client or self._build_google_drive_client()
+        return self._get_metadata(client, file_id, resource_key, include_checksum=True)
+
+    def _get_metadata(
+        self, client, file_id: str, resource_key: str | None, *, include_checksum: bool = False
+    ) -> dict:
         if hasattr(client, "get_metadata"):
             return client.get_metadata(file_id=file_id, resource_key=resource_key)
 
@@ -324,9 +333,12 @@ class GoogleDriveSource:
             "fields": "id,name,mimeType,size,capabilities/canDownload",
             "supportsAllDrives": True,
         }
+        if include_checksum:
+            params["fields"] += ",sha256Checksum"
+        request = client.files().get(**params)
         if resource_key:
-            params["resourceKey"] = resource_key
-        return client.files().get(**params).execute()
+            request.headers["X-Goog-Drive-Resource-Keys"] = f"{file_id}/{resource_key}"
+        return request.execute()
 
     def _download_to_file(
         self, client, file_id: str, resource_key: str | None, part_path: str
@@ -348,9 +360,9 @@ class GoogleDriveSource:
             ) from exc
 
         params = {"fileId": file_id, "supportsAllDrives": True}
-        if resource_key:
-            params["resourceKey"] = resource_key
         request = client.files().get_media(**params)
+        if resource_key:
+            request.headers["X-Goog-Drive-Resource-Keys"] = f"{file_id}/{resource_key}"
         with open(part_path, "wb") as stream:
             downloader = MediaIoBaseDownload(stream, request)
             done = False

@@ -275,6 +275,24 @@ Metadata/SHA-перевірка належить задачі 3.2; legacy API/do
 
 **Опис:** При зміні File ID отримати metadata, порівняти `sha256Checksum`. Якщо поле відсутнє (Google Doc/shortcut) — `status = failed`, без спроби подальшої обробки (розділ 6).
 
+**Стан на 2026-09-30:** репозиторну частину 3.2 реалізовано в
+`src/cover_state/drive.py:check_drive_metadata()`. Наявний `GoogleDriveSource`
+отримує metadata з явним `sha256Checksum`; клієнт створюється тільки після
+fast gate та retry eligibility. Однаковий SHA у підтвердженому `ok` циклі
+оновлює лише source ID/timestamp; новий SHA повертає `resource_changed` та
+`pending`, без передчасного збереження нових source ID/hash. Незавершені цикли
+не переводяться в `ok` лише через однаковий SHA. Відсутній/порожній/некоректний
+checksum → permanent failure (`failed`, retries щонайменше на ліміті) та
+безпечний лог; мережеві/client помилки → один increment і retry/backoff.
+Версія схеми лишається 1; manual reset повертає permanent failure у обробку.
+Виправлено передачу resource key через HTTP header у metadata/download requests.
+103 пов'язаних тести пройшли, 15 optimizer-тестів виключено. Повний цільовий
+набір дав 115 passed / 3 failed: наявні optimizer-тести використовують DPI
+250/300, яких немає в поточному allowlist 100–150; ці файли не змінювалися.
+Реальний SDK перевірено offline з mock transport; live Drive binary/Doc/shortcut
+та deployed pipeline ще не перевірено, тому runtime-приймання 3.2 і Фази 3
+залишається відкритим. Download/conversion/write-back належать наступним фазам.
+
 **Acceptance criteria:**
 - Реальний binary-файл: SHA коректно отримано і порівняно.
 - Google Doc/shortcut як source: запис переходить у `status = failed` з зрозумілою причиною в лозі, а не трактується як "без змін".
@@ -282,13 +300,12 @@ Metadata/SHA-перевірка належить задачі 3.2; legacy API/do
 
 **Validation:**
 ```bash
-python -m integrator.run --record test-uid-shortcut
-sqlite3 state.db "SELECT status FROM records WHERE record_uid='test-uid-shortcut';"  # очікується failed
-grep "test-uid-shortcut" integrator.log | grep -i "missing sha256Checksum"
-
-# Симуляція мережевої помилки (напр. через mock/toxiproxy)
-python -m integrator.run --record test-uid-network-fail --simulate-drive-error
-sqlite3 state.db "SELECT status, retry_count FROM records WHERE record_uid='test-uid-network-fail';"
+# Тимчасові БД та mock Drive; SDK requests будуються offline без credentials.
+.venv/bin/python -m pytest -q tests/test_cover_drive_metadata.py tests/test_cover_dirty_check.py tests/test_state_machine.py tests/test_cover_state_schema.py tests/test_services.py tests/test_core.py -k 'not optimizer'
+# Live acceptance у вибраному середовищі: викликати check_drive_metadata()
+# з parsed ID/resource key та окремою тестовою state DB для binary/Doc/shortcut.
+# Підтвердити binary SHA, failed/cutoff без checksum та safe log; не виводити
+# credentials, resource keys або API exception payloads.
 ```
 
 ---

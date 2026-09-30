@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Drive metadata/SHA gate and permanent checksum failures (Task 3.2)
+
+- **Context:** Changed Drive IDs need checksum comparison; missing checksums must stop processing, while network/quota failures must enter bounded retries.
+- **Change:** Added `src/cover_state/drive.py` using the fast gate and existing read-only Drive authentication. Metadata explicitly requests SHA-256. Confirmed same-content updates preserve downstream resources; changed content enters pending without committing unconfirmed source identity/hash. Added atomic permanent-failure cutoff and per-record retry eligibility in the state module. Corrected resource-key delivery through the documented HTTP header in metadata/download requests. Updated architecture/context/environment/plan.
+- **Verification:** Related tests with `-k 'not optimizer'` passed: 103 passed, 15 deselected, including checksum comparison, zero-call fast paths, missing/invalid checksums, permanent reset, transient cutoff, safe logs and offline real SDK requests. The unfiltered target suite had 115 passed / 3 failed due to existing optimizer tests requesting 250/300 DPI outside the committed 100–150 allowlist; optimizer code/tests were unchanged. `git diff --check` passed. No live DB, service or Drive file was changed.
+- **Risks:** Live Drive binary/Doc/shortcut acceptance remains unverified; Phase 3 runtime acceptance stays open. Permanent failures saturate the retry counter at the limit in schema version 1 and require manual reset. External pipeline wiring remains pending; callers must serialize complete record cycles.
+- **Rollback:** Revert the metadata gate, state extensions, Drive request changes, tests and related docs. Preserve existing DB/resources; records already marked permanent require deliberate operator reset before retry.
+
 ## 2026-09-30 — Fast Drive File ID dirty-check (Task 3.1)
 
 - **Context:** The external pipeline needs a zero-work gate for unchanged sources, while unfinished cycles must still reconcile even when their Drive ID matches.

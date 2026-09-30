@@ -134,7 +134,19 @@ Use the existing `GoogleDriveUrlParser` for URL-to-ID extraction. Results:
 (no deletion). Check cover/PDF independently and preserve retry cutoff/backoff.
 38 dirty-check/state/schema tests passed on 2026-09-30; a 100-record fixture
 confirmed 200 source-level NO-OPs, zero mock Drive/downstream calls and unchanged
-state. Metadata/SHA consumption belongs to Task 3.2; legacy runtime is not wired.
+state. Task 3.2 consumes this gate; legacy runtime is not wired.
+
+Task 3.2 implements `check_drive_metadata` in `src/cover_state/drive.py` using
+lazy `GoogleDriveSource.get_metadata` with explicit `sha256Checksum` fields.
+It enforces retry eligibility before network access. Confirmed identical SHA
+updates only source ID/timestamp; changed SHA returns metadata/hash and enters
+pending without committing unconfirmed identities. Unfinished same-SHA cycles
+still resume. Missing/empty/invalid checksum is permanent: failed + retry count
+at least at the limit until manual reset. Network/client errors increment once;
+API exception text is not logged. Resource keys use the proper request header.
+103 related tests passed (15 optimizer tests deselected); the unfiltered run had
+115 passes and three existing optimizer DPI failures unrelated to this change.
+Live Drive file acceptance and deployed external pipeline wiring remain pending.
 
 ## Important Documents
 
