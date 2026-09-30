@@ -171,10 +171,15 @@ CLI підтвердив `wal`, версію 1, 11 колонок та обид�
 `kdv_integrator_event` підтвердила фактичний read-write mount state-директорії в API
 на вузлі `pinokew`, збіг коду schema/runner з репозиторієм і HTTP 200 для API
 health/readiness, optimizer readiness та CDN health. Dev/prod мітка середовища
-не визначена. Файл `state.db` відсутній: CLI-міграція в deployed контейнері ще
-не існував. Міграцію підключено до API entrypoint після завантаження runtime env
+не визначена. На момент першої перевірки файл `state.db` був відсутній.
+Міграцію підключено до API entrypoint після завантаження runtime env
 та перед запуском сервера; помилка міграції зупиняє API і health-gate деплою.
-Потрібен наступний image redeploy і перевірка схеми/WAL у runtime.
+Після наступного деплою користувач виконав read-only перевірку в API-контейнері
+та надав вивід 2026-09-30: усі три KDV services мають `1/1`, persistent state bind
+має `RW=true`, `/data/kdv_cover_state/state.db` існує, `journal_mode=wal`,
+`user_version=1`. Підтверджено всі 11 колонок, defaults і CHECK constraints,
+унікальний primary-key індекс `record_uid` та `idx_records_status`.
+Runtime-приймання 2.1 завершено; задача 2.2 залишається наступною.
 
 **Acceptance criteria:**
 - Схема застосована через міграцію (не ручний SQL за замовчуванням у продакшені).
@@ -198,6 +203,21 @@ sqlite3 "$COVER_STATE_DB_PATH" "SELECT sql FROM sqlite_master WHERE type='index'
 
 **Опис:** Реалізувати модуль, що приймає результат кроку (success/error), оновлює `status`/`retry_count`, і після досягнення `${MAX_RETRY_COUNT}` виключає запис з активного retry-скану (розділ 19, 22).
 
+**Стан на 2026-09-30:** задачу 2.2 реалізовано та перевірено у
+`src/cover_state/state_machine.py`. `StateMachine` використовує окрему WAL DB
+та обов'язковий позитивний `${MAX_RETRY_COUNT}` без runtime-default.
+`mark_pending()` зберігає retries/resources і відхиляє вичерпані записи;
+`record_result()` атомарно фіксує успіх або помилку, може зберігати `pending`
+для частково виконаної роботи, але на cutoff переводить у `failed`.
+`get_retry_eligible()` виключає `ok` та записи на ліміті й застосовує backoff
+1, 2, 4, ... секунд від UTC `updated_at`. Reset до нуля через метод або прямий
+SQL повертає запис у вибірку одразу, зберігаючи status/resources.
+39 цільових state/schema/export тестів пройшли на тимчасових БД, включно з
+persistence, cutoff, backoff, reset та атомарними concurrent increments.
+Вибірка не резервує записи: майбутній pipeline має використовувати один
+writer-процес або per-record lock на весь цикл. Зовнішні API не підключено;
+runtime-схема 2.1 прийнята за наданим користувачем виводом. Фаза 2 завершена.
+
 **Acceptance criteria:**
 - Успішний цикл: `status → ok`, `retry_count → 0`.
 - Помилка: `status → failed` (або лишається `pending`), `retry_count += 1`.
@@ -206,14 +226,10 @@ sqlite3 "$COVER_STATE_DB_PATH" "SELECT sql FROM sqlite_master WHERE type='index'
 
 **Validation:**
 ```bash
-# Unit-тести стану (приклад, pytest)
-pytest tests/test_state_machine.py -v
-
-# Інтеграційна перевірка: N штучних помилок поспіль мають зупинити retry на N=MAX_RETRY_COUNT
-sqlite3 state.db "SELECT record_uid, status, retry_count FROM records WHERE record_uid='test-uid-1';"
-# після ручного reset:
-sqlite3 state.db "UPDATE records SET retry_count=0 WHERE record_uid='test-uid-1';"
-sqlite3 state.db "SELECT retry_count FROM records WHERE record_uid='test-uid-1';"  # очікується 0
+# Тимчасові БД; без зовнішніх API та runtime-змін.
+# Тести включають N помилок до cutoff, повторне відкриття БД, прямий SQL reset,
+# успішне завершення, partial/pending, backoff та concurrent increments.
+.venv/bin/python -m pytest -q tests/test_state_machine.py tests/test_cover_state_schema.py tests/test_export_schema.py tests/test_export_repository.py tests/test_export_cli.py
 ```
 
 ---

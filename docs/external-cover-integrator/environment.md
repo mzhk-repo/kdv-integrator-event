@@ -31,7 +31,7 @@ no implicit fallback to an installation-specific domain or host.
 | `COVERS_STORAGE_PATH` | Absolute Integrator container storage root; contains `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. | Required in cover deployment; runtime payload and deployment config |
 | `COVER_STATE_HOST_PATH` | Absolute host bind source mounted read-write in API at `/data/kdv_cover_state`; separate from Koha Export state. Prepared by `init-volume.sh`. Must be available on every node eligible to run API, or API placement must be constrained to the prepared node. | Required by Swarm pre-deploy; deployment config |
 | `COVER_STATE_DB_PATH` | Absolute file path for the separate cover state SQLite DB, normally `/data/kdv_cover_state/state.db`; never reuse `EXPORT_DB_PATH`. The directory must support DB, WAL and SHM files. | Required by Task 2.1 migration CLI; runtime payload |
-| `MAX_RETRY_COUNT` | Positive integer limiting failed record cycles. Independent of the export module's `MAX_RETRIES`. | Required when implementing Phase 2; template example `5`, not an implicit runtime default |
+| `MAX_RETRY_COUNT` | Positive integer limiting failed record cycles. Independent of the export module's `MAX_RETRIES`. | Required by Task 2.2 `StateMachine`; template example `5`, not an implicit runtime default |
 | `INTEGRATOR_MOUNT_PATH` | Existing root for supported relative local sources; absolute source paths and traversal remain forbidden. | `/mnt/drive`; runtime payload / existing Swarm mount |
 | `GDRIVE_ENABLED` | Existing Google Drive source switch. | `false`; runtime payload |
 | `GDRIVE_SERVICE_ACCOUNT_FILE` | Existing container path to the service-account JSON secret. Never inline JSON into dotenv. | Template path `/run/secrets/gdrive_service_account_json`; runtime payload |
@@ -135,6 +135,17 @@ files mount the prepared host directory read-write at `/data/kdv_cover_state` in
 the API. Confirm node placement and the service's actual mount before running the
 migration. Use SQLite's backup API or a coherent backup of the DB and journal files;
 copying only a live WAL-mode DB can omit updates.
+
+Task 2.2 `StateMachine()` reads `COVER_STATE_DB_PATH` and `MAX_RETRY_COUNT` directly
+from the already-loaded runtime environment. Explicit `db_path` and integer
+`max_retry_count` constructor arguments support isolated tests and callers with
+existing configuration. Missing/invalid retry limits fail before DB migration;
+no default limit is supplied. The API startup migration requires only the DB path;
+the state machine is not yet called by the external processing pipeline.
+Retry selection applies exponential delays of 1, 2, 4, ... seconds after failures,
+without sleeping. An operator reset to zero bypasses the delay while preserving
+status and resource identities. Pipeline callers must serialize complete record
+cycles; selecting eligible rows does not lock them for processing.
 
 Before marking Task 0.1 fully accepted in an environment, confirm that the selected
 service account exists and can read the target Drive folder and a sample binary

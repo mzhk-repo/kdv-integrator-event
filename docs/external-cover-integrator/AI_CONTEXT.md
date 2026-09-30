@@ -108,11 +108,23 @@ Schema version is 1; `record_uid` is the primary key and `status` has an index.
 The API entrypoint runs this idempotent migration after loading runtime secrets
 and before starting the server; migration errors fail startup. Tests use temporary
 DBs. Post-redeploy read-only checks on 2026-09-30 confirmed the API's read-write
-state mount and deployed schema code; at that time the live DB was absent. The
-startup migration needs an image redeployment, then runtime schema/WAL checks.
+state mount and deployed schema code; at that time the live DB was absent.
+After the next deployment, user-run read-only container checks on 2026-09-30
+confirmed the persistent read-write bind, existing `/data/kdv_cover_state/state.db`,
+WAL, version 1, all 11 columns and unique UID/status indexes. Task 2.1 is accepted;
+the environment was not identified as dev/prod.
 Since host bind paths are node-local,
 API placement must use the prepared node or shared storage.
-The processing state machine remains future work.
+Task 2.2 implements `StateMachine` in `src/cover_state/state_machine.py`:
+`mark_pending`, `record_result`, `get_retry_eligible`, `reset_retry_count`, `get`.
+Required `MAX_RETRY_COUNT` has no implicit default. Success clears retries;
+errors increment them, partial failures may retain `pending`, and cutoff forces
+`failed` and excludes retries. Backoff is 1, 2, 4, ... seconds from `updated_at`;
+zero retries (including manual reset) are immediately eligible. Existing resource
+columns survive transitions. SQLite writes are transactional, but selection is
+not a worker claim; the future pipeline must serialize each complete record cycle.
+39 focused state/schema/export tests passed on temporary DBs on 2026-09-30.
+External pipeline wiring remains future work.
 
 ## Important Documents
 

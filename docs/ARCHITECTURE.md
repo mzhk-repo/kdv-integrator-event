@@ -68,12 +68,32 @@ successful deployment. The CLI remains available for explicit maintenance with
 `COVER_STATE_DB_PATH` or `--db-path`.
 Repository schema verification uses temporary databases. Read-only post-redeploy
 checks on 2026-09-30 confirmed the API's read-write state mount and deployed schema
-code; at that time the live state DB did not exist. The new startup migration will
-create it on the next image redeployment; runtime schema/WAL confirmation remains
-pending.
+code; at that time the live state DB did not exist. After the next deployment,
+user-run read-only container checks on 2026-09-30 confirmed the persistent
+read-write state bind, `/data/kdv_cover_state/state.db`, WAL, schema version 1,
+all 11 columns and both required indexes. Task 2.1 runtime acceptance is complete;
+the environment was not identified as dev/prod.
 Because the host path is node-local, API
 placement must use the node with that path or shared storage with the same durable
-data on each eligible node. The processing state machine is not yet wired into runtime.
+data on each eligible node.
+
+### External cover state machine (Task 2.2)
+
+`src/cover_state/state_machine.py` provides `StateMachine` for the separate WAL DB.
+It requires `COVER_STATE_DB_PATH` and a positive integer `MAX_RETRY_COUNT` from
+the environment, or explicit constructor arguments; it does not import external
+API configuration. `mark_pending()` starts/resumes a cycle without clearing
+retries or resource columns and rejects exhausted records. `record_result()`
+marks confirmed success `ok` with zero retries, increments failures atomically,
+and can preserve `pending` for partial work until cutoff forces `failed`.
+`get_retry_eligible()` returns only unfinished records below the limit, after
+exponential backoff of 1, 2, 4, ... seconds from UTC `updated_at`. Zero retries
+bypass backoff, including after a deliberate reset. `reset_retry_count()` retains
+status and resource columns; the documented direct SQL reset works too.
+Connections close after each operation, and SQLite transactions serialize writes.
+Selection does not claim work: the future pipeline must use a single writer
+process or per-record locking across the complete processing cycle. The module
+is tested independently; external pipeline wiring belongs to later phases.
 
 ⚡ Деталі Реалізації (M2-M7)
 

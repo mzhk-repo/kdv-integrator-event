@@ -1,4 +1,15 @@
-# Скелет тестів для state machine — можна розширити з моками TASKS
+import sqlite3
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.cover_state.state_machine import StateMachine  # noqa: E402
 
 
 def test_task_manager_interface():
@@ -8,3 +19,97 @@ def test_task_manager_interface():
     assert isinstance(tid, str)
     info = task_manager.get_status(tid)
     assert info is not None
+
+
+def test_cutoff_persistence_reset_and_success(tmp_path):
+    path = str(tmp_path / "state.db")
+    state = StateMachine(path, 3)
+    assert state.mark_pending("record-1")
+    for attempt in range(1, 4):
+        state.record_result("record-1", success=False, partial=True)
+        row = state.get("record-1")
+        assert row["retry_count"] == attempt
+        assert row["status"] == ("pending" if attempt < 3 else "failed")
+    state = StateMachine(path, 3)
+    assert state.get_retry_eligible() == []
+    assert not state.mark_pending("record-1")
+
+    # The documented direct SQL reset must also restore retry eligibility.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("UPDATE records SET retry_count=0 WHERE record_uid='record-1'")
+        connection.execute(
+            "UPDATE records SET cover_asset_sha256='asset', dspace_item_uuid='item' "
+            "WHERE record_uid='record-1'"
+        )
+    assert [row["record_uid"] for row in state.get_retry_eligible()] == ["record-1"]
+    assert state.mark_pending("record-1")
+    state.record_result("record-1", success=False)
+    assert state.get("record-1")["status"] == "failed"
+    assert state.mark_pending("record-1")
+    assert state.get("record-1")["retry_count"] == 1
+    state.record_result("record-1", success=True)
+    row = StateMachine(path, 3).get("record-1")
+    assert (row["status"], row["retry_count"]) == ("ok", 0)
+    assert (row["cover_asset_sha256"], row["dspace_item_uuid"]) == ("asset", "item")
+    assert state.get_retry_eligible() == []
+
+
+def test_backoff_and_operator_reset(tmp_path):
+    state = StateMachine(str(tmp_path / "state.db"), 5)
+    state.mark_pending("retry")
+    for attempt in range(1, 5):
+        state.record_result("retry", success=False)
+        timestamp = datetime.fromisoformat(state.get("retry")["updated_at"]).replace(
+            tzinfo=timezone.utc
+        )
+        delay = timedelta(seconds=2 ** (attempt - 1))
+        assert state.get_retry_eligible(now=timestamp + delay - timedelta(microseconds=1)) == []
+        assert [r["record_uid"] for r in state.get_retry_eligible(now=timestamp + delay)] == ["retry"]
+    state.reset_retry_count("retry")
+    assert state.get("retry")["status"] == "failed"
+    assert state.get("retry")["retry_count"] == 0
+    assert len(state.get_retry_eligible()) == 1
+    with pytest.raises(ValueError, match="timezone"):
+        state.get_retry_eligible(now=datetime(2026, 1, 1))
+
+
+def test_atomic_failure_increments(tmp_path):
+    state = StateMachine(str(tmp_path / "state.db"), 20)
+    state.mark_pending("record")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda _: state.record_result("record", success=False), range(12)))
+    assert state.get("record")["retry_count"] == 12
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5, "3"])
+def test_invalid_explicit_limit_does_not_create_db(tmp_path, limit):
+    path = tmp_path / "state.db"
+    with pytest.raises(ValueError, match="positive integer"):
+        StateMachine(str(path), limit)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("value", [None, "", "0", "-1", "abc", "1.5"])
+def test_invalid_environment_limit(tmp_path, monkeypatch, value):
+    monkeypatch.delenv("MAX_RETRY_COUNT", raising=False)
+    if value is not None:
+        monkeypatch.setenv("MAX_RETRY_COUNT", value)
+    with pytest.raises(ValueError, match="MAX_RETRY_COUNT"):
+        StateMachine(str(tmp_path / "state.db"))
+
+
+def test_environment_configuration_and_missing_records(tmp_path, monkeypatch):
+    monkeypatch.setenv("COVER_STATE_DB_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("MAX_RETRY_COUNT", "1")
+    state = StateMachine()
+    assert state.get("unknown") is None
+    for operation in (state.reset_retry_count, lambda uid: state.record_result(uid, success=False)):
+        with pytest.raises(KeyError):
+            operation("unknown")
+    with pytest.raises(ValueError, match="non-empty"):
+        state.mark_pending(" ")
+    state.mark_pending("record")
+    with pytest.raises(ValueError, match="booleans"):
+        state.record_result("record", success="false")
+    state.record_result("record", success=False)
+    assert state.get_retry_eligible() == []

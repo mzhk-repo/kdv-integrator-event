@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Durable cover state transitions and retry cutoff (Task 2.2)
+
+- **Context:** Phase 2 requires reusable cycle state and bounded retries before adding external Drive/Koha/DSpace processing.
+- **Change:** Added `src/cover_state/state_machine.py` with required DB/retry configuration, pending/result transitions, unfinished-record selection, exponential backoff and explicit retry reset. Success clears retries; failures increment atomically; partial failures may remain pending until cutoff forces failed. Transitions preserve resource columns. Updated architecture, environment contract, AI context and plan; Phase 2 acceptance is complete with the previously supplied runtime schema evidence.
+- **Verification:** `.venv/bin/python -m pytest -q tests/test_state_machine.py tests/test_cover_state_schema.py tests/test_export_schema.py tests/test_export_repository.py tests/test_export_cli.py` — 39 passed on temporary DBs, including cutoff, persistence, direct SQL/method reset, backoff boundaries, concurrent increments and export regressions. `git diff --check` passed. No live DB or service was changed.
+- **Risks:** Retry selection does not reserve work; future pipeline callers must serialize complete record cycles with a single writer or per-record locking. Backoff uses UTC `updated_at` with 1, 2, 4, ... second delays. External pipeline wiring remains later-phase work.
+- **Rollback:** Revert the module/tests and related documentation. Preserve the unchanged version-1 state schema, DB and journals.
+
+## 2026-09-30 — Confirm deployed cover-state schema and WAL (Task 2.1)
+
+- **Context:** The user redeployed the API startup migration and supplied output from the requested read-only container checks; direct agent access to Docker was denied.
+- **Change:** Updated architecture, AI context and implementation plan with runtime acceptance for Task 2.1. Task 2.2 remains pending.
+- **Verification:** User-provided output confirms all three KDV services at `1/1`, a persistent read-write state bind, existing `/data/kdv_cover_state/state.db`, `journal_mode=wal`, `user_version=1`, all 11 columns, expected defaults/CHECK constraints, a unique UID primary-key index and `idx_records_status`. No runtime changes were made by the agent.
+- **Risks:** The environment was not identified as dev/prod. Node-local placement and WAL-aware backup requirements still apply; schema acceptance does not verify the future processing state machine.
+- **Rollback:** Revert only this documentation update; preserve the state DB and journal files.
+
 ## 2026-09-30 — Apply cover state migration during API startup
 
 - **Context:** Post-redeploy inspection confirmed the persistent state mount but found no `state.db`; a separate manual migration would leave future fresh deployments dependent on an operator step.
