@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Verify deployed Drive metadata gate (Task 3.2)
+
+- **Context:** The user supplied a binary Drive file and authorized mocks for Google Doc/shortcut cases, then ran the prepared container smoke after agent Docker exec access was denied.
+- **Change:** Recorded user-provided acceptance evidence in architecture, AI context and implementation plan. Task 3.2 metadata gate acceptance is complete; automatic API workflow wiring remains pending.
+- **Verification:** User output confirms deployed code matches repository hashes, live binary SHA retrieval, initial resource-changed/pending state, same-content comparison against a seeded test state with source ID update/ok, and a subsequent NO-OP with zero additional Drive calls. Authorized Doc/shortcut mocks produced missing-checksum failed/cutoff states; a mocked timeout produced failed/retry_count=1. Temporary state DB cleanup completed.
+- **Risks:** Google Doc/shortcut and network failures were mocked; no live negative-source checks were performed. The smoke invokes the deployed gate directly and does not prove automatic API workflow invocation. Dev/prod was not identified. Persistent application state and Drive files were not modified by the smoke.
+- **Rollback:** Revert this documentation evidence only; runtime data is unaffected.
+
 ## 2026-09-30 — Drive metadata/SHA gate and permanent checksum failures (Task 3.2)
 
 - **Context:** Changed Drive IDs need checksum comparison; missing checksums must stop processing, while network/quota failures must enter bounded retries.

@@ -146,7 +146,13 @@ at least at the limit until manual reset. Network/client errors increment once;
 API exception text is not logged. Resource keys use the proper request header.
 103 related tests passed (15 optimizer tests deselected); the unfiltered run had
 115 passes and three existing optimizer DPI failures unrelated to this change.
-Live Drive file acceptance and deployed external pipeline wiring remain pending.
+User-provided container smoke output on 2026-09-30 confirmed deployed code hashes,
+live binary SHA retrieval and comparison, same-content identity update, and zero
+additional calls for the following NO-OP. Google Doc/shortcut missing checksums
+and timeout were mocked as authorized by the user; permanent cutoff and one
+retry increment passed. Temporary DB cleanup was confirmed by the smoke output.
+Task 3.2 gate acceptance is complete; automatic API workflow invocation remains
+pending. The target environment was not identified as dev/prod.
 
 ## Important Documents
 

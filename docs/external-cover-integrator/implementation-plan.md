@@ -289,9 +289,18 @@ checksum → permanent failure (`failed`, retries щонайменше на лі
 103 пов'язаних тести пройшли, 15 optimizer-тестів виключено. Повний цільовий
 набір дав 115 passed / 3 failed: наявні optimizer-тести використовують DPI
 250/300, яких немає в поточному allowlist 100–150; ці файли не змінювалися.
-Реальний SDK перевірено offline з mock transport; live Drive binary/Doc/shortcut
-та deployed pipeline ще не перевірено, тому runtime-приймання 3.2 і Фази 3
-залишається відкритим. Download/conversion/write-back належать наступним фазам.
+Реальний SDK перевірено offline з mock transport. Після деплою користувач надав
+вивід container smoke 2026-09-30: deployed-код збігається з репозиторієм;
+для наданого binary-файла live metadata повернули валідний SHA, початкове
+рішення — `resource_changed/pending`. Порівняння з тестовим підтвердженим SHA
+дало `same_content`, оновлення source ID та `ok`; наступний виклик — `noop`
+з нулем додаткових Drive calls. За дозволом користувача Doc/shortcut перевірено
+моками: відсутній checksum дав `failed` та cutoff; mocked timeout дав
+`failed/retry_count=1`. Тимчасову state DB видалено. Приймання 3.2 завершено
+для metadata gate; live Doc/shortcut не перевірялися. Автоматичний виклик gate
+з API workflow ще не підключено; smoke викликав модуль безпосередньо.
+Dev/prod середовище не визначено. Download/conversion/write-back належать
+наступним фазам.
 
 **Acceptance criteria:**
 - Реальний binary-файл: SHA коректно отримано і порівняно.

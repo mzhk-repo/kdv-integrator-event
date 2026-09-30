@@ -132,7 +132,13 @@ existing version-1 schema. API/client failures raise `DriveMetadataError` and
 increment retries once; API exception text is not logged. No downloads, asset
 processing, DSpace writes or Koha write-back are performed by this gate.
 Tests use temporary SQLite DBs, mocks and offline real SDK request construction;
-live Drive acceptance and external pipeline deployment remain unverified.
+user-run container smoke output on 2026-09-30 confirmed deployed code hashes,
+live binary metadata/SHA retrieval, same-content source ID update and a subsequent
+NO-OP with zero additional Drive calls. The same smoke used mocks for missing
+checksums in Google Doc/shortcut responses and a network timeout; permanent
+cutoff and a single retry increment passed. The temporary DB was removed.
+This verifies the deployed gate directly, not automatic invocation by the API
+workflow; external pipeline wiring remains pending. Dev/prod was not identified.
 
 ⚡ Деталі Реалізації (M2-M7)
 
