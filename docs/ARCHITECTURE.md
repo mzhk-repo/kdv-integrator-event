@@ -144,6 +144,15 @@ wiring on 2026-09-30; dev/prod was not identified.
 
 ### Automatic API/Robot Drive gate
 
+Task 4.1 adds `src/services/cover_pipeline.py`: `download_and_normalize()` reuses
+the Drive resolver/download and optional gate metadata, verifies source SHA before
+decoding, applies EXIF orientation and RGB, strips metadata, downsizes to at most
+600 px wide without upscale and encodes WebP at quality 82. It returns separate
+source/asset hashes. The core reuses its download verifier. This callable/CLI
+stage writes a temporary normalized output; atomic asset publication and Koha
+workflow adoption belong to Tasks 4.2–4.3. Local image/stub-Drive checks do not
+establish live Drive or Koha acceptance.
+
 When `COVER_STATE_DB_PATH` is configured, `process_integration_logic()` reads
 MARC `001` through `KohaClient.get_biblio_metadata()` and requires a UUIDv7 for
 Drive sources. A `.workflow.lock` in the state DB directory serializes complete

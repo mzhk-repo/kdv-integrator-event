@@ -355,15 +355,29 @@ Dev/prod середовище не визначено.
 
 **Опис:** Завантажити файл із Drive, привести до WebP (якість ~82, розмір за конвенцією розділу 10).
 
+**Стан на 2026-09-30:** етап 4.1 реалізовано у `src/services/cover_pipeline.py`.
+`download_and_normalize()` повторно використовує `SourceResolver`/`GoogleDriveSource`
+та наявну read-only автентифікацію; приймає metadata від gate або отримує її сам.
+Перед декодуванням перевіряє SHA-256 завантажених байтів. Pillow застосовує EXIF
+orientation, RGB, ширину до 600 px зі збереженням пропорцій без upscale, видаляє
+metadata і зберігає WebP quality 82. Повертає окремі SHA джерела та готового asset.
+Наявний API/Robot core використовує спільну перевірку download SHA; WebP етап
+доступний як функція/CLI. Atomic publish та підключення WebP до Koha workflow
+залишаються задачами 4.2–4.3. Локальні тести використовують справжні зображення
+і stub Drive; live Drive download нового етапу ще не перевірено.
+
 **Acceptance criteria:**
 - Вихідний WebP валідний і відповідає заданим розмірам/якості.
 - Локально порахований SHA завантаженого файла збігається з `sha256Checksum` із Drive (захист від пошкодженого download).
 
 **Validation:**
 ```bash
-python -m integrator.cover_pipeline --record test-uid-1 --stop-after normalize
-file output/test-uid-1.webp   # очікується: RIFF...WebP
-sha256sum downloaded/test-uid-1.src | diff - expected_drive_sha.txt
+# Local validation with temporary files and a stub Drive client.
+.venv/bin/python -m pytest -q tests/test_cover_pipeline.py
+# In an identified environment with existing read-only Drive configuration:
+python -m src.services.cover_pipeline --source "$COVER_SOURCE_URL" --output /tmp/test-cover.webp
+file /tmp/test-cover.webp  # очікується: RIFF...WebP
+# CLI returns source_sha256 and cover_asset_sha256; source SHA is checked before decode.
 ```
 
 ### Задача 4.2 — Content-addressed atomic publish

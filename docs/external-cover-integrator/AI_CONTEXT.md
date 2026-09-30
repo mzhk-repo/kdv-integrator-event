@@ -170,6 +170,14 @@ tested. The environment was not identified as dev/prod.
 
 ## Important Documents
 
+Task 4.1 provides `src/services/cover_pipeline.py:download_and_normalize` and
+`python -m src.services.cover_pipeline --source <Drive URL> --output <temporary WebP>`.
+It reuses Drive download/auth and optional gate metadata, checks downloaded SHA,
+applies EXIF orientation, RGB, metadata stripping, width <=600 without upscale,
+and WebP quality 82. Source SHA and final WebP SHA stay separate. Core shares the
+download verifier; WebP publication/write-back integration remains Tasks 4.2–4.3.
+Local real-image/stub-Drive tests cover this stage; live acceptance remains open.
+
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.
 - `environment.md` — repository-specific environment contract and existing secret delivery; distinguishes configuration preparation from external acceptance.

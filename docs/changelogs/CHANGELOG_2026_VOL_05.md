@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Drive cover download and WebP normalization (Task 4.1)
+
+- **Context:** Phase 4 needs a verified binary download and canonical WebP stage before content-addressed publication and Koha SHA write-back.
+- **Change:** Added callable/CLI `src/services/cover_pipeline.py`, reusing the existing Drive resolver, authentication and downloader with optional gate metadata. Downloaded bytes must match the valid Drive SHA before decoding. Pillow applies EXIF orientation, RGB, metadata removal, proportional width reduction to 600 px without upscale and WebP quality 82. The result returns separate source and asset SHA values. Core reuses the extracted download verifier. Updated architecture, AI context and Task 4.1 validation instructions.
+- **Verification:** Temporary-file image/stub-Drive, core and metadata-gate tests: 48 passed, 5 optimizer tests deselected. Checks cover real WebP decoding, orientation, no upscale, RGB, metadata removal, deterministic hashes, real downloader execution with stub Drive, checksum rejection before decode, invalid images and source preservation. API/Drive workflow regressions: 8 passed. CLI help and `git diff --check` passed. Checks used explicit dummy environment settings; the API test token had to match its existing fixture.
+- **Risks:** Live Drive download of this stage remains unverified. The stage writes temporary normalized output; atomic asset publication, durable publish recovery and WebP/Koha workflow adoption remain Tasks 4.2–4.3. Existing CGI/JPEG output continues until that integration. No live state, external records or services were changed.
+- **Rollback:** Revert the new stage/tests/docs and restore the inline core download verifier; preserve runtime storage and state DB.
+
 ## 2026-09-30 — Verify deployed API route and Drive gate after redeployment
 
 - **Context:** The user redeployed the workflow wiring and supplied output from the prepared container smoke after agent Docker exec access was denied.

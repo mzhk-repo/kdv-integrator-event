@@ -1,6 +1,5 @@
 import contextlib
 import fcntl
-import hashlib
 import os
 import logging
 import re
@@ -15,6 +14,7 @@ from .config import INTEGRATOR_MOUNT_PATH, DSPACE_UI_URL
 from .koha import KohaClient
 from .dspace import DSpaceClient
 from .services.covers import CoverService
+from .services.cover_pipeline import verify_drive_download as _verify_drive_download
 from .services.files import FileService
 from .services.sources import (
     SourceResolutionError,
@@ -597,17 +597,6 @@ def process_integration_logic(
             if isinstance(error, DriveMetadataError):
                 koha.set_status(biblionumber, 'error', str(error))
             raise
-
-
-def _verify_drive_download(path, checksum):
-    if not checksum:
-        raise RuntimeError('Confirmed Drive SHA is required before processing')
-    digest = hashlib.sha256()
-    with open(path, 'rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    if digest.hexdigest() != checksum:
-        raise RuntimeError('Downloaded Drive content does not match sha256Checksum')
 
 
 def _run_integration_logic(
