@@ -90,8 +90,8 @@ conceptual staff / OPAC base URLs. `COVERS_CDN_BASE_URL` is a full HTTPS URL.
 The host storage settings are consumed by `scripts/init-volume.sh` before Swarm
 deploy. Task 0.2 adds a non-root, read-only `covers-cdn` on the existing proxy
 network, pinned to the local storage node. Routing hostname and versioned nginx
-config name are derived by the orchestrator. API cover/state consumers remain
-future work. On 2026-09-29 the user confirmed folder-only service-account access;
+config name are derived by the orchestrator. API now mounts cover/state storage;
+WebP publication is callable and Koha adoption remains Task 4.3. On 2026-09-29 the user confirmed folder-only service-account access;
 public CDN HTTPS, redirect and origin isolation await the user's deployment.
 
 Runtime storage is not repository structure:
@@ -175,8 +175,19 @@ Task 4.1 provides `src/services/cover_pipeline.py:download_and_normalize` and
 It reuses Drive download/auth and optional gate metadata, checks downloaded SHA,
 applies EXIF orientation, RGB, metadata stripping, width <=600 without upscale,
 and WebP quality 82. Source SHA and final WebP SHA stay separate. Core shares the
-download verifier; WebP publication/write-back integration remains Tasks 4.2–4.3.
+download verifier; Task 4.2 supplies publication and write-back integration remains Task 4.3.
 Local real-image/stub-Drive tests cover this stage; live acceptance remains open.
+
+Task 4.2 implements `publish_cover(webp_path, storage_path=None, expected_sha256=...)`
+in the same module; CLI `--publish` uses `--storage-path` or required
+`COVERS_STORAGE_PATH`. Prepared non-symlink `.incoming`/`assets` must share a
+filesystem. A shared flock serializes cleanup/dedup/publish; unique staging files
+are synced, chmod 0644 and atomically renamed to SHA-named assets, then both
+directories are synced. Identical assets are not rewritten; corrupt existing
+assets fail closed. SIGKILL can leave a private reserved staging file until the
+next locked publish; final assets stay complete. API gets read-write cover root
+in both Compose files and Swarm placement on the CDN's storage node. Runtime
+redeployment/mount checks remain open. Koha write-back/recovery is Task 4.3.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.

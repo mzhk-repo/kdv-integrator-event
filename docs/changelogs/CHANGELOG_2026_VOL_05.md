@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Content-addressed atomic WebP publication (Task 4.2)
+
+- **Context:** Normalized covers need deduplicated immutable storage with no partial files exposed by the CDN, including during interrupted publication.
+- **Change:** Added `publish_cover()` and CLI `--publish`/`--storage-path` to the existing cover pipeline. The publisher validates WebP/SHA and prepared non-symlink storage on one filesystem, serializes writers with flock, writes a unique private staging file, flushes/fsyncs, sets mode 0644 and uses `os.replace()` to publish `assets/<sha256>.webp`, syncing both directories before success. Identical existing assets are reused without inode/mtime changes; corrupt assets fail closed. Normal failures remove their temporary file; the next locked publisher removes reserved staging leftovers after SIGKILL. Both Compose definitions mount the cover root read-write in API; the orchestrator exports the selected container path and Swarm API is pinned to the CDN storage node. Updated architecture, context, environment and plan.
+- **Verification:** Publisher, normalization, CDN and volume tests: 47 passed. Real child-process SIGKILL during a partial staging write, before rename and after rename confirmed final files are absent or complete, old assets survive and retry cleans private staging files. Tests also verify parallel deduplication, preserved inode/mtime, permissions, checksum/image/storage rejection, simulated cross-filesystem and sync/rename failures, CLI publication and writer/CDN mounts in Compose and the converted `docker stack config` manifest. Bash syntax, ShellCheck and `git diff --check` passed. Tests used temporary storage and configuration rendering; no deployment occurred.
+- **Risks:** SIGKILL cannot run cleanup; private `.incoming/publish-*.tmp` may remain until the next publication, but is never served. All publishers must use the shared lock/naming convention. The selected storage node must also satisfy the existing manager-zone label. Actual runtime mounts and CDN read access after redeployment remain unverified. Koha write-back and durable record-level recovery remain Task 4.3; no live assets, state or external records were changed.
+- **Rollback:** Revert publisher/CLI, mount/placement/export changes and related tests/docs through the existing deployment process. Preserve storage assets/state; reverting API placement may require reassessing node-local state availability.
+
 ## 2026-09-30 — Drive cover download and WebP normalization (Task 4.1)
 
 - **Context:** Phase 4 needs a verified binary download and canonical WebP stage before content-addressed publication and Koha SHA write-back.

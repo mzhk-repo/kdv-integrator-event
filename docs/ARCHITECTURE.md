@@ -144,13 +144,27 @@ wiring on 2026-09-30; dev/prod was not identified.
 
 ### Automatic API/Robot Drive gate
 
+Task 4.2 adds `publish_cover()` and the cover CLI's `--publish` option. The
+publisher requires prepared non-symlink storage with `.incoming` and `assets`
+on one filesystem, validates WebP bytes/SHA and serializes publication with a
+filesystem lock. A unique staging file is synced and moved with `os.replace()`
+to `assets/<sha256>.webp`, mode 0644; both directories are synced before success.
+Existing identical assets retain their inode/mtime; corruption and symlink
+destinations fail closed. Ordinary failures remove staging files; SIGKILL can
+leave only private staging leftovers, removed under lock on the next publish.
+Both Compose files give API the full cover root read-write at
+`COVERS_STORAGE_PATH`; nginx keeps only read-only assets. Swarm API placement
+also requires the orchestrator's storage node, preserving its manager-zone
+constraint. These are deployment configuration changes; no deployment occurred.
+Koha adoption and durable record-level publish reconciliation remain Task 4.3.
+
 Task 4.1 adds `src/services/cover_pipeline.py`: `download_and_normalize()` reuses
 the Drive resolver/download and optional gate metadata, verifies source SHA before
 decoding, applies EXIF orientation and RGB, strips metadata, downsizes to at most
 600 px wide without upscale and encodes WebP at quality 82. It returns separate
 source/asset hashes. The core reuses its download verifier. This callable/CLI
-stage writes a temporary normalized output; atomic asset publication and Koha
-workflow adoption belong to Tasks 4.2–4.3. Local image/stub-Drive checks do not
+stage writes a temporary normalized output; Task 4.2 publishes it on request,
+and Koha workflow adoption belongs to Task 4.3. Local image/stub-Drive checks do not
 establish live Drive or Koha acceptance.
 
 When `COVER_STATE_DB_PATH` is configured, `process_integration_logic()` reads

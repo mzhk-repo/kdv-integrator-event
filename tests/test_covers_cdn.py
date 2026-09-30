@@ -21,6 +21,7 @@ def configure(tmp_path, url, node="examplenode"):
     payload.write_text(
         "COVERS_CDN_BASE_URL=https://covers.example.org\n"
         f'COVERS_STORAGE_HOST_PATH="{tmp_path / "cover storage"}"\n'
+        'COVERS_STORAGE_PATH="/data/koha-covers"\n'
         f'COVER_STATE_HOST_PATH="{tmp_path / "state storage"}"\n'
     )
     return subprocess.run(
@@ -30,7 +31,7 @@ def configure(tmp_path, url, node="examplenode"):
             'docker() { printf "%s" "$TEST_NODE"; }\n'
             + functions + "\nconfigure_covers_cdn\n"
             'printf "%s\\n" "$COVERS_CDN_HOST" "$COVERS_SWARM_NODE_ID" '
-            '"$COVERS_STORAGE_HOST_PATH" "$COVER_STATE_HOST_PATH" "$COVERS_NGINX_CONFIG_NAME"',
+            '"$COVERS_STORAGE_HOST_PATH" "$COVER_STATE_HOST_PATH" "$COVERS_NGINX_CONFIG_NAME" "$COVERS_STORAGE_PATH"',
         ],
         env={
             "PATH": os.environ["PATH"],
@@ -53,6 +54,7 @@ def test_cdn_routing_uses_selected_url_and_local_storage_node(tmp_path, url):
         "other.example.org" if url else "covers.example.org",
         "examplenode", str(tmp_path / "cover storage"), str(tmp_path / "state storage"),
         "teststack_covers_nginx_" + hashlib.sha256((ROOT / "config/covers-cdn/nginx.conf").read_bytes()).hexdigest()[:12],
+        "/data/koha-covers",
     ]
 
 
@@ -90,7 +92,13 @@ def test_rendered_cdn_has_only_readonly_assets_and_private_listener():
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    cdn = json.loads(result.stdout)["services"]["covers-cdn"]
+    services = json.loads(result.stdout)["services"]
+    cdn = services["covers-cdn"]
+    api = services["kdv-api"]
+    api_mounts = {mount["target"]: mount for mount in api["volumes"]}
+    writer = api_mounts["/data/koha-covers"]
+    assert not writer.get("read_only")
+    assert "node.id == examplenode" in api["deploy"]["placement"]["constraints"]
     assert cdn["user"] == "nginx" and cdn["read_only"]
     assert not any(cdn.get(key) for key in ("ports", "secrets", "environment", "env_file"))
     assert cdn["cap_drop"] == ["ALL"]
@@ -102,6 +110,7 @@ def test_rendered_cdn_has_only_readonly_assets_and_private_listener():
     assert not mounts["/tmp"].get("read_only")
     assert mounts["/usr/share/nginx/html"]["read_only"]
     assert mounts["/usr/share/nginx/html"]["source"].endswith("/assets")
+    assert mounts["/usr/share/nginx/html"]["source"] == writer["source"] + "/assets"
     assert cdn["configs"] == [{"source": "covers_nginx", "target": "/etc/nginx/nginx.conf"}]
     assert cdn["deploy"]["placement"]["constraints"] == ["node.id == examplenode"]
     assert cdn["deploy"]["labels"]["traefik.http.routers.kdv-covers.rule"] == "Host(`covers.example.org`)"
@@ -128,7 +137,12 @@ def test_swarm_manifest_keeps_writable_tmpfs_mount():
         ["docker", "stack", "config", "-c", "-"],
         input=normalized.stdout, check=True, capture_output=True, text=True,
     )
-    cdn = yaml.safe_load(validated.stdout)["services"]["covers-cdn"]
+    services = yaml.safe_load(validated.stdout)["services"]
+    cdn = services["covers-cdn"]
+    api = services["kdv-api"]
+    assert "node.id == examplenode" in api["deploy"]["placement"]["constraints"]
+    writer = next(mount for mount in api["volumes"] if mount["target"] == "/data/koha-covers")
+    assert not writer.get("read_only")
     assert cdn["read_only"] and cdn["user"] == "nginx"
     assert not cdn.get("tmpfs")
     mounts = {mount["target"]: mount for mount in cdn["volumes"]}
@@ -136,3 +150,4 @@ def test_swarm_manifest_keeps_writable_tmpfs_mount():
     assert mounts["/tmp"]["tmpfs"]["size"] == 16777216
     assert not mounts["/tmp"].get("read_only")
     assert mounts["/usr/share/nginx/html"]["read_only"]
+    assert mounts["/usr/share/nginx/html"]["source"] == writer["source"] + "/assets"

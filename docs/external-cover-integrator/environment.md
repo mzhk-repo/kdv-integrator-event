@@ -28,7 +28,7 @@ no implicit fallback to an installation-specific domain or host.
 | `COVERS_CDN_BASE_URL` | Full public HTTPS origin: hostname only after `https://`, without credentials, port, path, whitespace, query or fragment. Asset URL: `${COVERS_CDN_BASE_URL}/{957$c}.webp`. | Required in cover deployment; runtime payload and deployment config |
 | `COVERS_CDN_IMAGE` | Official nginx Alpine image used by the static CDN. Set a tested tag/digest for reproducible deployment. | `nginx:alpine`; deployment config |
 | `COVERS_STORAGE_HOST_PATH` | Absolute host bind source for the cover storage root. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
-| `COVERS_STORAGE_PATH` | Absolute Integrator container storage root; contains `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. | Required in cover deployment; runtime payload and deployment config |
+| `COVERS_STORAGE_PATH` | Absolute Integrator container storage root, mounted read-write from `COVERS_STORAGE_HOST_PATH` in both API Compose definitions; contains prepared `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. Must match in runtime payload and deployment config. | Required in cover deployment and Task 4.2 publisher; runtime payload and deployment config |
 | `COVER_STATE_HOST_PATH` | Absolute host bind source mounted read-write in API at `/data/kdv_cover_state`; separate from Koha Export state. Prepared by `init-volume.sh`. Must be available on every node eligible to run API, or API placement must be constrained to the prepared node. | Required by Swarm pre-deploy; deployment config |
 | `COVER_STATE_DB_PATH` | Absolute file path for the separate cover state SQLite DB, normally `/data/kdv_cover_state/state.db`; never reuse `EXPORT_DB_PATH`. The directory must support DB, WAL and SHM files. | Required by Task 2.1 migration CLI; runtime payload |
 | `MAX_RETRY_COUNT` | Positive integer limiting failed record cycles. Independent of the export module's `MAX_RETRIES`. | Required by Task 2.2 `StateMachine`; template example `5`, not an implicit runtime default |
@@ -135,6 +135,18 @@ files mount the prepared host directory read-write at `/data/kdv_cover_state` in
 the API. Confirm node placement and the service's actual mount before running the
 migration. Use SQLite's backup API or a coherent backup of the DB and journal files;
 copying only a live WAL-mode DB can omit updates.
+
+Task 4.2 mounts the cover host root read-write in API at the configured
+`COVERS_STORAGE_PATH`, including `.incoming` and `assets`; nginx keeps only
+read-only assets. The orchestrator exports the container path from the selected
+environment/override and pins Swarm API to the same storage node as CDN, while
+retaining the manager-zone constraint. That node must satisfy both constraints.
+`publish_cover()` rejects missing/symlink storage directories or different
+filesystems; it does not initialize directories or fall back to container-local
+storage. All writers using this publisher share `.incoming/.publish.lock`.
+Only reserved `publish-*.tmp` leftovers are removed under lock on the next
+publish; never serve `.incoming` or delete it during active publication.
+Redeployment and inspection of the actual API/CDN mounts remain required.
 
 Task 2.2 `StateMachine()` reads `COVER_STATE_DB_PATH` and `MAX_RETRY_COUNT` directly
 from the already-loaded runtime environment. Explicit `db_path` and integer

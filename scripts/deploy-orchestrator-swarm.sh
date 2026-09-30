@@ -192,6 +192,7 @@ PY
   fi
   # Export the exact same host paths used by init-volume, including overrides.
   export COVERS_STORAGE_HOST_PATH="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
+  export COVERS_STORAGE_PATH="${COVERS_STORAGE_PATH:-$(read_env_value COVERS_STORAGE_PATH)}"
   export COVER_STATE_HOST_PATH="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
   COVERS_NGINX_CONFIG_NAME="${STACK_NAME}_covers_nginx_$(sha256sum "${SCRIPT_DIR}/../config/covers-cdn/nginx.conf" | cut -c1-12)"
   export COVERS_CDN_HOST COVERS_SWARM_NODE_ID COVERS_NGINX_CONFIG_NAME

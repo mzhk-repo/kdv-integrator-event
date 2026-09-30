@@ -40,6 +40,7 @@ services:
       placement:
         constraints:
           - node.labels.app_zone == manager
+          - node.id == ${COVERS_SWARM_NODE_ID:?Use the orchestrator to select the storage node}
     volumes:
       - kdv-drive:/mnt/drive
       - kdv_optimize_data:/data/kdv_optimize
@@ -49,6 +50,9 @@ services:
       - type: bind
         source: ${COVER_STATE_HOST_PATH:?COVER_STATE_HOST_PATH is required}
         target: /data/kdv_cover_state
+      - type: bind
+        source: ${COVERS_STORAGE_HOST_PATH:?COVERS_STORAGE_HOST_PATH is required}
+        target: ${COVERS_STORAGE_PATH:?COVERS_STORAGE_PATH is required}
       - type: bind
         source: ${EXPORT_CONFIG_HOST_PATH:-./config}
         target: /app/config

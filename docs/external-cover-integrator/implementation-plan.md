@@ -362,8 +362,8 @@ Dev/prod середовище не визначено.
 orientation, RGB, ширину до 600 px зі збереженням пропорцій без upscale, видаляє
 metadata і зберігає WebP quality 82. Повертає окремі SHA джерела та готового asset.
 Наявний API/Robot core використовує спільну перевірку download SHA; WebP етап
-доступний як функція/CLI. Atomic publish та підключення WebP до Koha workflow
-залишаються задачами 4.2–4.3. Локальні тести використовують справжні зображення
+доступний як функція/CLI. Atomic publish реалізовано у задачі 4.2; підключення
+WebP до Koha workflow залишається задачею 4.3. Локальні тести використовують справжні зображення
 і stub Drive; live Drive download нового етапу ще не перевірено.
 
 **Acceptance criteria:**
@@ -384,15 +384,35 @@ file /tmp/test-cover.webp  # очікується: RIFF...WebP
 
 **Опис:** Ім'я файла = SHA-256 вмісту; публікація через `os.replace()` (temp → final), без часткових/пошкоджених файлів у сховищі.
 
+**Стан на 2026-09-30:** `publish_cover()` реалізовано у
+`src/services/cover_pipeline.py`; CLI етапу 4.1 підтримує `--publish` і
+`--storage-path` (або обов'язковий `COVERS_STORAGE_PATH`). Функція перевіряє WebP
+та очікуваний asset SHA, наявність підготовлених несімлінкових директорій і
+спільний filesystem `.incoming`/`assets`. Публікації серіалізовано через
+`.incoming/.publish.lock`: унікальний `publish-*.tmp`, flush/fsync, mode `0644`,
+`os.replace()` у `assets/<sha256>.webp`, fsync директорій. Ідентичний наявний asset
+не перезаписується; пошкоджений asset або destination symlink спричиняє помилку.
+Звичайний збій прибирає власний temp; після `SIGKILL` приватний temp може лишитися
+до наступної публікації, яка прибере лише зарезервовані `publish-*.tmp` під lock.
+У публічній `assets` часткових файлів немає. Обидва Compose-файли монтують cover
+root read-write в API; Swarm API і CDN закріплено за тим самим підготовленим вузлом.
+Локальні тести перевіряють dedup/concurrency, помилки та справжній `SIGKILL` у трьох
+точках. Runtime mount/CDN після редеплою ще не перевірено; write-back — задача 4.3.
+
 **Acceptance criteria:**
 - Два записи з однаковим вмістом обкладинки фізично використовують один файл (dedup).
 - Примусове переривання процесу під час публікації не залишає пошкоджений файл за фінальним іменем.
 
 **Validation:**
 ```bash
-sha256sum /data/koha-covers/assets/*.webp | sort | uniq -c -w64 | awk '$1>1'   # приклад дублів
-# Chaos-тест: kill -9 процесу публікації посеред запису, перевірити відсутність .tmp/побитих файлів
-ls /data/koha-covers/assets/ | grep -E '\.tmp$|\.partial$'   # очікується порожньо
+# Temporary storage only; includes SIGKILL mid-write and before/after rename.
+.venv/bin/python -m pytest -q tests/test_cover_publish.py tests/test_covers_cdn.py
+# In an identified environment after confirming the writer/CDN mounts:
+python -m src.services.cover_pipeline --source "$COVER_SOURCE_URL" \
+  --output /tmp/test-cover.webp --publish
+# Result: file=${COVERS_STORAGE_PATH}/assets/<cover_asset_sha256>.webp.
+# A second identical publication retains the same file/inode, with no final .tmp.
+# SIGKILL may leave a private .incoming/publish-*.tmp; retry cleans it under lock.
 ```
 
 ### Задача 4.3 — Koha `957$c` write-back через `pending → ok`
