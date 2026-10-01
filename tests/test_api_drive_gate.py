@@ -328,6 +328,60 @@ def external_cover(workflow, *, cover_only=False):
     }
 
 
+@pytest.mark.parametrize('resume', [False, True])
+def test_pdf_replacement_cleanup_with_unchanged_cover_or_resume(workflow, resume):
+    state, koha, meta, drive, cover, dspace_workflow = workflow
+    external_cover(workflow)
+    run(workflow)
+    initial_cover_sha = state.get(UID)['cover_asset_sha256']
+    cover_downloads = sum(
+        call.kwargs['file_id'] == 'cover' for call in drive.download_to_file.call_args_list
+    )
+    if resume:
+        state.mark_pending(UID)
+    else:
+        meta['file_path'] = 'https://drive.google.com/file/d/new-pdf/view'
+        with closing(sqlite3.connect(state.db_path)) as connection, connection:
+            connection.execute('UPDATE records SET file_source_sha256=?', ('a' * 64,))
+        drive.get_metadata.side_effect = lambda **kwargs: {
+            'sha256Checksum': SHA, 'name': 'new.pdf', 'mimeType': 'application/pdf',
+            'size': str(len(CONTENT)),
+        }
+    result = {
+        'uuid': 'item', 'bitstream_uuid': 'new-bitstream',
+        'old_bitstream_uuids': ['bitstream'], 'status': 'replaced',
+        'handle': 'http://dspace.test/handle/1/2',
+        'primary_download_url': 'http://dspace.test/bitstreams/new-bitstream/download',
+    }
+    def replace_pdf(*args, **kwargs):
+        assert kwargs['replace_existing'] is True
+        assert args[2]['previous_dspace_bitstream_uuid'] == 'bitstream'
+        kwargs['result_callback'](result)
+        return result
+    dspace_workflow.side_effect = replace_pdf
+    client = Mock()
+    client.delete_bitstream.side_effect = RuntimeError('delete unavailable')
+    with pytest.raises(RuntimeError, match='delete unavailable'):
+        run(workflow, dspace_client=client)
+    assert state.get_cover_work(UID)['result']['old_bitstream_uuids'] == ['bitstream']
+    assert state.get(UID)['status'] == 'pending'
+    uploads = dspace_workflow.call_count
+    retry_due(state)
+    client.delete_bitstream.side_effect = None
+    assert run(workflow, dspace_client=client)['bitstream_uuid'] == 'new-bitstream'
+    assert dspace_workflow.call_count == uploads
+    assert client.delete_bitstream.call_count == 2
+    assert state.get(UID)['status'] == 'ok'
+    assert state.get(UID)['cover_asset_sha256'] == initial_cover_sha
+    assert state.get_cover_work(UID) is None
+    cover.assert_not_called()
+    if not resume:
+        # Unchanged explicit cover reuses its durable asset, including cleanup retry.
+        assert sum(
+            call.kwargs['file_id'] == 'cover' for call in drive.download_to_file.call_args_list
+        ) == cover_downloads
+
+
 def retry_due(state):
     with closing(sqlite3.connect(state.db_path)) as connection, connection:
         connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00'")

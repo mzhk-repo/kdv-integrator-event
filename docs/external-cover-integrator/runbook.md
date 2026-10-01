@@ -299,6 +299,11 @@ primary. The new PDF becomes primary; selected old UUIDs are deleted only after
 Koha link read-back. Historical leftovers from completed faulty cycles require
 separate identification; unrelated attachments must not be deleted.
 
+Include a PDF replacement with `source=cover action=noop` and a resumed pending
+cycle in runtime acceptance. Both must use durable checkpoint/read-back/cleanup;
+an unchanged cover keeps its existing asset. If DELETE fails, retry must reuse
+the uploaded bitstream and only repeat write-back/cleanup, not upload again.
+
 The user confirmed a successful PDF/Item run on 2026-10-01 after correcting the
 record's DSpace collection. A later run restored a removed `856$u` by linking the
 existing Item. Task 7.2 now implements verified changed-PDF bitstream replacement;

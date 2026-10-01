@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Finalize PDF replacements when cover is unchanged or work resumes (Task 7.2)
+
+- **Context:** User runtime logs showed `resume` disabling replacement, and a changed PDF with `cover=noop` selecting the correct old UUID but bypassing the checkpoint/read-back/cleanup path entirely.
+- **Change:** Drive PDF work with a canonical external cover always uses the durable external cycle, reusing the confirmed WebP asset when the cover is unchanged. Both `resource_changed` and `resume` enable replacement. Cleanup failures preserve the DSpace result for retry without another upload.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_core.py tests/test_api_drive_gate.py` — 86 passed. Added orchestration regressions for unchanged explicit cover, resume, cleanup failure and retry with no second upload.
+- **Risks:** Runtime acceptance remains pending; already finalized historical leftovers are not automatically removed.
+- **Rollback:** Revert routing and resume selection while preserving state/checkpoints; this restores the known missing-cleanup behavior.
+
 ## 2026-10-01 — Preserve previous PDF identity across filename changes (Task 7.2)
 
 - **Context:** Runtime replacement found no primary and no same-name candidates: the source filename changed from `Полтава.pdf` to `Домонтович_В..pdf`. The old file UUID was already persisted in cover state, but was not passed to the DSpace workflow.

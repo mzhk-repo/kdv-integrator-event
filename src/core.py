@@ -726,7 +726,13 @@ def process_integration_logic(
                 source: (ref.file_id, checks[source].sha256 or current[f'{source}_source_sha256'])
                 for source, ref in refs.items() if ref is not None
             }
-            if cover_work and (refs['cover'] or (not meta.get('cover_path') and refs['file'])):
+            if (cover_work or file_work) and (refs['cover'] or (not meta.get('cover_path') and refs['file'])):
+                if not cover_work and not checkpoint:
+                    state.save_cover_work(
+                        uid, inputs_sha, sources, existing['cover_asset_sha256'],
+                        file_work=file_work,
+                    )
+                    checkpoint = state.get_cover_work(uid)
                 result = _run_external_cover_cycle(
                     task_id, biblionumber, state, uid, inputs_sha, sources,
                     meta, resolver, checks, file_work, checkpoint, options,
@@ -956,7 +962,7 @@ def _run_integration_logic(
                 upload_name=primary_source.original_name,
                 replace_existing=bool(
                     strict and checks.get('file')
-                    and checks['file'].action == 'resource_changed'
+                    and checks['file'].action in ('resource_changed', 'resume')
                 ),
                 result_callback=result_callback,
             )
@@ -1008,7 +1014,7 @@ def _run_integration_logic(
             if strict and dspace_result.get('additional_files_failed'):
                 raise RuntimeError('Additional file processing was not confirmed')
             if strict and dspace_result.get('status') == 'linked_existing' and (
-                checks.get('file') and checks['file'].action == 'resource_changed'
+                checks.get('file') and checks['file'].action in ('resource_changed', 'resume')
             ):
                 raise RuntimeError('Changed Drive PDF requires DSpace bitstream replacement; existing link is insufficient')
             confirmed = koha.set_success(
