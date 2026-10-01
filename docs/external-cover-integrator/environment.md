@@ -216,8 +216,11 @@ checkpoint table, with the existing WAL-aware procedure. Retries reuse completed
 work only for matching inputs/options and enforce the existing backoff/cutoff.
 
 After a successful PUT, MARC read-back must confirm `001`/`957$c` and required
-DSpace UUID/links before `ok`. Deployment and live Koha/OPAC validation are still
-pending. For OPAC/staff display, the Koha custom cover template must use the
+DSpace UUID/links before `ok`. The user confirmed the positive live Drive PNG
+write-back and Koha display path on 2026-10-01; live NO-OP and failure recovery
+remain covered by local tests. Task 5.1 now applies the same publisher and
+write-back to Drive PDF-only records; its live acceptance remains pending.
+For OPAC/staff display, the Koha custom cover template must use the
 configured CDN HTTPS origin plus `/{957$c}.webp` and the relevant custom cover
-display preferences. Local covers/PDF fallback retain their legacy writer until
-Phase 5; do not manually run that writer over a converted record.
+display preferences. Local covers/PDF paths retain their legacy writer; do not
+manually run that writer over a converted record.

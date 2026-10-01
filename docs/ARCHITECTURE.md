@@ -200,7 +200,8 @@ Gate metadata is reused during materialization; downloaded bytes must match
 source SHA before downstream processing. Unchanged explicit covers are skipped;
 cover-only changes can update Koha without materializing an unchanged PDF or
 calling DSpace. Task 4.3 uses the WebP/CDN pipeline for explicit Drive covers;
-local covers and PDF-derived fallback retain the legacy output path until Phase 5.
+Task 5.1 uses it for Drive PDF first-page fallback when `956$p` is absent.
+Local sources retain the legacy CGI path without Drive state identity tracking.
 `complete_cycle()` atomically commits source IDs/SHA, returned DSpace UUIDs,
 `ok` and zero retries only after confirmed required cover processing and a true
 Koha write-back result. Downstream failures retain unconfirmed identities and
@@ -243,9 +244,30 @@ Previously confirmed Drive covers without an asset SHA are rebuilt as WebP.
 
 Local tests prove recovery after reopened SQLite without another cover download,
 normalization or completed DSpace job; corrupt assets and incomplete read-back
-fail closed. Live Koha/OPAC acceptance needs user-run redeployment and an approved
-test record. DSpace crashes before its completed result is checkpointed still need
+fail closed. DSpace crashes before its completed result is checkpointed still need
 Phase 7 reconciliation; a mere existing Item link does not prove PDF replacement.
+
+On 2026-10-01, the user supplied a test-record run: Drive image download and task
+completion, MARC `957$c` matching the mounted WebP SHA, state `ok` with zero retries
+and no checkpoint, and visible cover in the Koha interface. This confirms the
+positive deployed cover path. Live NO-OP and failure recovery were not exercised;
+their coverage remains local tests. The environment was not identified.
+
+### PDF first-page cover fallback (Task 5.1)
+
+When `956$p` is absent and `956$u` is a Drive PDF, the shared API/Robot cycle
+verifies downloaded bytes against the Drive SHA, renders page one with Poppler's
+CropBox at 150 DPI and a 15-second timeout, then uses the same metadata-free
+600-pixel/quality-82 WebP normalization and immutable publisher. `957$c` write-back,
+MARC read-back, checkpoint reuse and source/asset commit follow Task 4.3. A
+confirmed PDF without an asset SHA is rebuilt; unchanged confirmed PDFs skip
+work. A PDF with no renderable first page causes a permanent failed state for
+that record, while other tasks continue. Transient render errors retain the
+normal retry policy. An existing DSpace Item still cannot prove changed-PDF
+replacement; Phase 7 handles that case. Local PDF paths retain the CGI path.
+Repository tests cover real PDF rendering, corrupt and protected PDF behavior,
+failure isolation, asset/retry reuse and NO-OP. Live PDF/Koha/OPAC acceptance
+remains pending.
 
 ⚡ Деталі Реалізації (M2-M7)
 

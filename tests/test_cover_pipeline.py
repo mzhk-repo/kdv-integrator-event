@@ -5,7 +5,11 @@ from unittest.mock import Mock
 from PIL import Image
 import pytest
 
-from src.services.cover_pipeline import download_and_normalize, normalize_cover
+from pdf2image.exceptions import PDFPageCountError
+
+from src.services.cover_pipeline import (
+    InvalidPDFCoverError, download_and_normalize, normalize_cover, render_pdf_cover,
+)
 from src.services.sources import GoogleDriveSource, SourceResolver
 
 
@@ -101,3 +105,35 @@ def test_real_download_path_with_stub_drive(tmp_path):
     with Image.open(output) as image:
         assert image.size == (600, 800)
         assert image.format == "WEBP"
+
+
+def test_first_pdf_page_uses_canonical_webp_and_cropbox(tmp_path, monkeypatch):
+    from src.services import cover_pipeline
+
+    source = tmp_path / 'book.pdf'
+    Image.new('RGB', (900, 1200), 'red').save(source, 'PDF')
+    output = tmp_path / 'cover.webp'
+    original = cover_pipeline.convert_from_path
+    convert = Mock(wraps=original)
+    monkeypatch.setattr(cover_pipeline, 'convert_from_path', convert)
+    digest = render_pdf_cover(source, output)
+    assert digest == hashlib.sha256(output.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match='differ'):
+        render_pdf_cover(source, source)
+    assert convert.call_args.kwargs['first_page'] == convert.call_args.kwargs['last_page'] == 1
+    assert convert.call_args.kwargs['use_cropbox'] is True
+    with Image.open(output) as image:
+        assert image.format == 'WEBP' and image.mode == 'RGB'
+        assert image.size == (600, 800)
+        assert not image.getexif()
+
+
+def test_unrenderable_pdf_has_no_output(tmp_path, monkeypatch):
+    from src.services import cover_pipeline
+
+    monkeypatch.setattr(cover_pipeline, 'convert_from_path',
+                        Mock(side_effect=PDFPageCountError('encrypted PDF')))
+    output = tmp_path / 'cover.webp'
+    with pytest.raises(InvalidPDFCoverError, match='PDF first page'):
+        render_pdf_cover(tmp_path / 'encrypted.pdf', output)
+    assert not output.exists()

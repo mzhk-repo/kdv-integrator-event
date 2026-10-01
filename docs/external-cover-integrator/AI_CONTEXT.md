@@ -92,8 +92,10 @@ deploy. Task 0.2 adds a non-root, read-only `covers-cdn` on the existing proxy
 network, pinned to the local storage node. Routing hostname and versioned nginx
 config name are derived by the orchestrator. API now mounts cover/state storage;
 WebP publication and Koha adoption are implemented for explicit Drive covers;
-Task 4.3 live Koha/OPAC acceptance remains pending. On 2026-09-29 the user confirmed folder-only service-account access;
-public CDN HTTPS, redirect and origin isolation await the user's deployment.
+the user confirmed the positive live Koha display path on 2026-10-01. On
+2026-09-29 the user confirmed folder-only service-account access. Public CDN
+HTTPS asset delivery was verified for a synthetic asset and the user confirmed
+Koha cover display; the external redirect remains a separate Cloudflare task.
 
 Runtime storage is not repository structure:
 - `/data/koha-covers/assets/` — published assets;
@@ -201,7 +203,7 @@ returned identical bytes with `image/webp` and one-year immutable cache headers.
 Runtime publish/delivery is confirmed for that asset, not through a Koha record
 workflow. The test asset remains and may stay cached for a year; dev/prod was
 unidentified.
-Task 4.3 is now implemented in the repository; live Koha acceptance remains pending.
+Task 4.3's positive live Koha path was accepted on 2026-10-01.
 
 Task 4.3 adds additive `pending_cover_work` to schema version 1 without changing
 the 11 `records` columns or export DB. Explicit Drive covers use WebP publishing
@@ -212,9 +214,19 @@ Confirmed source columns commit only after true Koha PUT and MARC read-back:
 retries validate the asset and reuse completed processing, repeating only write-back;
 changed inputs/options invalidate the checkpoint. Success deletes it atomically
 with `ok`/zero retries. Cutoff/reset and changed-PDF fail-closed behavior remain.
-Local tests pass; deployment/live Koha and OPAC verification are still required.
-Crashes before DSpace result checkpointing remain Phase 7 recovery work. Local
-cover/PDF-derived fallback retains its existing pipeline until Phase 5.
+On 2026-10-01 the user supplied a test-record task log and read-only state/asset
+checks: MARC `957$c` matched the mounted WebP SHA, state was `ok` with zero retries,
+the checkpoint was absent, and the cover displayed in Koha. Live NO-OP and failure
+recovery were not exercised. The environment was not identified. Crashes before
+DSpace result checkpointing remain Phase 7 recovery work.
+
+Task 5.1 routes Drive PDF-only `956$u` records through the same WebP publisher and
+Koha write-back. It verifies the downloaded PDF SHA, renders the first CropBox
+page at 150 DPI with a 15-second timeout, and normalizes to <=600 px WebP quality
+82. Matching checkpoint retries reuse the asset and completed DSpace work;
+confirmed unchanged PDFs NO-OP. A PDF with no renderable first page permanently
+fails only its record; transient render errors use normal backoff. Local PDF paths
+retain the CGI pipeline. Local tests pass; live PDF/Koha/OPAC acceptance is open.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.

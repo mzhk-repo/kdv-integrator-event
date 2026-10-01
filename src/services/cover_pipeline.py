@@ -1,4 +1,4 @@
-"""Download, normalize and atomically publish explicit Drive covers."""
+"""Normalize Drive images or PDF first pages and publish immutable WebP covers."""
 
 import argparse
 import fcntl
@@ -11,6 +11,8 @@ import tempfile
 import warnings
 
 from PIL import Image, ImageOps
+from pdf2image import convert_from_path
+from pdf2image.exceptions import PDFPageCountError, PDFSyntaxError
 
 from .sources import SourceResolver
 
@@ -31,29 +33,52 @@ def verify_drive_download(path, checksum):
         raise RuntimeError("Downloaded Drive content does not match sha256Checksum")
 
 
-def normalize_cover(source_path, output_path):
-    """Return the hash of a decoded, oriented, metadata-free RGB WebP."""
+class InvalidPDFCoverError(ValueError):
+    """A PDF cannot supply a first-page cover without operator intervention."""
+
+
+def _save_webp(source, output_path):
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
-        with Image.open(source_path) as source:
-            image = ImageOps.exif_transpose(source).convert("RGB")
-            if image.width > TARGET_WIDTH:
-                image = image.resize(
-                    (TARGET_WIDTH, max(1, round(image.height * TARGET_WIDTH / image.width))),
-                    Image.Resampling.LANCZOS,
-                )
-            # A fresh image keeps source EXIF, ICC and other metadata out of the encoder.
-            clean = Image.new("RGB", image.size)
-            clean.paste(image)
-            with BytesIO() as stream:
-                clean.save(stream, "WEBP", quality=WEBP_QUALITY)
-                content = stream.getvalue()
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        if image.width > TARGET_WIDTH:
+            image = image.resize(
+                (TARGET_WIDTH, max(1, round(image.height * TARGET_WIDTH / image.width))),
+                Image.Resampling.LANCZOS,
+            )
+        clean = Image.new("RGB", image.size)
+        clean.paste(image)
+        with BytesIO() as stream:
+            clean.save(stream, "WEBP", quality=WEBP_QUALITY)
+            content = stream.getvalue()
     output = Path(output_path)
-    if output.resolve() == Path(source_path).resolve():
-        raise ValueError("WebP output must differ from the source")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(content)
     return hashlib.sha256(content).hexdigest()
+
+
+def normalize_cover(source_path, output_path):
+    """Return the hash of a decoded, oriented, metadata-free RGB WebP."""
+    output = Path(output_path)
+    if output.resolve() == Path(source_path).resolve():
+        raise ValueError("WebP output must differ from the source")
+    with Image.open(source_path) as source:
+        return _save_webp(source, output)
+
+
+def render_pdf_cover(pdf_path, output_path):
+    """Render the visible first page and encode it with the canonical WebP policy."""
+    if Path(pdf_path).resolve() == Path(output_path).resolve():
+        raise ValueError("WebP output must differ from the PDF source")
+    try:
+        pages = convert_from_path(pdf_path, first_page=1, last_page=1, dpi=150,
+                                  use_cropbox=True, timeout=15)
+    except (PDFPageCountError, PDFSyntaxError) as error:
+        raise InvalidPDFCoverError("PDF first page cannot be rendered") from error
+    if not pages:
+        raise InvalidPDFCoverError("PDF has no renderable first page")
+    with pages[0] as page:
+        return _save_webp(page, output_path)
 
 
 def download_and_normalize(source_url, output_path, *, resolver=None, metadata=None):

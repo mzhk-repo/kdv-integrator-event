@@ -236,7 +236,22 @@ Failures retain asset/checkpoint and pending state until cutoff; operator retry
 reset preserves the checkpoint. A corrupted/missing staged asset fails closed.
 Source/input/options changes invalidate staged work. DSpace crashes before its
 result is checkpointed still need Phase 7 recovery. Live Koha/OPAC acceptance for
-Task 4.3 is not yet recorded; do not infer it from Task 4.2's synthetic CDN smoke.
+On 2026-10-01, the user supplied a Drive PNG test-record run. The task completed,
+MARC `957$c` matched the published WebP SHA, state was `ok` with zero retries and
+no checkpoint, and the cover displayed in Koha. Live NO-OP and failure recovery
+remain covered by local tests rather than this run. The environment was not identified.
+
+### Task 5.1 PDF fallback acceptance
+
+After deploying the updated API in a named environment, use an approved UUIDv7
+test record with a binary Drive PDF in `956$u` and no `956$p`. Invoke the existing
+Koha UI or authenticated API and poll the task. Verify that `957$c`,
+`records.cover_asset_sha256` and `assets/<sha>.webp` agree, the WebP shows the
+visible first PDF page, state is `ok` with zero retries and no checkpoint, and
+the cover appears in Koha. An unchanged repeat should return `noop`.
+The local tests cover corrupt/encrypted PDFs and record-level failure isolation;
+do not damage a live test record to exercise that case. Changed PDFs attached
+to an existing DSpace Item remain blocked until Phase 7 replacement is available.
 
 ## Rollback
 

@@ -19,7 +19,9 @@ from .koha import KohaClient
 from .dspace import DSpaceClient
 from .services.covers import CoverService
 from .services.cover_pipeline import verify_drive_download as _verify_drive_download
-from .services.cover_pipeline import download_and_normalize, publish_cover
+from .services.cover_pipeline import (
+    InvalidPDFCoverError, download_and_normalize, publish_cover, render_pdf_cover,
+)
 from .services.files import FileService
 from .services.sources import (
     SourceResolutionError,
@@ -592,13 +594,17 @@ def process_integration_logic(
             file_work = file_work or bool(meta.get('additional_files'))
             cover_work = (
                 checks['cover'].action not in ('noop', 'same_content') if 'cover' in checks
-                else bool(meta.get('cover_path')) or file_work
+                else bool(meta.get('cover_path')) or (file_work and (
+                    'file' not in checks or checks['file'].action not in ('noop', 'same_content')
+                ))
             )
             if checkpoint:
                 file_work = bool(checkpoint['file_work'])
                 cover_work = True
-            elif refs['cover'] and not (existing and existing['cover_asset_sha256']):
-                # Upgrade previously confirmed CGI covers to the canonical WebP asset.
+            elif (refs['cover'] or (not meta.get('cover_path') and refs['file'])) and not (
+                existing and existing['cover_asset_sha256']
+            ):
+                # Upgrade confirmed legacy covers to the canonical WebP asset.
                 cover_work = True
             if not file_work and not cover_work:
                 return {'status': 'noop', 'reason': 'confirmed_sources_unchanged'}
@@ -610,7 +616,7 @@ def process_integration_logic(
                 source: (ref.file_id, checks[source].sha256 or current[f'{source}_source_sha256'])
                 for source, ref in refs.items() if ref is not None
             }
-            if refs['cover'] and cover_work:
+            if cover_work and (refs['cover'] or (not meta.get('cover_path') and refs['file'])):
                 result = _run_external_cover_cycle(
                     task_id, biblionumber, state, uid, inputs_sha, sources,
                     meta, resolver, checks, file_work, checkpoint, options,
@@ -626,7 +632,8 @@ def process_integration_logic(
         except Exception as error:
             # Metadata failures already incremented/saturated their own retry state.
             if downstream_started:
-                state.record_result(uid, success=False, partial=True)
+                state.record_result(uid, success=False, partial=True,
+                                    permanent=isinstance(error, InvalidPDFCoverError))
             if isinstance(error, DriveMetadataError):
                 koha.set_status(biblionumber, 'error', str(error))
             raise
@@ -647,12 +654,18 @@ def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
     else:
         with tempfile.TemporaryDirectory(prefix='kdv-cover-normalize-') as temporary:
             output = Path(temporary) / 'cover.webp'
-            normalized = download_and_normalize(
-                meta['cover_path'], output, resolver=resolver, metadata=checks['cover'].metadata,
-            )
-            if normalized['source_sha256'] != sources['cover'][1]:
-                raise RuntimeError('Cover source SHA changed after the Drive gate')
-            asset_sha = normalized['cover_asset_sha256']
+            if meta.get('cover_path'):
+                normalized = download_and_normalize(
+                    meta['cover_path'], output, resolver=resolver, metadata=checks['cover'].metadata,
+                )
+                if normalized['source_sha256'] != sources['cover'][1]:
+                    raise RuntimeError('Cover source SHA changed after the Drive gate')
+                asset_sha = normalized['cover_asset_sha256']
+            else:
+                primary = resolver.resolve_primary(meta['file_path'])
+                primary = resolver.materialize(primary, metadata=checks['file'].metadata)
+                _verify_drive_download(primary.local_path, sources['file'][1])
+                asset_sha = render_pdf_cover(primary.local_path, output)
             publish_cover(output, expected_sha256=asset_sha)
         state.save_cover_work(uid, inputs_sha, sources, asset_sha, file_work=file_work)
     result = checkpoint['result'] if checkpoint else None

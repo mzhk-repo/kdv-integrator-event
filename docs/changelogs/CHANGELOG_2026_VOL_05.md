@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — PDF first-page WebP cover fallback (Task 5.1)
+
+- **Context:** Drive PDF records without a separate `956$p` cover still used the legacy Koha CGI/JPEG generator instead of content-addressed WebP and SHA-only `957$c`.
+- **Change:** Render the first CropBox page of verified Drive PDFs with Poppler at 150 DPI and a 15-second timeout, normalize it with the existing 600-pixel/quality-82 WebP policy, then reuse atomic publication, durable checkpoint, Koha write-back/read-back and source commit. Matching retries reuse the published asset and completed DSpace result; confirmed PDF covers without an asset SHA are rebuilt. PDFs with no renderable first page permanently fail only their record; transient render errors use normal retry policy. Updated implementation plan, architecture, AI context, environment contract and runbook.
+- **Verification:** Real-PDF/Poppler, corrupt-PDF, protected-PDF mock, API/core/state/publisher/Koha/Robot regression checks: 162 passed, 3 deselected existing optimizer DPI tests. Tests confirm WebP dimensions/hash, CropBox/page-one selection, `failed` isolation, next-record success, reopened-DB retry without repeated PDF download/render/DSpace, unchanged NO-OP, preserved asset inode/mtime and local-cover compatibility. Python compilation and `git diff --check` passed. No deployment or live PDF record was changed.
+- **Risks:** Runtime PDF/Koha/OPAC acceptance remains pending. Local PDF paths retain the legacy CGI path because they have no Drive identity tracking. A changed PDF for an existing DSpace Item still fails closed until Phase 7 bitstream replacement. Preserve the cover DB and assets during deployment/rollback.
+- **Rollback:** Revert the PDF fallback branch and related tests/docs through the existing deployment process; retain state, checkpoints and published assets. Assess SHA-converted MARC records before restoring an older cover writer.
+
+## 2026-10-01 — Confirm live Koha cover write-back (Task 4.3)
+
+- **Context:** The user tested an approved Koha record with a Drive PNG in `956$p` after deployment.
+- **Change:** Recorded positive Phase 4 runtime acceptance in architecture, AI context, implementation plan, environment contract and runbook.
+- **Verification:** User logs show Drive `resource_changed`, download and task success. MARC `957$c` was `59a0918a906ac75993065e6877e312208142e38945ba5bb1b06134283c700bc6`; user-run read-only container checks showed state `ok`, zero retries, no checkpoint, an existing WebP asset and matching byte SHA. The user confirmed the cover appears in Koha. Live NO-OP and failure recovery were not exercised in this run; local tests cover them. The environment was not identified.
+- **Risks:** This evidence covers one positive record; it does not prove changed-PDF replacement or all future records.
+- **Rollback:** Documentation evidence only; preserve the live MARC value, state DB and published asset.
+
 ## 2026-10-01 — Durable WebP Koha SHA write-back and retry recovery (Task 4.3)
 
 - **Context:** Explicit Drive covers need SHA-only `957$c` write-back and recovery after Koha failures without repeating completed download/normalization/PDF work.

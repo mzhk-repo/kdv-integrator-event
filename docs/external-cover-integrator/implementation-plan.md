@@ -438,8 +438,8 @@ python -m src.services.cover_pipeline --source "$COVER_SOURCE_URL" \
 `src/core.py:process_integration_logic()` для API/Robot. Explicit Drive `956$p`
 використовує download → normalize → WebP → atomic publish і записує SHA у `957$c`,
 без CGI upload. Cover-only зміна не обробляє незмінний PDF. Старі confirmed Drive
-covers без asset SHA перебудовуються у WebP; local/PDF fallback лишається наявним
-шляхом до Фази 5.
+covers без asset SHA перебудовуються у WebP. Для Drive PDF fallback тепер діє
+задача 5.1; локальні джерела зберігають legacy шлях.
 
 У cover SQLite DB додано idempotent `pending_cover_work` (версія 1 і 11 колонок
 `records` збережені). Після publish атомарно зберігаються asset SHA у pending record
@@ -462,9 +462,16 @@ inputs перевіряє immutable asset і повторює лише Koha writ
 включно з існуючим Robot payload test, який передає 200 DPI поза allowlist 100–150).
 Тести перевіряють restart/retry без повторного download/normalize/DSpace, source
 commit після read-back, cutoff/reset, input invalidation, corrupted asset,
-additive migration і legacy regressions. Runtime Koha write-back та показ у OPAC
-потребують редеплою користувача й перевірки на визначеному тестовому записі;
-задачу 4.3 і Фазу 4 повністю ще не закрито.
+additive migration і legacy regressions.
+
+**Приймання 2026-10-01:** користувач запустив тестовий Koha запис із Drive PNG
+у `956$p`. Логи показали `resource_changed`, download і успішне завершення задачі.
+У MARC `957$c` записано SHA `59a0918a906ac75993065e6877e312208142e38945ba5bb1b06134283c700bc6`;
+read-only перевірка у контейнері підтвердила `status=ok`, `retry_count=0`,
+відсутність checkpoint і byte SHA опублікованого WebP, який збігається з MARC.
+Користувач підтвердив показ обкладинки в інтерфейсі Koha. Позитивний live шлях
+Фази 4 прийнято; retry failure і NO-OP підтверджені локальними тестами, а не цим
+live запуском. Тип оточення (dev/prod) не визначено.
 
 **Acceptance criteria:**
 - Успішний цикл: OPAC показує нову обкладинку, `status = ok`, `stored_file_id` оновлено.
@@ -496,19 +503,33 @@ additive migration і legacy regressions. Runtime Koha write-back та пока�
 
 **Опис:** Рендер першої сторінки PDF → WebP → той самий publish/write-back pipeline, що й у Фазі 4.
 
+**Стан на 2026-10-01:** для Drive PDF у `956$u` без окремого `956$p` shared
+API/Robot core перевіряє source SHA, рендерить першу видиму сторінку з CropBox
+(Poppler, 150 DPI, 15 s timeout) і застосовує той самий WebP policy 600 px/quality
+82. Далі використовує існуючі atomic publish, `pending_cover_work`, Koha `957$c`
+write-back/read-back і `complete_cycle()`. Під час retry з відповідним checkpoint
+не завантажує і не рендерить PDF повторно; на незмінному підтвердженому PDF діє
+NO-OP, а старий підтверджений PDF cover без asset SHA перебудовується. Некоректний,
+порожній або зашифрований PDF із неможливою першою сторінкою переводить лише свій
+запис у permanent `failed` з cutoff; наступні задачі виконуються незалежно.
+Тимчасова помилка рендеру зберігає звичайний retry/backoff. Local path продовжує
+legacy CGI шлях; зміни локальних джерел не відстежуються Drive state DB. Live PDF
+запис, Koha/OPAC і runtime recovery ще не перевірені; задача відкрита до приймання.
+
 **Acceptance criteria:**
 - Обкладинка коректно згенерована для тестового PDF (перевірка розміру/формату).
 - Помилка рендерингу (пошкоджений/захищений паролем PDF) не блокує решту черги — окремий запис переходить у `status = failed`, інші обробляються.
 
 **Validation:**
 ```bash
-python -m integrator.pdf_cover --record test-uid-pdf --stop-after render
-file output/test-uid-pdf.webp
-
-python -m integrator.run --record test-uid-corrupt-pdf
-sqlite3 state.db "SELECT status FROM records WHERE record_uid='test-uid-corrupt-pdf';"  # очікується failed
-python -m integrator.run --batch fixtures/mixed_batch.json
-sqlite3 state.db "SELECT status, COUNT(*) FROM records GROUP BY status;"  # інші записи не failed через сусіда
+# Local temporary DB/storage, real PDF+Poppler, stub Drive/Koha/DSpace.
+.venv/bin/python -m pytest -q tests/test_cover_pipeline.py tests/test_api_drive_gate.py
+# After user deployment in an identified environment, use an approved UUIDv7
+# Koha record with Drive PDF in 956$u and no 956$p. Poll the existing API task.
+# Verify MARC 957$c == records.cover_asset_sha256 == SHA of assets/<sha>.webp,
+# status=ok, retries=0, no checkpoint, CDN/Koha display, and unchanged NO-OP.
+# Use isolated tests for corrupt/encrypted PDF; avoid deliberately poisoning a
+# live record. An existing DSpace Item with changed PDF remains Phase 7 fail-closed.
 ```
 
 ---

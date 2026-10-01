@@ -24,7 +24,9 @@ from src.cover_state.state_machine import StateMachine  # noqa: E402
 from src.services.sources import GoogleDriveSource, SourceResolver  # noqa: E402
 
 UID = "019d4312-1234-7abc-8123-0123456789ab"
-CONTENT = b"binary source bytes"
+with BytesIO() as pdf_bytes:
+    Image.new('RGB', (900, 1200), 'red').save(pdf_bytes, 'PDF')
+    CONTENT = pdf_bytes.getvalue()
 SHA = hashlib.sha256(CONTENT).hexdigest()
 with BytesIO() as image_bytes:
     Image.new('RGB', (900, 1200), 'blue').save(image_bytes, 'PNG')
@@ -102,7 +104,14 @@ def test_authenticated_api_reaches_gate_and_next_cycle_is_zero_work(workflow, mo
     assert client.post("/kdv/api/integrate/42", headers={"X-KDV-TOKEN": "test-token"}).status_code == 202
     assert results[-1]["status"] == "noop"
     assert drive.get_metadata.call_count == drive.download_to_file.call_count == 1
-    assert cover.call_count == dspace.call_count == koha.set_success.call_count == 1
+    assert cover.call_count == 0
+    assert dspace.call_count == koha.set_success.call_count == 1
+    assert koha.set_success.call_args.kwargs['cover_url'] == row['cover_asset_sha256']
+    assert state.get_cover_work(UID) is None
+    asset = Path(os.environ['COVERS_STORAGE_PATH']) / 'assets' / f"{row['cover_asset_sha256']}.webp"
+    assert hashlib.sha256(asset.read_bytes()).hexdigest() == row['cover_asset_sha256']
+    with Image.open(asset) as image:
+        assert image.format == 'WEBP' and image.size == (600, 800)
     meta["file_path"] = "https://drive.google.com/file/d/new-id/view"
     assert run(workflow)["status"] == "noop"
     assert state.get(UID)["file_source_id"] == "new-id"
@@ -161,6 +170,16 @@ def test_changed_cover_skips_unchanged_pdf_and_dspace(workflow):
     assert koha.set_cover_url.call_args.args == (42, asset_sha)
     assert state.get(UID)["cover_source_id"] == "cover"
     assert state.get(UID)["status"] == "ok"
+
+
+def test_local_cover_with_drive_pdf_keeps_legacy_writer(workflow):
+    state, koha, meta, _, legacy_cover, _ = workflow
+    meta['cover_path'] = 'covers/local.jpg'
+    assert run(workflow)['uuid'] == 'item'
+    legacy_cover.assert_called_once()
+    assert koha.set_success.call_args.kwargs['cover_url'] == 'http://koha.test/cover.jpg'
+    assert state.get(UID)['status'] == 'ok'
+    assert state.get_cover_work(UID) is None
 
 
 def test_existing_dspace_link_cannot_confirm_changed_pdf(workflow):
@@ -260,6 +279,65 @@ def test_external_cover_retry_only_repeats_koha_after_reopening_state(workflow, 
     assert reopened.get_cover_work(UID) is None
     assert run(workflow)['status'] == 'noop'
     legacy_cover.assert_not_called()
+
+
+def test_pdf_cover_retry_reuses_published_asset_and_completed_dspace(workflow, monkeypatch):
+    import src.core as core
+    state, koha, _, drive, legacy_cover, dspace = workflow
+    render = Mock(wraps=core.render_pdf_cover)
+    monkeypatch.setattr(core, 'render_pdf_cover', render)
+    succeed = koha.set_success.side_effect
+    koha.set_success.side_effect = None
+    koha.set_success.return_value = False
+    with pytest.raises(RuntimeError, match='write-back'):
+        run(workflow)
+    row = state.get(UID)
+    assert (row['status'], row['retry_count'], row['file_source_id']) == ('pending', 1, None)
+    assert state.get_cover_work(UID)['result']['uuid'] == 'item'
+    asset = Path(os.environ['COVERS_STORAGE_PATH']) / 'assets' / f"{row['cover_asset_sha256']}.webp"
+    before = asset.stat()
+    calls = (drive.get_metadata.call_count, drive.download_to_file.call_count,
+             render.call_count, dspace.call_count)
+    retry_due(state)
+    koha.set_success.side_effect = succeed
+    reopened = StateMachine(state.db_path, max_retry_count=3)
+    assert process_integration_logic('retry', 42, koha_client=koha, state_machine=reopened,
+                                     skip_optimization=True)['cover_asset_sha256'] == row['cover_asset_sha256']
+    assert (drive.get_metadata.call_count, drive.download_to_file.call_count,
+            render.call_count, dspace.call_count) == calls
+    assert (asset.stat().st_ino, asset.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert reopened.get(UID)['status'] == 'ok' and reopened.get_cover_work(UID) is None
+    assert run(workflow)['status'] == 'noop'
+    legacy_cover.assert_not_called()
+
+
+def test_bad_pdf_fails_only_its_record(workflow):
+    state, koha, meta, drive, legacy_cover, dspace = workflow
+    bad = b'not a PDF'
+    drive.get_metadata.return_value = {
+        'name': 'bad.pdf', 'mimeType': 'application/pdf',
+        'sha256Checksum': hashlib.sha256(bad).hexdigest(), 'size': str(len(bad)),
+    }
+    drive.download_to_file.side_effect = lambda **kw: Path(kw['destination_path']).write_bytes(bad)
+    with pytest.raises(ValueError, match='PDF first page'):
+        run(workflow)
+    assert (state.get(UID)['status'], state.get(UID)['retry_count']) == ('failed', 3)
+    assert state.get(UID)['file_source_id'] is None
+    koha.set_success.assert_not_called()
+    dspace.assert_not_called()
+    legacy_cover.assert_not_called()
+
+    next_uid = '019d4312-1234-7abc-8123-0123456789ac'
+    meta['record_uid'] = next_uid
+    meta['file_path'] = 'https://drive.google.com/file/d/good-pdf/view'
+    drive.get_metadata.return_value = {
+        'name': 'good.pdf', 'mimeType': 'application/pdf',
+        'sha256Checksum': SHA, 'size': str(len(CONTENT)),
+    }
+    drive.download_to_file.side_effect = lambda **kw: Path(kw['destination_path']).write_bytes(CONTENT)
+    assert run(workflow)['cover_asset_sha256'] == state.get(next_uid)['cover_asset_sha256']
+    assert state.get(next_uid)['status'] == 'ok'
+    assert state.get(UID)['status'] == 'failed'
 
 
 def test_cover_readback_failure_is_pending_and_retry_does_not_convert(workflow):
