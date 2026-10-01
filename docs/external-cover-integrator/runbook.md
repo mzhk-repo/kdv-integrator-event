@@ -284,8 +284,12 @@ Drive PDF, and force Koha link write-back to fail after upload. Verify the old
 bitstream remains available, the pending checkpoint records old/new UUIDs, and
 retry does not upload another bitstream. After Koha succeeds, verify both `856$u`
 values by read-back, the new primary bitstream, old bitstream deletion, and
-completed state. Local tests cover the failure/retry sequence; runtime acceptance
-requires deployment and a user-run smoke test.
+completed state. Confirm old deletion by checking that DSpace REST GET for its
+UUID returns 404; task success and the DELETE response alone do not prove removal.
+A 2026-10-01 user smoke found the old bitstream still present after Koha links
+updated, so runtime acceptance of deletion remains pending. Local tests cover
+the failure/retry sequence; runtime acceptance requires deployment and a
+user-run smoke test.
 
 The user confirmed a successful PDF/Item run on 2026-10-01 after correcting the
 record's DSpace collection. A later run restored a removed `856$u` by linking the

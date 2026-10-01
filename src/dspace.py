@@ -321,9 +321,13 @@ class DSpaceClient:
     def delete_bitstream(self, bitstream_uuid):
         endpoint = f"/core/bitstreams/{bitstream_uuid}"
         resp = self._request("DELETE", endpoint)
-        if resp is not None and resp.status_code in (200, 204, 404):
-            return True
-        self._raise_rest_error("DSpace delete old bitstream", endpoint, resp)
+        if resp is None or resp.status_code not in (200, 204, 404):
+            self._raise_rest_error("DSpace delete old bitstream", endpoint, resp)
+        check = self._request("GET", endpoint)
+        if check is None or check.status_code != 404:
+            self._raise_rest_error("DSpace verify old bitstream deletion", endpoint, check)
+        logger.info("Confirmed DSpace bitstream deleted uuid=%s", bitstream_uuid)
+        return True
 
     def upload_to_item(self, item_uuid, file_path, upload_name=None):
         if not os.path.exists(file_path):

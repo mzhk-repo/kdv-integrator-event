@@ -1,5 +1,6 @@
 import os
 import hashlib
+import pytest
 
 # Required config env vars before importing src modules.
 os.environ.setdefault("KDV_API_TOKEN", "test-token")
@@ -196,6 +197,15 @@ def test_dspace_delete_bitstream_treats_missing_as_already_deleted(monkeypatch):
     monkeypatch.setattr(client, "_request", lambda *args, **kwargs: _Resp(status_code=404))
 
     assert client.delete_bitstream("old-bitstream") is True
+
+
+def test_dspace_delete_bitstream_verifies_resource_is_gone(monkeypatch):
+    client = DSpaceClient()
+    responses = iter((_Resp(status_code=204), _Resp(status_code=200)))
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: next(responses))
+
+    with pytest.raises(DSpaceRestError, match="verify old bitstream deletion"):
+        client.delete_bitstream("old-bitstream")
 
 
 def test_dspace_upload_to_item_uses_explicit_upload_name(monkeypatch, tmp_path):

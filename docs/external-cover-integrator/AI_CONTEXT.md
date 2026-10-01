@@ -29,7 +29,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - Covers are content-addressed: `SHA256(final_webp)` is the asset ID/filename. Identical covers deduplicate automatically.
 - Normal assets are immutable and atomically published from `.incoming` using same-filesystem `os.replace()`.
 - Emergency overwrite of a shared asset is a documented exception requiring backup, targeted CDN purge, and audit log.
-- DSpace replacement: upload and verify -> switch/read back primary -> checkpoint -> update/read back both Koha links -> delete old -> finalize state.
+- DSpace replacement: upload and verify -> switch/read back primary -> checkpoint -> update/read back both Koha links -> delete old and verify GET returns 404 -> finalize state. A 2026-10-01 user smoke confirmed Koha `856` updated but old bitstream remained despite task success; deletion read-back was added, runtime retry is pending.
 - UID -> Koha resolver uses existing Elasticsearch `control-number` search; no separate resolver service.
 - Protect Integrator-managed `957$c`, `957$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
 
