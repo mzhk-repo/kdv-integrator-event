@@ -4,10 +4,10 @@
 
 ## 2026-10-01 — Verify DSpace old bitstream deletion (Task 7.2)
 
-- **Context:** Після redeploy користувач підтвердив, що Koha `856` посилається на новий PDF, але старий bitstream залишився у DSpace, хоча task завершився успішно. Лог не містив результату окремої перевірки видалення.
-- **Change:** `DSpaceClient.delete_bitstream()` тепер після DELETE читає bitstream UUID назад і приймає видалення лише коли GET повертає 404; UUID, що досі доступний, спричиняє помилку task замість хибного успіху. Runbook і план відображають фактичний стан acceptance.
-- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_api_drive_gate.py -k 'bitstream or replacement'` — 6 passed, 36 deselected; `.venv/bin/python -m compileall -q src/dspace.py` і `git diff --check` пройшли.
-- **Risks:** Причину конкретного live випадку неможливо встановити лише з наданого task log, бо в ньому немає HTTP status/UUID для DELETE. Повторний runtime smoke після redeploy ще потрібний.
+- **Context:** Після двох redeploy smoke користувач підтвердив, що попередній PDF лишився у DSpace; другий task завершився успішно, але не містив повідомлення про підтверджене видалення.
+- **Change:** `DSpaceClient.delete_bitstream()` після DELETE читає bitstream UUID назад і приймає видалення лише коли GET повертає 404; UUID, що досі доступний, спричиняє помилку task. Додано логи вибору primary UUID та cleanup старого/нового UUID, щоб визначити, чи гілка cleanup викликається. Runbook і план відображають фактичний стан acceptance.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_api_drive_gate.py -k 'bitstream or replacement'` — 6 passed, 36 deselected; `.venv/bin/python -m compileall -q src/dspace.py` і `git diff --check` пройшли. Нові логи потребують redeploy для runtime діагностики.
+- **Risks:** За поточним log неможливо відрізнити старий runtime image від сценарію без визначеного старого primary UUID. Видалення ще не підтверджене runtime.
 - **Rollback:** Повернути `delete_bitstream()` до перевірки лише статусу DELETE та відкликати цю зміну документації/тесту.
 
 ## 2026-10-01 — Safe DSpace PDF bitstream replacement (Task 7.2)

@@ -507,6 +507,11 @@ def run_dspace_workflow(
             else f"{DSPACE_UI_URL}/items/{item_uuid}"
         )
         primary_bitstream = local_dspace.get_primary_bitstream(item_uuid)
+        logger.info(
+            "DSpace replacement check item_uuid=%s enabled=%s primary_bitstream_uuid=%s",
+            item_uuid, replace_existing,
+            primary_bitstream.get("uuid") if primary_bitstream else None,
+        )
         if primary_bitstream and replace_existing:
             replacement_old_bitstream_uuid = primary_bitstream.get("uuid")
             if not replacement_old_bitstream_uuid:
@@ -779,6 +784,12 @@ def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
     ) if link):
         raise RuntimeError('Koha 856 read-back was not confirmed')
     old_bitstream_uuid = result.get('old_bitstream_uuid') if file_work else None
+    logger.info(
+        'DSpace replacement cleanup item_uuid=%s old_bitstream_uuid=%s new_bitstream_uuid=%s',
+        result.get('uuid') if file_work and result else None,
+        old_bitstream_uuid,
+        result.get('bitstream_uuid') if file_work and result else None,
+    )
     if old_bitstream_uuid:
         if old_bitstream_uuid == result.get('bitstream_uuid'):
             raise RuntimeError('DSpace replacement returned the existing bitstream UUID')
