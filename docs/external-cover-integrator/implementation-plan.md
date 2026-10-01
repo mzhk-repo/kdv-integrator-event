@@ -553,14 +553,32 @@ replacement`; безпечна заміна bitstream — задача 7.2. От
 
 **Опис:** Виставити правильні cache-заголовки, заборонити будь-які методи запису через публічний вхід.
 
+**Стан на 2026-10-01:** реалізація є в `config/covers-cdn/nginx.conf` та
+Compose/Swarm конфігураціях. nginx приймає лише GET/HEAD, віддає плоскі файли
+`.webp` з lowercase SHA-256 у назві, для інших шляхів повертає 404, а для asset
+виставляє `public, max-age=31536000, immutable`. CDN працює як `nginx` з read-only
+root і mount assets, скинутими capabilities, без secrets та опублікованих портів.
+Попередня перевірка на розгорнутому synthetic asset підтвердила публічний HTTPS
+200, однакові bytes, `image/webp` та immutable cache header; користувач згодом
+підтвердив показ реальної обкладинки в Koha. 2026-10-01 користувач надав
+публічні заголовки для asset URL: HTTP/2 200, `image/webp`, довжина 16974,
+`Cache-Control: public, max-age=31536000, immutable`, `cf-cache-status: HIT`.
+Тією ж перевіркою PUT/POST/DELETE повернули 405. Acceptance criteria задачі 6.1
+виконані. Оточення не ідентифіковане; перевірки redirect та origin isolation
+залишаються частиною Фази 0.
+
 **Acceptance criteria:**
 - `GET` на існуючий asset повертає `Cache-Control: public, max-age=31536000, immutable`.
 - `PUT`/`POST`/`DELETE` через публічний домен — заборонені (405/403).
 
 **Validation:**
 ```bash
-curl -sI "${COVERS_CDN_BASE_URL}/<sha>.webp" | grep -i cache-control
-curl -s -X PUT "${COVERS_CDN_BASE_URL}/<sha>.webp" -o /dev/null -w "%{http_code}\n"  # очікується 403/405
+asset_url="${COVERS_CDN_BASE_URL}/<known-existing-sha>.webp"
+curl --fail --silent --show-error --head "$asset_url"  # 200 + immutable Cache-Control
+for method in PUT POST DELETE; do
+  curl --silent --show-error --request "$method" --output /dev/null \
+    --write-out "$method %{http_code}\n" "$asset_url"  # кожен: 403 або 405
+done
 ```
 
 ---

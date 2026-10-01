@@ -18,6 +18,22 @@
 - **Risks:** Existing-item PDF replacement and safe old-bitstream cleanup remain unimplemented until Task 7.2. The failed attempt may have a pending retry/checkpoint; verify state before retrying after future code changes. Do not delete the existing DSpace bitstream manually.
 - **Rollback:** Documentation evidence only; preserve the generated cover asset and existing DSpace Item/bitstream.
 
+## 2026-10-01 — Accept public immutable and read-only CDN behavior (Task 6.1)
+
+- **Context:** The user supplied public method and response-header checks for a known SHA-named WebP asset.
+- **Change:** Recorded completion of Task 6.1 in the implementation plan and CDN runbook.
+- **Verification:** The asset returned HTTP/2 200, `image/webp`, content length 16974, `Cache-Control: public, max-age=31536000, immutable`, and `cf-cache-status: HIT`. Public PUT, POST and DELETE each returned 405. User-provided evidence; deployment environment remains unidentified.
+- **Risks:** This confirms the public CDN contract for the supplied asset. HTTP-to-HTTPS redirect and origin isolation remain separate Phase 0 checks.
+- **Rollback:** Documentation-only update; no runtime service or asset changed.
+
+## 2026-10-01 — Record static cover service acceptance boundary (Task 6.1)
+
+- **Context:** Phase 6's nginx and Compose/Swarm implementation already enforces immutable WebP delivery and read-only assets, while the implementation plan listed only generic curl checks.
+- **Change:** Recorded the current implementation/runtime evidence and added explicit public PUT/POST/DELETE checks against a known asset URL to the phase plan and CDN runbook.
+- **Verification:** Repository configuration was inspected: nginx allows only GET/HEAD and matches only lowercase SHA-256 WebP paths; the CDN runs non-root with a read-only asset mount, no secrets or published ports. Prior deployed evidence confirms public HTTPS 200, byte-identical synthetic asset delivery, `image/webp` and one-year immutable cache headers; the user confirmed a real Koha cover displayed. Public write-method responses remain unverified. `git diff --check` passed.
+- **Risks:** Phase 6 runtime acceptance remains partial until each public write method returns 403/405. The environment is unidentified; external origin-isolation and redirect checks remain separate Phase 0 acceptance.
+- **Rollback:** Documentation-only change; no service or stored asset was changed.
+
 ## 2026-10-01 — Confirm live Koha cover write-back (Task 4.3)
 
 - **Context:** The user tested an approved Koha record with a Drive PNG in `956$p` after deployment.

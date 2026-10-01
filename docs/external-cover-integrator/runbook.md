@@ -100,12 +100,40 @@ curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
   "${COVERS_CDN_BASE_URL}/.incoming/test.webp"
 ```
 
+For Task 6.1, use a known existing SHA-named asset and verify immutable headers
+plus public write-method rejection:
+
+```bash
+asset_url="${COVERS_CDN_BASE_URL}/<known-existing-sha>.webp"
+curl --fail --silent --show-error --head "$asset_url"
+for method in PUT POST DELETE; do
+  curl --silent --show-error --request "$method" --output /dev/null \
+    --write-out "$method %{http_code}\n" "$asset_url"
+done
+```
+
+Each write method must return `403` or `405`. Use no request body; these requests
+must not alter the asset. A successful GET/cache check does not by itself prove
+that public write methods are blocked.
+
 Inspect the CDN task's health and confirm its bind mount is read-only with no
 published service ports. From an external machine, if the origin has a public IP,
 try its HTTP entrypoint with the CDN Host header and its port 8080 directly. Both
 must fail to reach the CDN; a successful tunneled request alone does not prove
 the origin is private. If there is no public origin address, record that topology
 and its firewall/interface restrictions instead.
+
+### Phase 6 implementation and runtime status (2026-10-01)
+
+Repository configuration accepts only GET/HEAD, serves only content-addressed
+WebP paths with one-year immutable caching, and mounts assets read-only in a
+non-root nginx task without published ports. Earlier deployed checks confirmed
+the synthetic asset's public HTTPS bytes and cache headers; the user confirmed a
+Koha cover displayed. On 2026-10-01, user output for an existing public asset
+showed HTTP/2 200, `image/webp`, `Cache-Control: public, max-age=31536000, immutable`
+and `cf-cache-status: HIT`; PUT, POST and DELETE each returned 405. Task 6.1 is
+accepted. The deployment environment was not identified; HTTP-to-HTTPS redirect
+and origin isolation remain separate Phase 0 checks.
 
 Record the selected environment, HTTP statuses, TLS result and origin-access
 evidence without secrets. Task 0.2 and Phase 0 are accepted only after these
