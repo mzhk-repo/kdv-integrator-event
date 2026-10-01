@@ -186,8 +186,17 @@ are synced, chmod 0644 and atomically renamed to SHA-named assets, then both
 directories are synced. Identical assets are not rewritten; corrupt existing
 assets fail closed. SIGKILL can leave a private reserved staging file until the
 next locked publish; final assets stay complete. API gets read-write cover root
-in both Compose files and Swarm placement on the CDN's storage node. Runtime
-redeployment/mount checks remain open. Koha write-back/recovery is Task 4.3.
+in both Compose files and Swarm placement on the CDN's storage node. Post-redeploy
+checks on 2026-09-30 confirmed 1/1 services, shared node, actual writer/CDN mounts,
+matching publisher SHA, expected directory modes and one filesystem. Active
+Gunicorn has `COVERS_STORAGE_PATH`; standalone docker exec does not inherit the
+entrypoint's sourced env, so diagnostics must read selected non-secret PID 1
+variables or load runtime env in their own process. Deployed publisher passed
+isolated `/tmp` normalize/publish/dedup/hash/mode/inode/mtime checks and cleanup.
+CDN health was 200 internally and over HTTPS with curl/requests; urllib got 403.
+Mounted assets were empty: actual mounted publish/CDN asset delivery is still
+unverified. Persistent state/assets were untouched; dev/prod was unidentified.
+Koha write-back/recovery is Task 4.3.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.

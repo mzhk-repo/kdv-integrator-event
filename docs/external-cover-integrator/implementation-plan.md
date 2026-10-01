@@ -397,7 +397,18 @@ file /tmp/test-cover.webp  # очікується: RIFF...WebP
 У публічній `assets` часткових файлів немає. Обидва Compose-файли монтують cover
 root read-write в API; Swarm API і CDN закріплено за тим самим підготовленим вузлом.
 Локальні тести перевіряють dedup/concurrency, помилки та справжній `SIGKILL` у трьох
-точках. Runtime mount/CDN після редеплою ще не перевірено; write-back — задача 4.3.
+точках. Після редеплою 2026-09-30 user-output і пряма перевірка агента підтвердили
+три services `1/1`, спільний вузол `pinokew`, read-write cover root у API і
+read-only assets у CDN, збіг deployed SHA коду, права `0755/0755/0700` і спільний
+device директорій. Активний Gunicorn має `COVERS_STORAGE_PATH`; початкова помилка
+smoke була через окреме оточення `docker exec`, яке не успадковує sourced payload.
+Виправлена read-only перевірка читає лише потрібні несекретні змінні PID 1.
+Deployed publisher пройшов normalize/publish/dedup/SHA/mode/inode/mtime smoke
+на окремому `/tmp` storage; cleanup підтверджено. CDN health внутрішньо та через
+HTTPS (`curl`/`requests`) повернув `200 ok`; HTTPS-запит `urllib` отримав `403`.
+Mounted assets поки порожні: публікація у справжній mount і віддача asset CDN
+залишаються неперевіреними. Dev/prod не визначено; persistent assets/state не
+змінювалися. Koha write-back — задача 4.3.
 
 **Acceptance criteria:**
 - Два записи з однаковим вмістом обкладинки фізично використовують один файл (dedup).

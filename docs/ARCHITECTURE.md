@@ -158,6 +158,18 @@ also requires the orchestrator's storage node, preserving its manager-zone
 constraint. These are deployment configuration changes; no deployment occurred.
 Koha adoption and durable record-level publish reconciliation remain Task 4.3.
 
+Post-redeploy checks on 2026-09-30 confirmed all three services at 1/1, API/CDN
+on `pinokew`, matching deployed publisher SHA, the expected read-write API root
+and read-only CDN assets mounts, directory modes 0755/0755/0700 and one device.
+The active Gunicorn environment contains `COVERS_STORAGE_PATH`; a separate
+`docker exec` process does not inherit environment sourced by the entrypoint.
+The corrected diagnostic reads only selected non-secret variables from PID 1.
+The deployed publisher passed normalization, publish/dedup/hash/mode and
+inode/mtime checks in isolated `/tmp` storage; cleanup succeeded. Internal CDN
+health and public HTTPS via curl/requests returned 200; urllib received 403.
+Mounted assets were empty, so real mounted publication and CDN asset delivery
+were not exercised. No persistent assets/state changed; dev/prod was unidentified.
+
 Task 4.1 adds `src/services/cover_pipeline.py`: `download_and_normalize()` reuses
 the Drive resolver/download and optional gate metadata, verifies source SHA before
 decoding, applies EXIF orientation and RGB, strips metadata, downsizes to at most

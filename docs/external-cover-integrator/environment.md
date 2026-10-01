@@ -146,7 +146,14 @@ filesystems; it does not initialize directories or fall back to container-local
 storage. All writers using this publisher share `.incoming/.publish.lock`.
 Only reserved `publish-*.tmp` leftovers are removed under lock on the next
 publish; never serve `.incoming` or delete it during active publication.
-Redeployment and inspection of the actual API/CDN mounts remain required.
+Post-redeploy checks on 2026-09-30 confirmed the actual API read-write cover root,
+CDN read-only assets and shared storage node/device; deployed code hashes matched.
+Active Gunicorn had `COVERS_STORAGE_PATH=/data/koha-covers`. Standalone `docker exec`
+does not inherit env sourced by the entrypoint: the initial smoke's missing-env
+assertion was a diagnostic context error. For read-only diagnostics, read only
+the needed non-secret keys from `/proc/1/environ`; do not dump its full contents.
+An isolated `/tmp` deployed publisher smoke passed; persistent assets were empty,
+so real mounted publication/CDN asset delivery remains unverified.
 
 Task 2.2 `StateMachine()` reads `COVER_STATE_DB_PATH` and `MAX_RETRY_COUNT` directly
 from the already-loaded runtime environment. Explicit `db_path` and integer

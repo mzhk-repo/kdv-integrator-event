@@ -167,6 +167,32 @@ Public HTTP `/healthz` returned `200` without an HTTPS redirect. Configure the
 hostname-scoped Cloudflare redirect and repeat its acceptance check. Full Phase 0
 acceptance remains pending that redirect and external origin-isolation evidence.
 
+### Task 4.2 post-redeploy verification (2026-09-30)
+
+User-provided output and subsequent direct read-only Docker checks confirmed
+three services at `1/1`, API/CDN on `pinokew`, storage-node placement constraints,
+API read-write `/srv/kdv-integrator/koha-covers` at `/data/koha-covers` and CDN
+read-only `/srv/kdv-integrator/koha-covers/assets` at `/usr/share/nginx/html`.
+Deployed publisher SHA matched the repository. Root/assets/incoming modes were
+`0755/0755/0700` on the same device, with no directory symlinks.
+
+The first standalone `docker exec` smoke reported missing `COVERS_STORAGE_PATH`.
+This was a diagnostic context issue: entrypoint sources `/run/secrets/app_env_payload`
+before execing Gunicorn, and a new Docker exec process does not inherit those
+process-local environment changes. Targeted reads of the active Gunicorn master
+and worker environments confirmed the configured path. The corrected read-only
+diagnostic reads only selected non-secret keys from `/proc/1/environ`.
+
+Inside the deployed API, normalization and publication were tested with temporary
+storage under `/tmp`: valid 600x800 WebP, matching SHA, mode `0644`, identical
+second publication, unchanged inode/mtime and no remaining staging files passed.
+Temporary storage deletion was confirmed. No persistent assets/state changed.
+Internal CDN `/healthz` and public HTTPS via curl/requests returned `200 ok`;
+the initial urllib public request returned `403`. Mounted assets were empty,
+so actual mounted publication and CDN delivery/cache headers for a real asset
+remain unverified. The environment was not identified as dev/prod. Koha write-back
+and recovery belong to Task 4.3.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use

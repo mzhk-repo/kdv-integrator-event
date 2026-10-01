@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-09-30 — Verify deployed publisher and cover storage mounts (Task 4.2)
+
+- **Context:** The user redeployed Task 4.2 and supplied read-only smoke output showing correct mounts/code hashes but a missing `COVERS_STORAGE_PATH` assertion, then authorized agent Docker socket access.
+- **Change:** Corrected the temporary diagnostic to read only selected non-secret PID 1 environment variables and recorded deployment/runtime evidence in architecture, context, environment, plan and CDN runbook. Runtime application configuration/code was not changed.
+- **Verification:** User output and direct read-only checks confirmed all three services `1/1`, API/CDN on `pinokew`, expected storage-node constraints, API read-write cover root, CDN read-only assets, matching deployed publisher SHA and directory modes 0755/0755/0700 on one device. Active Gunicorn master/worker had the configured storage path; Docker exec's separate environment did not inherit the entrypoint-sourced payload. Corrected diagnostics passed. The deployed publisher passed isolated `/tmp` normalization/publication/dedup/SHA/mode/inode/mtime checks, with cleanup confirmed. Internal CDN health and public HTTPS via requests/curl returned 200; the initial urllib public request returned 403. Bash syntax, ShellCheck for the diagnostic and `git diff --check` passed.
+- **Risks:** Persistent assets were empty, so actual mounted publication and CDN asset delivery remain unverified. The smoke used isolated temporary storage; no persistent assets/state or Koha/Drive/DSpace records changed. Dev/prod was not identified. Koha write-back/recovery remains Task 4.3.
+- **Rollback:** Revert documentation evidence only; preserve runtime mounts/storage/state. The temporary diagnostic fix does not affect deployed services.
+
 ## 2026-09-30 — Content-addressed atomic WebP publication (Task 4.2)
 
 - **Context:** Normalized covers need deduplicated immutable storage with no partial files exposed by the CDN, including during interrupted publication.
