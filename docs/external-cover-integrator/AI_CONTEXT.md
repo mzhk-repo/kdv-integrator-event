@@ -233,10 +233,10 @@ the PDF for an existing Item still fails closed until Task 7.2 replaces the
 bitstream. The environment was not identified.
 
 Task 7.1 adds DSpace Item lookup and identity by MARC `001` UUIDv7 in
-`local.koha.uid`. Retries preserve the Item/Handle and can upload the first PDF
+`koha.uid`. Retries preserve the Item/Handle and can upload the first PDF
 when a prior attempt created the Item but stopped before bitstream upload. The
 legacy `koha.biblionumber` lookup remains as a fallback. Existing bitstreams are
-not replaced here; that is Task 7.2. DSpace must have `local.koha.uid` registered
+not replaced here; that is Task 7.2. DSpace must have `koha.uid` registered
 and indexed; live server configuration and runtime acceptance remain pending.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.

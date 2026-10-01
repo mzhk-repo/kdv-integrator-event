@@ -186,7 +186,7 @@ def test_run_dspace_associates_new_item_with_record_uid(tmp_path):
         koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
     )
 
-    assert created["local.koha.uid"] == uid
+    assert created["koha.uid"] == uid
     assert result["handle"].endswith("/handle/1/2")
 
 

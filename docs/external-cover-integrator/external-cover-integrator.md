@@ -836,7 +836,7 @@ DSpace Item зв'язується з Koha через:
 Рекомендоване поле DSpace:
 
 ```text
-local.koha.uid
+koha.uid
 ```
 
 За потреби той самий UUID може додатково зберігатися в:

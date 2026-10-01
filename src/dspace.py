@@ -111,7 +111,7 @@ class DSpaceClient:
         resp = self._request(
             "GET",
             "/discover/search/objects",
-            params={"query": f"local.koha.uid:{record_uid}", "dsoType": "item", "size": 2},
+            params={"query": f"koha.uid:{record_uid}", "dsoType": "item", "size": 2},
         )
         if resp is None or resp.status_code != 200:
             self._raise_rest_error("DSpace find item by record UID", "/discover/search/objects", resp)
@@ -132,7 +132,7 @@ class DSpaceClient:
                 self._raise_rest_error(
                     "DSpace verify record UID", f"/core/items/{item_uuid}", item_resp
                 )
-            values = item_resp.json().get("metadata", {}).get("local.koha.uid", [])
+            values = item_resp.json().get("metadata", {}).get("koha.uid", [])
             if not any(value.get("value") == record_uid for value in values):
                 return None
             return {"uuid": item_uuid, "handle": item.get("handle")}

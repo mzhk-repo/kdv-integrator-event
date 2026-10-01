@@ -277,13 +277,13 @@ is Task 7.2. The runtime environment was not identified.
 ### DSpace Item identity (Task 7.1)
 
 Drive-backed records carry canonical MARC `001` UUIDv7 to DSpace as
-`local.koha.uid`. The shared workflow searches by that UID before its legacy
+`koha.uid`. The shared workflow searches by that UID before its legacy
 `koha.biblionumber` lookup, so a retry reuses the same Item and Handle. If an
 earlier attempt created the Item but failed before its first ORIGINAL
 bitstream, a retry uploads the missing PDF to that same Item. Existing primary
 bitstreams are linked without replacement; changed-PDF replacement and its
 durable recovery remain Task 7.2. The DSpace metadata registry and discovery
-index must contain `local.koha.uid` before deployment; this repository change
+index must contain `koha.uid` before deployment; this repository change
 does not configure the DSpace server.
 
 ⚡ Деталі Реалізації (M2-M7)

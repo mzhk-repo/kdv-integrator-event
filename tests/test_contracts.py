@@ -62,14 +62,14 @@ def test_dspace_find_item_by_record_uid_uses_exact_metadata_match(monkeypatch):
                     "uuid": "item-uuid", "handle": "123/456",
                 }}}]},
             }}})
-        return _Resp(payload={"metadata": {"local.koha.uid": [{"value": uid}]}})
+        return _Resp(payload={"metadata": {"koha.uid": [{"value": uid}]}})
 
     monkeypatch.setattr(client, "_request", fake_request)
 
     assert client.find_item_by_record_uid(uid) == {"uuid": "item-uuid", "handle": "123/456"}
     assert captured["calls"][0][0:2] == ("GET", "/discover/search/objects")
     assert captured["calls"][0][2]["params"] == {
-        "query": f"local.koha.uid:{uid}", "dsoType": "item", "size": 2
+        "query": f"koha.uid:{uid}", "dsoType": "item", "size": 2
     }
     assert captured["calls"][1][0:2] == ("GET", "/core/items/item-uuid")
 

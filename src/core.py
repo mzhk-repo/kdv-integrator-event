@@ -450,7 +450,7 @@ def run_dspace_workflow(
             record_uid = str(parsed_uid)
         except (ValueError, AttributeError, TypeError):
             raise ValueError("DSpace workflow requires MARC 001 UUIDv7") from None
-        md["local.koha.uid"] = record_uid
+        md["koha.uid"] = record_uid
 
     collection_uuid = meta.get("collection_uuid")
     if not collection_uuid:
