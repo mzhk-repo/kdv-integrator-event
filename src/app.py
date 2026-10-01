@@ -25,8 +25,7 @@ from .config import (
     INTEGRATOR_MOUNT_PATH,
     KOHA_OPAC_URL,
 )
-from .core import process_integration_logic, parse_marc_details, restore_missing_957_from_state
-from .cover_state.state_machine import StateMachine
+from .core import process_integration_logic
 from .services.pdf import validate_optimizer_dpi
 from scripts import robot
 
@@ -470,36 +469,25 @@ def get_task_status(task_id):
 
 @app.route("/kdv/api/integrate/<int:biblionumber>", methods=["PUT"])
 def update_record(biblionumber):
-    koha, dspace = _make_clients()
-    try:
-        raw_xml = koha._get_biblio_xml(biblionumber)
-        md = parse_marc_details(raw_xml)
-        md["koha.biblionumber"] = str(biblionumber)
-
-        meta = koha.get_biblio_metadata(biblionumber)
-        if meta and os.environ.get("COVER_STATE_DB_PATH") and meta.get("record_uid"):
-            record_state = StateMachine().get(meta["record_uid"])
-            restore_missing_957_from_state(koha, biblionumber, meta, record_state)
-        item_uuid = meta.get("dspace_uuid") if meta else None
-
-        if not item_uuid and md.get("handle"):
-            item_uuid = dspace.find_item_uuid_by_handle(md["handle"])
-
-        if not item_uuid:
-            existing = dspace.find_item_by_biblionumber(biblionumber)
-            if existing:
-                item_uuid = existing["uuid"]
-
-        if not item_uuid:
-            return jsonify({"status": "error", "message": "Item not found"}), 404
-
-        success = dspace.update_metadata(item_uuid, md)
+    if not os.environ.get("COVER_STATE_DB_PATH"):
         return (
-            jsonify({"status": "success"})
-            if success
-            else (jsonify({"status": "error"}), 500)
+            jsonify({"status": "error", "message": "Bitstream update requires COVER_STATE_DB_PATH"}),
+            503,
         )
+    try:
+        koha, dspace = _make_clients()
+        task_id = task_manager.start_task(
+            process_integration_logic,
+            biblionumber,
+            koha_client=koha,
+            dspace_client=dspace,
+            force_file_refresh=True,
+        )
+        return jsonify({"status": "accepted", "task_id": task_id}), 202
 
     except Exception as e:
-        logger.error(f"UPDATE ERROR: {e}")
+        logger.error(
+            "Failed to queue DSpace metadata and bitstream update for #%s: %s",
+            biblionumber, e,
+        )
         return jsonify({"status": "error", "message": str(e)}), 500

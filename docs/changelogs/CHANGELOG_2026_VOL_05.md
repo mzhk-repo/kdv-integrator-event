@@ -2,6 +2,12 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Update DSpace PDF from Koha intranet action
+
+- **Context:** The archived-record UI action `Оновити метадані DSpace` called synchronous `PUT /integrate`, which only updated DSpace metadata and left the PDF bitstream unchanged.
+- **Change:** The PUT handler now queues the shared integration workflow with a forced Drive file refresh. The gate fetches SHA even for an unchanged Drive ID, reuses current cover assets, updates DSpace metadata and PDF through the durable replacement/checkpoint flow, and returns the task ID. IntranetUser.js polls this PUT task and labels the action to include the PDF.
+- **Verification:** `tests/test_app.py` and `tests/test_cover_drive_metadata.py` focused checks passed; `tests/test_api_drive_gate.py`, `tests/test_core.py`, and `tests/test_contracts.py` passed (89 total); `node --check IntranetUser.js`, Python compileall, and `git diff --check` passed.
+- **Risks:** Runtime acceptance requires redeploy and a test archived record with a valid Drive PDF source plus initialized cover state DB.
 ## 2026-10-01 — Restore deleted Integrator metadata in MARC 957
 
 - **Context:** Koha `957$3` (DSpace Item UUID) and `957$c` (cover asset SHA) are managed metadata with durable copies in the cover state DB. If deleted manually, unchanged-source cycles previously returned NO-OP without restoring them.

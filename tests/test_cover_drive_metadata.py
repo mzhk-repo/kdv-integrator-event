@@ -50,6 +50,19 @@ def test_same_content_updates_only_identity_and_next_run_is_zero_work(state, sou
     drive.materialize.assert_not_called()
 
 
+def test_forced_same_id_refresh_stages_file_work(state):
+    drive = Mock(spec=GoogleDriveSource)
+    drive.get_metadata.return_value = {"mimeType": "application/pdf", "sha256Checksum": SHA}
+
+    result = check_drive_metadata(
+        state, "record", "old", source="file", drive_source=drive, force_refresh=True
+    )
+
+    assert (result.action, result.sha256) == ("resource_changed", SHA)
+    drive.get_metadata.assert_called_once_with("old", None)
+    assert state.get("record")["status"] == "ok"
+
+
 @pytest.mark.parametrize("uid", ["record", "new-record"])
 def test_changed_content_is_pending_without_committing_unconfirmed_source(state, uid):
     drive = Mock(spec=GoogleDriveSource)

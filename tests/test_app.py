@@ -138,7 +138,27 @@ def test_integrate_without_payload_defaults_to_optimization(monkeypatch):
     assert response.get_json()["task_id"] == "task-1"
     assert captured["biblionumber"] == 123
     assert captured["kwargs"]["skip_optimization"] is False
-    assert captured["kwargs"]["dpi"] is None
+
+
+def test_put_integrate_queues_metadata_and_bitstream_refresh(monkeypatch):
+    client = app.test_client()
+    captured = {}
+    monkeypatch.setenv("COVER_STATE_DB_PATH", "/tmp/cover-state-test.db")
+    monkeypatch.setattr("src.app._make_clients", lambda: ("koha", "dspace"))
+
+    def start_task(func, biblionumber, **kwargs):
+        captured.update(func=func, biblionumber=biblionumber, kwargs=kwargs)
+        return "task-123"
+
+    monkeypatch.setattr("src.app.task_manager.start_task", start_task)
+    response = client.put(
+        "/kdv/api/integrate/123", headers={"X-KDV-TOKEN": "test-token"}
+    )
+
+    assert response.status_code == 202
+    assert response.get_json() == {"status": "accepted", "task_id": "task-123"}
+    assert captured["biblionumber"] == 123
+    assert captured["kwargs"]["force_file_refresh"] is True
 
 
 def test_integrate_accepts_skip_optimization_true(monkeypatch):

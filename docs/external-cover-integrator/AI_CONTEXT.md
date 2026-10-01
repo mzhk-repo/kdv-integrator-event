@@ -33,6 +33,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - UID -> Koha resolver uses existing Elasticsearch `control-number` search; no separate resolver service.
 - Drive PDF replacement runs on `resume` as well as `resource_changed`. An unchanged canonical cover reuses its asset through the same checkpoint/read-back/cleanup cycle; it must not route file work through legacy finalization. User logs exposed both bypasses on 2026-10-01; local orchestration regressions cover the fixes and cleanup retry without re-upload.
 - On Drive integration and explicit Item update, missing Koha `957$3`/`957$c` are restored from the matching `records` row and MARC read-back is required. Existing values and other subfields are preserved; no state row means no restoration.
+- Intranet archived-record `PUT /kdv/api/integrate/{biblionumber}` queues the shared workflow with `force_file_refresh=True`; it refreshes Drive metadata even for the same file ID, replaces the PDF safely, updates metadata, and returns a task ID for UI polling.
 - PDF replacement also selects `records.dspace_bitstream_uuid` regardless of filename, validating its saved Item UUID and ORIGINAL bundle membership before upload. A 2026-10-01 renamed-source smoke exposed empty same-name candidates; stored-identity forwarding is fixed locally, runtime acceptance remains pending. Historical leftovers from completed faulty cycles need separate identification.
 - Protect Integrator-managed `957$c`, `957$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
 

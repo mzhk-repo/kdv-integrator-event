@@ -91,9 +91,10 @@ def workflow(tmp_path, monkeypatch):
     return state, koha, meta, drive, cover, dspace
 
 
-def run(workflow, dspace_client=None):
+def run(workflow, dspace_client=None, force_file_refresh=False):
     return process_integration_logic("task", 42, koha_client=workflow[1],
-                                    dspace_client=dspace_client, skip_optimization=True)
+                                    dspace_client=dspace_client, skip_optimization=True,
+                                    force_file_refresh=force_file_refresh)
 
 
 def test_authenticated_api_reaches_gate_and_next_cycle_is_zero_work(workflow, monkeypatch):
@@ -151,6 +152,20 @@ def test_noop_cycle_restores_deleted_957_values_from_cover_state(workflow):
         cover_asset_sha256=row['cover_asset_sha256'],
     )
     assert drive.get_metadata.call_count == calls
+
+
+def test_forced_ui_refresh_reprocesses_unchanged_drive_file(workflow):
+    state, _, _, drive, _, dspace = workflow
+    run(workflow)
+    metadata_calls = drive.get_metadata.call_count
+
+    result = run(workflow, force_file_refresh=True)
+
+    assert result['uuid'] == 'item'
+    assert drive.get_metadata.call_count == metadata_calls + 1
+    assert dspace.call_count == 2
+    assert dspace.call_args.kwargs['replace_existing'] is True
+    assert state.get(UID)['status'] == 'ok'
 
 
 def test_unchanged_source_repairs_missing_dspace_handle_link(workflow):

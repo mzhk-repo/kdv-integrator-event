@@ -650,10 +650,13 @@ def process_integration_logic(
     task_id, biblionumber, koha_client=None, dspace_client=None,
     skip_optimization: bool = False, optimizer_client: PDFOptimizerClient | None = None,
     dpi: int | None = None, state_machine: StateMachine | None = None,
+    force_file_refresh: bool = False,
 ):
     """Apply the durable Drive gate before the existing asynchronous workflow."""
     options = dict(koha_client=koha_client, dspace_client=dspace_client,
                    skip_optimization=skip_optimization, optimizer_client=optimizer_client, dpi=dpi)
+    if force_file_refresh and not os.environ.get("COVER_STATE_DB_PATH") and state_machine is None:
+        raise RuntimeError("COVER_STATE_DB_PATH is required for UI bitstream replacement")
     if state_machine is None and not os.environ.get("COVER_STATE_DB_PATH"):
         return _run_integration_logic(task_id, biblionumber, **options)
     state = state_machine or StateMachine()
@@ -663,11 +666,15 @@ def process_integration_logic(
         koha = koha_client or KohaClient()
         options['koha_client'] = koha
         meta = koha.get_biblio_metadata(biblionumber)
+        if force_file_refresh and (not meta or not meta.get('file_path')):
+            raise ValueError('UI bitstream replacement requires a 956$u Drive PDF source')
         resolver = _source_resolver()
         refs = {
             'file': resolver.gdrive_parser.parse(meta.get('file_path'), '956$u') if meta else None,
             'cover': resolver.gdrive_parser.parse(meta.get('cover_path'), '956$p') if meta else None,
         }
+        if force_file_refresh and refs['file'] is None:
+            raise ValueError('UI bitstream replacement requires a 956$u Google Drive PDF')
         if not any(refs.values()):
             return _run_integration_logic(task_id, biblionumber, meta=meta, resolver=resolver, **options)
         uid = meta.get('record_uid')
@@ -704,7 +711,9 @@ def process_integration_logic(
                     staged = checkpoint['sources'].get(source) if checkpoint else None
                     if staged and staged[0] == ref.file_id:
                         checks[source] = DriveCheckResult('resume', staged[1])
-                    elif existing and existing['status'] == 'ok' and existing[f'{source}_source_id'] == ref.file_id:
+                    elif (existing and existing['status'] == 'ok'
+                          and existing[f'{source}_source_id'] == ref.file_id
+                          and not (force_file_refresh and source == 'file')):
                         # Another source's gate may already have marked the whole record pending.
                         checks[source] = DriveCheckResult('noop')
                     else:
@@ -712,6 +721,7 @@ def process_integration_logic(
                             state, uid, ref.file_id, source=source, resource_key=ref.resource_key,
                             drive_source=resolver.gdrive_source,
                             retry_checked=True,
+                            force_refresh=force_file_refresh and source == 'file',
                         )
                     logger.info('Drive gate record_uid=%r source=%s action=%s', uid, source, checks[source].action)
                     if checks[source].action == 'deferred':
@@ -728,7 +738,7 @@ def process_integration_logic(
                 ))
             )
             if checkpoint:
-                file_work = bool(checkpoint['file_work'])
+                file_work = bool(checkpoint['file_work']) or force_file_refresh
                 cover_work = True
             elif (refs['cover'] or (not meta.get('cover_path') and refs['file'])) and not (
                 existing and existing['cover_asset_sha256']

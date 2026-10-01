@@ -489,7 +489,7 @@ docker compose up -d --remove-orphans
 |---|---|---|
 | `POST` | `/kdv/api/integrate/{biblionumber}` | Запустити async-інтеграцію → `202 + {task_id}` |
 | `GET` | `/kdv/api/status/{task_id}` | Статус задачі: `queued / processing / success / error` |
-| `PUT` | `/kdv/api/integrate/{biblionumber}` | Sync-оновлення метаданих у DSpace з Koha |
+| `PUT` | `/kdv/api/integrate/{biblionumber}` | Async-примусове оновлення метаданих і PDF bitstream у DSpace з Koha/Drive → `202 + {task_id}` |
 | `GET` | `/kdv/api` | Service index (base route) |
 | `GET` | `/kdv/api/health` | Liveness probe → `200 OK` |
 | `GET` | `/kdv/api/ready` / `/kdv/api/readiness` | Readiness probe (перевіряє mount path) → `200 / 503` |

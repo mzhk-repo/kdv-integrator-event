@@ -14,10 +14,10 @@ $(document).ready(function() {
         MAX_POLLING_ATTEMPTS: 180, // До 6 хвилин для важких PDF
         ROBOT_MAX_POLLING_ATTEMPTS: 1800, // До 1 години для batch-канарейки
         I18N: {
-            updateBtn: "Оновити метадані DSpace",
+            updateBtn: "Оновити метадані та PDF у DSpace",
             archiveBtn: "Архівувати в DSpace",
             confirmArchive: "Архівувати книгу в DSpace? (Фоновий процес)",
-            confirmUpdate: "Оновити метадані (Назву, Автора) в DSpace?",
+            confirmUpdate: "Оновити метадані та PDF файл у DSpace?",
             confirmRobotBatch: "Запустити Robot Batch для вказаного списку?",
             robotBatchBtn: "Запустити Robot Batch",
             confirmExport: "Запустити експорт Koha? Буде створено XLSX на Google Drive.",
@@ -370,7 +370,7 @@ $(document).ready(function() {
                         skip_optimization: document.getElementById("kdv-skip-optimization")?.checked ?? false
                     }, selectedDpiPayload("kdv-integrate-dpi"))) : undefined,
                     success: (res) => {
-                        if (btnConfig.method === "POST" && res.task_id) {
+                        if (res.task_id) {
                             startPolling(res.task_id, btn, originalHtml);
                         } else {
                             alert(KDV_CONFIG.I18N.success);

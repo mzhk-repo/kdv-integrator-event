@@ -360,7 +360,7 @@ def _make_clients():
     return KohaClientWrapper(), DSpaceClientWrapper()
 ```
 
-- Викликається у кожному HTTP обробнику (`POST /integrate`, `PUT /integrate`).
+- Викликається у кожному HTTP обробнику (`POST /integrate`, `PUT /integrate`). `PUT` запускає примусове оновлення Drive PDF bitstream разом із метаданими та працює через task polling.
 - У тестах можна monkeypatch для підміни моків.
 
 ### 5. TaskManager з DI (M2 — kwargs support)
