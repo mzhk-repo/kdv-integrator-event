@@ -14,10 +14,10 @@ $(document).ready(function() {
         MAX_POLLING_ATTEMPTS: 180, // До 6 хвилин для важких PDF
         ROBOT_MAX_POLLING_ATTEMPTS: 1800, // До 1 години для batch-канарейки
         I18N: {
-            updateBtn: "Оновити метадані та PDF у DSpace",
+            updateBtn: "Оновити дані в DSpace",
             archiveBtn: "Архівувати в DSpace",
             confirmArchive: "Архівувати книгу в DSpace? (Фоновий процес)",
-            confirmUpdate: "Оновити метадані та PDF файл у DSpace?",
+            confirmUpdate: "Оновити дані в DSpace?",
             confirmRobotBatch: "Запустити Robot Batch для вказаного списку?",
             robotBatchBtn: "Запустити Robot Batch",
             confirmExport: "Запустити експорт Koha? Буде створено XLSX на Google Drive.",
