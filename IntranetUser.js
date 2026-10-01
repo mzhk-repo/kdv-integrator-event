@@ -233,10 +233,6 @@ $(document).ready(function() {
                 <textarea id="kdv-robot-candidates" class="form-control" rows="3" placeholder="100-110&#10;200, 210"></textarea>
                 <div class="text-muted" style="margin-top: 4px;">${KDV_CONFIG.I18N.selectedHint}</div>
                 <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
-                    <label for="kdv-robot-parallelism" style="margin-bottom: 0;">
-                        Паралелізм
-                        <input type="number" id="kdv-robot-parallelism" class="form-control input-sm" min="1" value="1" style="width: 96px;">
-                    </label>
                     <label for="kdv-robot-max-wait" style="margin-bottom: 0;">
                         Очікування, сек
                         <input type="number" id="kdv-robot-max-wait" class="form-control input-sm" min="30" value="900" style="width: 112px;">

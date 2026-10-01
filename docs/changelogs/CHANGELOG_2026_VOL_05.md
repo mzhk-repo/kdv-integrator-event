@@ -2,6 +2,13 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Recreate missing DSpace Items from unchanged Drive sources
+
+- **Context:** An unchanged Drive PDF could NO-OP while link repair attempted to read a deleted DSpace Item UUID from state and failed with HTTP 404 before UID-based reconciliation.
+- **Change:** DSpace REST errors retain their HTTP status. A confirmed 404 during saved-Item link repair now forces Drive metadata/SHA validation and reruns resolution by `koha.uid`; if the Item is absent, the normal workflow creates it and uploads the PDF. Non-404 errors still fail for retry; ambiguous UID matches remain fail-closed. Updated architecture, context, plan and runbook.
+- **Verification:** `python3 -m py_compile src/core.py src/dspace.py` and `git diff --check` passed. Tests and runtime acceptance were not run.
+- **Risks:** Runtime acceptance requires redeployment and a controlled test record whose DSpace Item was removed. Existing duplicate Items matching one `koha.uid` require manual resolution.
+
 ## 2026-10-01 — Update DSpace PDF from Koha intranet action
 
 - **Context:** The archived-record UI action `Оновити метадані DSpace` called synchronous `PUT /integrate`, which only updated DSpace metadata and left the PDF bitstream unchanged.

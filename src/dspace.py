@@ -10,7 +10,9 @@ logger = logging.getLogger("DSpaceClient")
 
 
 class DSpaceRestError(RuntimeError):
-    pass
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class DSpaceClient:
@@ -192,7 +194,7 @@ class DSpaceClient:
                 f"({self._response_reason(resp)}) [{endpoint}]"
             )
         logger.error(msg)
-        raise DSpaceRestError(msg)
+        raise DSpaceRestError(msg, getattr(resp, "status_code", None))
 
     def update_metadata(self, item_uuid, metadata_dict):
         operations = []

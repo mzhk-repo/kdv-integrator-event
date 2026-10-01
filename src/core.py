@@ -16,7 +16,7 @@ from pymarc import parse_xml_to_array
 
 from .config import INTEGRATOR_MOUNT_PATH, DSPACE_UI_URL
 from .koha import KohaClient
-from .dspace import DSpaceClient
+from .dspace import DSpaceClient, DSpaceRestError
 from .services.covers import CoverService
 from .services.cover_pipeline import verify_drive_download as _verify_drive_download
 from .services.cover_pipeline import (
@@ -88,7 +88,13 @@ def _repair_missing_dspace_handle_link(koha, dspace, biblionumber, meta, record_
         return False
 
     dspace = dspace or DSpaceClient()
-    item = dspace.get_item(item_uuid)
+    try:
+        item = dspace.get_item(item_uuid)
+    except DSpaceRestError as error:
+        if error.status_code == 404:
+            logger.info("Stored DSpace Item is missing; record_uid=%r item_uuid=%s", meta.get("record_uid"), item_uuid)
+            return "missing"
+        raise
     handle = item.get("handle")
     handle_url = f"{DSPACE_UI_URL}/handle/{handle}" if handle else f"{DSPACE_UI_URL}/items/{item_uuid}"
     bitstream = dspace.get_primary_bitstream(item_uuid)
@@ -746,11 +752,31 @@ def process_integration_logic(
                 # Upgrade confirmed legacy covers to the canonical WebP asset.
                 cover_work = True
             if not file_work and not cover_work:
-                if _repair_missing_dspace_handle_link(
+                link_repair = _repair_missing_dspace_handle_link(
                     koha, options['dspace_client'], biblionumber, meta, existing
-                ):
+                )
+                if link_repair is True:
                     return {'status': 'links_repaired'}
-                return {'status': 'noop', 'reason': 'confirmed_sources_unchanged'}
+                if link_repair != 'missing':
+                    return {'status': 'noop', 'reason': 'confirmed_sources_unchanged'}
+                # A 404 proves the saved DSpace identity is stale. Reconcile by
+                # koha.uid and recreate from the unchanged Drive source if absent.
+                if refs['file'] is not None:
+                    checks['file'] = check_drive_metadata(
+                        state, uid, refs['file'].file_id, source='file',
+                        resource_key=refs['file'].resource_key,
+                        drive_source=resolver.gdrive_source, retry_checked=True,
+                        force_refresh=True,
+                    )
+                    if checks['file'].action == 'deferred':
+                        return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
+                    if checks['file'].action == 'same_content':
+                        checks['file'] = DriveCheckResult(
+                            'resource_changed', checks['file'].sha256, checks['file'].metadata
+                        )
+                file_work = True
+                meta = dict(meta, previous_dspace_item_uuid=None,
+                            previous_dspace_bitstream_uuid=None)
             if not state.mark_pending(uid):
                 return {'status': 'deferred', 'reason': 'retry_cutoff'}
             downstream_started = True

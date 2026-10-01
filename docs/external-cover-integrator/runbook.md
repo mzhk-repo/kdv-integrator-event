@@ -314,6 +314,15 @@ reconciliation path now reads the Item and primary ORIGINAL bitstream and
 rewrites both links (PDF download and Handle) in Koha. Runtime acceptance of
 this repair path requires redeployment and read-back verification.
 
+If reading the state DB's Item UUID returns HTTP 404 during link repair, the
+workflow forces a Drive metadata/SHA check and resolves DSpace again by
+`koha.uid`. If no Item exists, it creates a replacement Item and uploads the
+PDF, then writes and reads back the new Koha UUID and links. HTTP 404 is the
+only response that triggers recreation; timeout, auth and 5xx errors should
+remain retryable failures. If UID search is ambiguous, stop and resolve the
+duplicate Items before retrying. Verify this path after redeployment with an
+approved test record whose DSpace Item was deliberately removed.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use
