@@ -641,6 +641,7 @@ curl --get --silent --show-error "${DSPACE_API_URL}/discover/search/objects" \
 
 **Acceptance criteria:**
 - Старий bitstream доступний до перевірки нового upload і лишається доступним, поки обидва Koha links не підтверджені read-back.
+- Перейменування source PDF не змінює ідентифікацію попереднього файла: використовується `records.dspace_bitstream_uuid` зі звіркою Item UUID і належності до ORIGINAL bundle до upload. Runtime log 2026-10-01 показав порожній same-name список після перейменування; передавання збереженого UUID виправлено, runtime acceptance ще очікується.
 - Симуляція збою Koha write-back: checkpoint зберігає новий bitstream, запис лишається незавершеним, старий bitstream **не** видалений; повтор не завантажує новий bitstream удруге.
 - Після успішного Koha read-back новий bitstream є primary, старий видалений, state збережено як `ok`.
 

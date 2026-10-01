@@ -273,7 +273,12 @@ def test_run_dspace_replacement_verifies_and_swaps_primary_without_deleting_old(
     ]
 
 
-def test_run_dspace_replacement_recovers_old_named_bitstream_without_primary(tmp_path):
+@pytest.mark.parametrize('old_name,stored_uuid', [
+    ('replacement.pdf', None),
+    ('renamed-old.pdf', 'legacy-pdf'),
+    ('renamed-old.pdf', 'missing-bitstream'),
+])
+def test_run_dspace_replacement_recovers_old_named_bitstream_without_primary(tmp_path, old_name, stored_uuid):
     class NoPrimaryDSpace(StubDSpace):
         def __init__(self):
             super().__init__()
@@ -288,7 +293,7 @@ def test_run_dspace_replacement_recovers_old_named_bitstream_without_primary(tmp
 
         def get_original_bitstreams(self, _item_uuid):
             return [
-                {"uuid": "legacy-pdf", "name": "replacement.pdf"},
+                {"uuid": "legacy-pdf", "name": old_name},
                 {"uuid": "other-file", "name": "supplement.pdf"},
             ]
 
@@ -307,9 +312,22 @@ def test_run_dspace_replacement_recovers_old_named_bitstream_without_primary(tmp
     pdf.write_bytes(b"new pdf")
     dspace = NoPrimaryDSpace()
     uid = "018f0f00-0000-7000-8000-000000000001"
+    meta = {
+        'collection_uuid': 'coll', 'record_uid': uid,
+        'previous_dspace_item_uuid': 'existing-item',
+        'previous_dspace_bitstream_uuid': stored_uuid,
+    }
+    if stored_uuid == 'missing-bitstream':
+        with pytest.raises(RuntimeError, match='Stored DSpace bitstream'):
+            run_dspace_workflow(
+                5, str(pdf), meta, koha_client=StubKoha(), dspace_client=dspace,
+                skip_optimization=True, replace_existing=True,
+            )
+        assert dspace.uploaded == []
+        return
 
     result = run_dspace_workflow(
-        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        5, str(pdf), meta,
         koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
         replace_existing=True,
     )

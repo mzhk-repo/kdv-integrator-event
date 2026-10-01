@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Preserve previous PDF identity across filename changes (Task 7.2)
+
+- **Context:** Runtime replacement found no primary and no same-name candidates: the source filename changed from `Полтава.pdf` to `Домонтович_В..pdf`. The old file UUID was already persisted in cover state, but was not passed to the DSpace workflow.
+- **Change:** Pass the confirmed previous Item/bitstream UUIDs from state into replacement. Select the previous bitstream regardless of filename and verify it belongs to the target ORIGINAL bundle before upload. Missing/mismatched stored identity now fails the task. Keep the existing checkpoint, Koha read-back and verified deletion sequence.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_core.py tests/test_api_drive_gate.py` — 84 passed, including renamed sources without primary, stored-UUID forwarding and rejection before upload when the stored UUID is absent.
+- **Risks:** Runtime acceptance remains pending. Historical leftovers from already completed faulty cycles have no retained identity in state and require separate identification; this change tracks the most recently confirmed PDF.
+- **Rollback:** Revert state-identity forwarding and selection; retain state DB and checkpoints.
+
 ## 2026-10-01 — Replace DSpace PDF when no primary is set (Task 7.2)
 
 - **Context:** Новий runtime log показав `enabled=True` і `primary_bitstream_uuid=None`; DSpace Item мав старий PDF, але workflow зберігав старий UUID лише з primary relation, тому cleanup не запускався.

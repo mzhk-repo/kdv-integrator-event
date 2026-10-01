@@ -556,12 +556,19 @@ def run_dspace_workflow(
         primary_upload_name = upload_name or os.path.basename(file_path)
         if replace_existing:
             old_bitstreams = local_dspace.get_original_bitstreams(item_uuid)
+            previous_uuid = meta.get('previous_dspace_bitstream_uuid')
+            if previous_uuid and (
+                meta.get('previous_dspace_item_uuid') != item_uuid
+                or previous_uuid not in {bitstream.get('uuid') for bitstream in old_bitstreams}
+            ):
+                raise RuntimeError('Stored DSpace bitstream is not in the target Item ORIGINAL bundle')
             replacement_old_bitstream_uuids = list(dict.fromkeys(
                 [
                     bitstream.get("uuid") for bitstream in old_bitstreams
                     if bitstream.get("uuid")
                     and (
                         (primary_bitstream and bitstream["uuid"] == primary_bitstream.get("uuid"))
+                        or bitstream["uuid"] == previous_uuid
                         or bitstream.get("name") == primary_upload_name
                     )
                 ]
@@ -652,6 +659,12 @@ def process_integration_logic(
         downstream_started = False
         try:
             existing = state.get(uid)
+            if existing:
+                meta = dict(
+                    meta,
+                    previous_dspace_item_uuid=existing['dspace_item_uuid'],
+                    previous_dspace_bitstream_uuid=existing['dspace_bitstream_uuid'],
+                )
             if existing is not None and existing['status'] != 'ok' and not state.is_retry_eligible(uid):
                 return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
             inputs_sha = hashlib.sha256(json.dumps({

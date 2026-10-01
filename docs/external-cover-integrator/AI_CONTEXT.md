@@ -31,6 +31,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - Emergency overwrite of a shared asset is a documented exception requiring backup, targeted CDN purge, and audit log.
 - DSpace replacement: list ORIGINAL bitstreams -> upload and verify -> set/read back primary (POST if absent, PUT if present) -> checkpoint -> update/read back both Koha links -> delete matching old filename bitstreams and verify GET returns 404 -> finalize state. A 2026-10-01 smoke showed the existing Item had no primary bitstream while its previous file remained in DSpace; cleanup now discovers same-name files even without a primary. Runtime acceptance is pending.
 - UID -> Koha resolver uses existing Elasticsearch `control-number` search; no separate resolver service.
+- PDF replacement also selects `records.dspace_bitstream_uuid` regardless of filename, validating its saved Item UUID and ORIGINAL bundle membership before upload. A 2026-10-01 renamed-source smoke exposed empty same-name candidates; stored-identity forwarding is fixed locally, runtime acceptance remains pending. Historical leftovers from completed faulty cycles need separate identification.
 - Protect Integrator-managed `957$c`, `957$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
 
 ## Architecture Snapshot

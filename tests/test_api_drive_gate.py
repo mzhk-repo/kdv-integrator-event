@@ -245,6 +245,8 @@ def test_changed_pdf_retry_reuses_uploaded_bitstream_and_deletes_old_after_koha(
 
     def replace_pdf(*_args, **kwargs):
         assert kwargs["replace_existing"] is True
+        assert _args[2]['previous_dspace_bitstream_uuid'] == 'old-bitstream'
+        assert _args[2]['previous_dspace_item_uuid'] == 'item'
         kwargs["result_callback"](upload_result)
         return upload_result
 

@@ -292,9 +292,12 @@ the failure/retry sequence; runtime acceptance requires deployment and a
 user-run smoke test.
 
 If `get_primary_bitstream()` returns no primary for an existing Item, inspect
-the `ORIGINAL` bundle list. Replacement now makes the uploaded PDF primary and
-removes only pre-existing bitstreams with the same filename, after Koha link
-read-back; other filenames are preserved.
+the `ORIGINAL` bundle list. Replacement uses the confirmed previous bitstream
+UUID from state even when its filename changes, and verifies its Item/bundle
+membership before upload. It also selects same-name versions and an existing
+primary. The new PDF becomes primary; selected old UUIDs are deleted only after
+Koha link read-back. Historical leftovers from completed faulty cycles require
+separate identification; unrelated attachments must not be deleted.
 
 The user confirmed a successful PDF/Item run on 2026-10-01 after correcting the
 record's DSpace collection. A later run restored a removed `856$u` by linking the
