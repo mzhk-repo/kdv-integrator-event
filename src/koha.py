@@ -340,6 +340,50 @@ class KohaClient:
     def set_cover_url(self, biblio_id, cover_url):
         return self._update_956(biblio_id, cover_url=cover_url)
 
+    def restore_missing_957_metadata(
+        self, biblio_id, *, record_uid, item_uuid=None, cover_asset_sha256=None
+    ):
+        xml_data = self._get_biblio_xml(biblio_id)
+        record = self._parse_marc(xml_data) if xml_data else None
+        if not record or not record.get_fields("001") or record["001"].data.strip() != record_uid:
+            return False
+
+        fields = record.get_fields("957")
+        field = fields[0] if fields else Field(tag="957", indicators=[" ", " "], subfields=[])
+        changed = False
+        for code, value in (("3", item_uuid), ("c", cover_asset_sha256)):
+            if value and not self._get_subfield_safe(field, code):
+                field.add_subfield(code, value)
+                changed = True
+        if not changed:
+            return True
+        if not fields:
+            record.add_ordered_field(field)
+
+        new_xml = pymarc.record_to_xml(record).decode("utf-8")
+        try:
+            resp = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=new_xml.encode("utf-8"),
+                headers={"Content-Type": "application/marcxml+xml"},
+            )
+            if resp.status_code != 200:
+                return False
+        except Exception as error:
+            logger.error("Failed to restore MARC 957 for #%s: %s", biblio_id, error)
+            return False
+
+        readback_xml = self._get_biblio_xml(biblio_id)
+        readback = self._parse_marc(readback_xml) if readback_xml else None
+        if not readback or not readback.get_fields("957"):
+            return False
+        restored = readback.get_fields("957")[0]
+        return (
+            (not item_uuid or self._get_subfield_safe(restored, "3") == item_uuid)
+            and (not cover_asset_sha256
+                 or self._get_subfield_safe(restored, "c") == cover_asset_sha256)
+        )
+
     def repair_dspace_links(self, biblio_id, primary_download_url, handle_url):
         """Replace the 856 links with the DSpace file and record links."""
         if not primary_download_url or not handle_url:

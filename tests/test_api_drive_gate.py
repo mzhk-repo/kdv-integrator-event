@@ -62,6 +62,14 @@ def workflow(tmp_path, monkeypatch):
         return True
     koha.set_success.side_effect = set_success
     koha.set_cover_url.side_effect = set_cover
+    def restore_957(_biblionumber, *, record_uid, item_uuid=None, cover_asset_sha256=None):
+        meta['record_uid'] = record_uid
+        if item_uuid:
+            meta['dspace_uuid'] = item_uuid
+        if cover_asset_sha256:
+            meta['cover_asset_sha256'] = cover_asset_sha256
+        return True
+    koha.restore_missing_957_metadata.side_effect = restore_957
     koha.get_cover_image_url.return_value = "http://koha.test/cover.jpg"
     drive = Mock()
     drive.get_metadata.return_value = {"name": "book.pdf", "mimeType": "application/pdf",
@@ -119,6 +127,30 @@ def test_authenticated_api_reaches_gate_and_next_cycle_is_zero_work(workflow, mo
     assert run(workflow)["status"] == "noop"
     assert state.get(UID)["file_source_id"] == "new-id"
     assert drive.get_metadata.call_count == 2 and drive.download_to_file.call_count == 1
+
+
+def test_noop_cycle_restores_deleted_957_values_from_cover_state(workflow):
+    state, koha, meta, drive, _, _ = workflow
+    run(workflow)
+    row = state.get(UID)
+    meta.pop('dspace_uuid')
+    meta.pop('cover_asset_sha256')
+
+    def restore(_biblionumber, *, record_uid, item_uuid, cover_asset_sha256):
+        assert record_uid == UID
+        meta['dspace_uuid'] = item_uuid
+        meta['cover_asset_sha256'] = cover_asset_sha256
+        return True
+
+    koha.restore_missing_957_metadata.side_effect = restore
+    calls = drive.get_metadata.call_count
+
+    assert run(workflow)['status'] == 'noop'
+    koha.restore_missing_957_metadata.assert_called_once_with(
+        42, record_uid=UID, item_uuid=row['dspace_item_uuid'],
+        cover_asset_sha256=row['cover_asset_sha256'],
+    )
+    assert drive.get_metadata.call_count == calls
 
 
 def test_unchanged_source_repairs_missing_dspace_handle_link(workflow):

@@ -114,6 +114,28 @@ def _disk_free_mb(path: str) -> float | None:
         return None
 
 
+def restore_missing_957_from_state(koha, biblionumber, meta, record_state):
+    if not meta or not record_state:
+        return meta
+    values = {
+        "item_uuid": record_state.get("dspace_item_uuid"),
+        "cover_asset_sha256": record_state.get("cover_asset_sha256"),
+    }
+    missing = {
+        key: value for key, value in values.items()
+        if value and not meta.get("dspace_uuid" if key == "item_uuid" else key)
+    }
+    if missing and koha.restore_missing_957_metadata(
+        biblionumber, record_uid=meta.get("record_uid"), **missing
+    ) is not True:
+        raise RuntimeError(f"Koha 957 state restoration failed for #{biblionumber}")
+    if "item_uuid" in missing:
+        meta["dspace_uuid"] = missing["item_uuid"]
+    if "cover_asset_sha256" in missing:
+        meta["cover_asset_sha256"] = missing["cover_asset_sha256"]
+    return meta
+
+
 def _resolve_cover_url(koha, biblionumber, cover_res, update_koha: bool = False):
     if not isinstance(cover_res, dict):
         return None
@@ -659,6 +681,7 @@ def process_integration_logic(
         downstream_started = False
         try:
             existing = state.get(uid)
+            restore_missing_957_from_state(koha, biblionumber, meta, existing)
             if existing:
                 meta = dict(
                     meta,

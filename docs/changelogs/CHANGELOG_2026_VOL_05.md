@@ -2,6 +2,13 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Restore deleted Integrator metadata in MARC 957
+
+- **Context:** Koha `957$3` (DSpace Item UUID) and `957$c` (cover asset SHA) are managed metadata with durable copies in the cover state DB. If deleted manually, unchanged-source cycles previously returned NO-OP without restoring them.
+- **Change:** On Drive integration and the explicit Item update endpoint, restore only missing `957$3`/`957$c` from the state DB. Preserve existing subfields and unrelated MARC data, require matching `001`, and confirm the write by MARC read-back.
+- **Verification:** Focused tests cover restoration of missing values, preservation of existing/unrelated subfields, and NO-OP repair without Drive calls. See test run recorded for this change.
+- **Risks:** Restoration is available only when the matching record row exists in `COVER_STATE_DB_PATH`; existing non-empty `957` values are intentionally left untouched.
+
 ## 2026-10-01 — Finalize PDF replacements when cover is unchanged or work resumes (Task 7.2)
 
 - **Context:** User runtime logs showed `resume` disabling replacement, and a changed PDF with `cover=noop` selecting the correct old UUID but bypassing the checkpoint/read-back/cleanup path entirely.

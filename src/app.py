@@ -25,7 +25,8 @@ from .config import (
     INTEGRATOR_MOUNT_PATH,
     KOHA_OPAC_URL,
 )
-from .core import process_integration_logic, parse_marc_details
+from .core import process_integration_logic, parse_marc_details, restore_missing_957_from_state
+from .cover_state.state_machine import StateMachine
 from .services.pdf import validate_optimizer_dpi
 from scripts import robot
 
@@ -476,6 +477,9 @@ def update_record(biblionumber):
         md["koha.biblionumber"] = str(biblionumber)
 
         meta = koha.get_biblio_metadata(biblionumber)
+        if meta and os.environ.get("COVER_STATE_DB_PATH") and meta.get("record_uid"):
+            record_state = StateMachine().get(meta["record_uid"])
+            restore_missing_957_from_state(koha, biblionumber, meta, record_state)
         item_uuid = meta.get("dspace_uuid") if meta else None
 
         if not item_uuid and md.get("handle"):

@@ -325,6 +325,38 @@ def test_koha_success_writes_file_856_before_handle_856(monkeypatch):
     assert fields_856[1]["y"] == "Запис в репозиторії"
 
 
+def test_koha_restores_only_missing_957_values_and_reads_back(monkeypatch):
+    client = KohaClient()
+    uid = "019f8414-3e71-70f1-9432-e235b989ef2c"
+    original = (
+        f'<record><controlfield tag="001">{uid}</controlfield>'
+        '<datafield tag="957" ind1=" " ind2=" ">'
+        '<subfield code="3">item-from-db</subfield>'
+        '<subfield code="9">preserve</subfield></datafield></record>'
+    )
+    captured = {}
+    responses = iter([original])
+
+    def get_xml(_biblio_id):
+        return next(responses) if len(captured) == 0 else captured['data']
+
+    monkeypatch.setattr(client, "_get_biblio_xml", get_xml)
+
+    def fake_put(_url, data=None, headers=None):
+        captured['data'] = data.decode('utf-8')
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    assert client.restore_missing_957_metadata(
+        42, record_uid=uid, item_uuid="item-from-db", cover_asset_sha256="a" * 64,
+    ) is True
+    restored = client._parse_marc(captured['data']).get_fields('957')[0]
+    assert restored.get_subfields('3') == ['item-from-db']
+    assert restored.get_subfields('c') == ['a' * 64]
+    assert restored.get_subfields('9') == ['preserve']
+
+
 def test_koha_dspace_link_repair_replaces_856_with_both_links(monkeypatch):
     client = KohaClient()
     captured = {}
