@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Confirm DSpace UID retry lookup and stable Handle (Task 7.1)
+
+- **Context:** The initial successful runtime cycle confirmed DSpace Item creation, `koha.uid` metadata and PDF upload; repeated lookup and Handle stability were still to be checked.
+- **Change:** Recorded the user's runtime acceptance in the implementation plan, architecture and AI context.
+- **Verification:** The user confirmed that a repeated DSpace search finds the same Item and its Handle remains unchanged. Together with the previously supplied successful upload log, both Task 7.1 acceptance criteria are confirmed.
+- **Risks:** This does not verify changed-PDF bitstream replacement or recovery, which remain Task 7.2.
+- **Rollback:** Documentation-only evidence update; no runtime data or services changed by this documentation update.
+
+## 2026-10-01 — Confirm first DSpace Item/bitstream runtime cycle (Task 7.1)
+
+- **Context:** The user ran the updated integration after creating DSpace metadata field `koha.uid`.
+- **Change:** Recorded the runtime acceptance evidence in the implementation plan, architecture and AI context.
+- **Verification:** User-provided log shows Drive source accepted, DSpace processing for Koha biblio 70, PDF upload to the Item, and successful task completion. The user confirmed `koha.uid` contains MARC `001`. This verifies the first positive cycle; retry lookup and stable Handle across repeated runs were not exercised.
+- **Risks:** Existing-bitstream replacement/recovery remains Task 7.2. Runtime Handle stability still needs a repeated-run check.
+- **Rollback:** Documentation-only evidence update; no runtime data or services changed by this documentation update.
+
 ## 2026-10-01 — DSpace Item UUID identity and first-bitstream retry (Task 7.1)
 
 - **Context:** The DSpace workflow found Items by Koha-local `biblionumber`, and a retry after Item creation but before the first PDF upload only linked the incomplete Item.

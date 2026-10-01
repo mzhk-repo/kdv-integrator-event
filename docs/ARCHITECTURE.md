@@ -283,8 +283,13 @@ earlier attempt created the Item but failed before its first ORIGINAL
 bitstream, a retry uploads the missing PDF to that same Item. Existing primary
 bitstreams are linked without replacement; changed-PDF replacement and its
 durable recovery remain Task 7.2. The DSpace metadata registry and discovery
-index must contain `koha.uid` before deployment; this repository change
-does not configure the DSpace server.
+index must contain `koha.uid`; this repository change does not configure the
+DSpace server.
+User-provided runtime log on 2026-10-01 confirms the field contains MARC `001`,
+the PDF uploaded to the Item, and the task completed successfully. This is
+positive first-cycle evidence. The user also confirmed that a repeated search
+finds the same Item and its Handle remains unchanged. Changed-PDF replacement
+and recovery remain Task 7.2.
 
 ⚡ Деталі Реалізації (M2-M7)
 
