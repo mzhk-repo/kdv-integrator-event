@@ -1,4 +1,5 @@
 import os
+import hashlib
 
 # Required config env vars before importing src modules.
 os.environ.setdefault("KDV_API_TOKEN", "test-token")
@@ -126,7 +127,7 @@ def test_dspace_metadata_format_strips_edge_punctuation():
     ]
 
 
-def test_dspace_get_primary_bitstream_reads_first_original_bitstream(monkeypatch):
+def test_dspace_get_primary_bitstream_uses_original_primary_relation(monkeypatch):
     client = DSpaceClient()
     calls = []
 
@@ -141,22 +142,60 @@ def test_dspace_get_primary_bitstream_reads_first_original_bitstream(monkeypatch
                     }
                 },
             )
-        if endpoint == "/core/bundles/bundle-uuid/bitstreams":
-            return _Resp(
-                status_code=200,
-                payload={"_embedded": {"bitstreams": [{"uuid": "bitstream-uuid"}]}},
-            )
+        if endpoint == "/core/bundles/bundle-uuid/primaryBitstream":
+            return _Resp(status_code=200, payload={"uuid": "primary-bitstream-uuid"})
         return _Resp(status_code=404)
 
     monkeypatch.setattr(client, "_request", fake_request)
 
     bitstream = client.get_primary_bitstream("item-uuid")
 
-    assert bitstream == {"uuid": "bitstream-uuid"}
+    assert bitstream == {"uuid": "primary-bitstream-uuid"}
     assert calls == [
         ("GET", "/core/items/item-uuid/bundles"),
-        ("GET", "/core/bundles/bundle-uuid/bitstreams"),
+        ("GET", "/core/bundles/bundle-uuid/primaryBitstream"),
     ]
+
+
+def test_dspace_verifies_uploaded_bitstream_checksum(tmp_path, monkeypatch):
+    client = DSpaceClient()
+    content = b"replacement PDF content"
+    path = tmp_path / "replacement.pdf"
+    path.write_bytes(content)
+    checksum = hashlib.md5(content).hexdigest()
+    monkeypatch.setattr(client, "_request", lambda *_args, **_kwargs: _Resp(
+        payload={"uuid": "new-bitstream", "sizeBytes": len(content),
+                 "checkSum": {"checkSumAlgorithm": "MD5", "value": checksum}}
+    ))
+
+    assert client.verify_bitstream_upload("new-bitstream", str(path)) is True
+
+
+def test_dspace_sets_primary_bitstream_after_upload(monkeypatch):
+    client = DSpaceClient()
+    calls = []
+
+    def fake_request(method, endpoint, **kwargs):
+        calls.append((method, endpoint, kwargs))
+        if method == "GET":
+            return _Resp(payload={"_embedded": {"bundles": [
+                {"name": "ORIGINAL", "uuid": "original-bundle"}
+            ]}})
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert client.set_primary_bitstream("item", "new-bitstream") is True
+    assert calls[1][0:2] == ("PUT", "/core/bundles/original-bundle/primaryBitstream")
+    assert calls[1][2]["headers"] == {"Content-Type": "text/uri-list"}
+    assert calls[1][2]["data"].endswith("/core/bitstreams/new-bitstream")
+
+
+def test_dspace_delete_bitstream_treats_missing_as_already_deleted(monkeypatch):
+    client = DSpaceClient()
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: _Resp(status_code=404))
+
+    assert client.delete_bitstream("old-bitstream") is True
 
 
 def test_dspace_upload_to_item_uses_explicit_upload_name(monkeypatch, tmp_path):

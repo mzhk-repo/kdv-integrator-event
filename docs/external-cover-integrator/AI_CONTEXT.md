@@ -29,7 +29,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - Covers are content-addressed: `SHA256(final_webp)` is the asset ID/filename. Identical covers deduplicate automatically.
 - Normal assets are immutable and atomically published from `.incoming` using same-filesystem `os.replace()`.
 - Emergency overwrite of a shared asset is a documented exception requiring backup, targeted CDN purge, and audit log.
-- DSpace replacement: upload new -> verify -> update Koha links -> delete old -> finalize state.
+- DSpace replacement: upload and verify -> switch/read back primary -> checkpoint -> update/read back both Koha links -> delete old -> finalize state.
 - UID -> Koha resolver uses existing Elasticsearch `control-number` search; no separate resolver service.
 - Protect Integrator-managed `957$c`, `957$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
 
@@ -159,8 +159,8 @@ Task 3.2 gate acceptance is complete. Automatic API/Robot core wiring now requir
 MARC `001` UUIDv7 for Drive, checks retries once per locked cycle, reuses metadata,
 verifies downloaded SHA and skips confirmed sources. It commits identities/UUIDs
 and `ok` only after confirmed required processing and true Koha write-back.
-Local/additional sources keep their processing path. Changed PDFs that only link
-an existing DSpace Item fail closed until bitstream replacement is implemented.
+Local/additional sources keep their processing path. Changed PDFs on existing
+DSpace Items use the verified replacement flow described below.
 122 related tests passed with 17 tests deselected; two additional existing API
 DPI tests fail against the current allowlist. Deployment/API runtime smoke of
 this wiring was verified by user-provided post-redeploy output on 2026-09-30:
@@ -213,7 +213,8 @@ Confirmed source columns commit only after true Koha PUT and MARC read-back:
 `001`/`957$c`, plus `957$3` and required `856$u` for PDF cycles. Matching eligible
 retries validate the asset and reuse completed processing, repeating only write-back;
 changed inputs/options invalidate the checkpoint. Success deletes it atomically
-with `ok`/zero retries. Cutoff/reset and changed-PDF fail-closed behavior remain.
+with `ok`/zero retries. Cutoff/reset behavior remains; changed-PDF replacement
+runtime acceptance is still pending.
 On 2026-10-01 the user supplied a test-record task log and read-only state/asset
 checks: MARC `957$c` matched the mounted WebP SHA, state was `ok` with zero retries,
 the checkpoint was absent, and the cover displayed in Koha. Live NO-OP and failure
@@ -228,22 +229,25 @@ confirmed unchanged PDFs NO-OP. A PDF with no renderable first page permanently
 fails only its record; transient render errors use normal backoff. Local PDF paths
 retain the CGI pipeline. User supplied a successful live test on 2026-10-01 after
 correcting the DSpace collection: Item/PDF upload completed and the cover showed
-in Koha. A missing `856$u` was restored by linking the existing Item. Changing
-the PDF for an existing Item still fails closed until Task 7.2 replaces the
-bitstream. The environment was not identified.
+in Koha. A missing `856$u` was restored by linking the existing Item. Task 7.2
+now implements verified changed-PDF replacement; runtime acceptance still
+requires deployment and a user-run smoke test. The environment was not identified.
 
 Task 7.1 adds DSpace Item lookup and identity by MARC `001` UUIDv7 in
 `koha.uid`. Retries preserve the Item/Handle and can upload the first PDF
 when a prior attempt created the Item but stopped before bitstream upload. The
-legacy `koha.biblionumber` lookup remains as a fallback. Existing bitstreams are
-not replaced here; that is Task 7.2. User-provided runtime log on 2026-10-01
+legacy `koha.biblionumber` lookup remains as a fallback. For changed Drive PDFs,
+upload and verify the new bitstream by size and checksum, set/read back the
+ORIGINAL bundle primary bitstream, then persist the result in
+`pending_cover_work` before Koha write-back. Keep the old bitstream until both
+Koha `856$u` links pass read-back; then delete it. A failed Koha write retains
+the checkpoint and both bitstreams; retry reuses the uploaded UUID. User-provided runtime log on 2026-10-01
 confirms a new Item, MARC `001` stored in `koha.uid`, successful PDF upload and
 task completion. The user also confirmed a successful repeated lookup returning
 the same Item with an unchanged Handle. If a later unchanged-source NO-OP finds
 either DSpace link missing from Koha, core resolves the existing DSpace Item
 and ORIGINAL bitstream by stored UUIDs, rewrites the two DSpace `856` links
-(PDF download and repository Handle), and confirms both by read-back. Changed-
-PDF replacement remains Task 7.2.
+(PDF download and repository Handle), and confirms both by read-back.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.

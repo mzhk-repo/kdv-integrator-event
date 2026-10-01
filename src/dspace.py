@@ -1,4 +1,5 @@
 import os
+import hashlib
 import requests
 import logging
 import time
@@ -252,28 +253,77 @@ class DSpaceClient:
         self._raise_rest_error("DSpace create item", "/core/items", resp)
 
     def get_primary_bitstream(self, item_uuid):
-        bundle_uuid = None
-        resp = self._request("GET", f"/core/items/{item_uuid}/bundles")
-        if resp is None or resp.status_code != 200:
-            self._raise_rest_error(
-                "DSpace list item bundles", f"/core/items/{item_uuid}/bundles", resp
-            )
-        for bundle in resp.json().get("_embedded", {}).get("bundles", []):
-            if bundle.get("name") == "ORIGINAL":
-                bundle_uuid = bundle.get("uuid")
-                break
-
+        bundle_uuid = self._get_original_bundle_uuid(item_uuid)
         if not bundle_uuid:
             return None
+        endpoint = f"/core/bundles/{bundle_uuid}/primaryBitstream"
+        resp = self._request("GET", endpoint)
+        if resp is not None and resp.status_code == 204:
+            return None
+        if resp is not None and resp.status_code == 200:
+            data = resp.json()
+            return data if data and data.get("uuid") else None
+        self._raise_rest_error("DSpace get primary bitstream", endpoint, resp)
 
-        resp = self._request("GET", f"/core/bundles/{bundle_uuid}/bitstreams")
+    def _get_original_bundle_uuid(self, item_uuid):
+        endpoint = f"/core/items/{item_uuid}/bundles"
+        resp = self._request("GET", endpoint)
         if resp is None or resp.status_code != 200:
-            self._raise_rest_error(
-                "DSpace list bundle bitstreams",
-                f"/core/bundles/{bundle_uuid}/bitstreams", resp,
-            )
-        bitstreams = resp.json().get("_embedded", {}).get("bitstreams", [])
-        return bitstreams[0] if bitstreams else None
+            self._raise_rest_error("DSpace list item bundles", endpoint, resp)
+        return next((
+            bundle.get("uuid") for bundle in
+            resp.json().get("_embedded", {}).get("bundles", [])
+            if bundle.get("name") == "ORIGINAL"
+        ), None)
+
+    def set_primary_bitstream(self, item_uuid, bitstream_uuid):
+        bundle_uuid = self._get_original_bundle_uuid(item_uuid)
+        if not bundle_uuid:
+            raise DSpaceRestError("DSpace Item has no ORIGINAL bundle")
+        endpoint = f"/core/bundles/{bundle_uuid}/primaryBitstream"
+        bitstream_url = f"{self.base_url}/core/bitstreams/{bitstream_uuid}"
+        resp = self._request(
+            "PUT", endpoint, data=bitstream_url,
+            headers={"Content-Type": "text/uri-list"},
+        )
+        if resp is not None and resp.status_code == 200:
+            return True
+        self._raise_rest_error("DSpace set primary bitstream", endpoint, resp)
+
+    def get_bitstream(self, bitstream_uuid):
+        endpoint = f"/core/bitstreams/{bitstream_uuid}"
+        resp = self._request("GET", endpoint)
+        if resp is not None and resp.status_code == 200:
+            data = resp.json()
+            if data.get("uuid") != bitstream_uuid:
+                raise DSpaceRestError("DSpace returned a mismatched bitstream UUID")
+            return data
+        self._raise_rest_error("DSpace get bitstream", endpoint, resp)
+
+    def verify_bitstream_upload(self, bitstream_uuid, file_path):
+        bitstream = self.get_bitstream(bitstream_uuid)
+        checksum = bitstream.get("checkSum") or {}
+        algorithm = checksum.get("checkSumAlgorithm", "").lower().replace("-", "")
+        try:
+            digest = hashlib.new(algorithm)
+        except (ValueError, TypeError):
+            raise DSpaceRestError("DSpace returned an unsupported bitstream checksum") from None
+        size = os.path.getsize(file_path)
+        if bitstream.get("sizeBytes") != size:
+            raise DSpaceRestError("Uploaded DSpace bitstream size does not match source")
+        with open(file_path, "rb") as file_handle:
+            for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest().lower() != checksum.get("value", "").lower():
+            raise DSpaceRestError("Uploaded DSpace bitstream checksum does not match source")
+        return True
+
+    def delete_bitstream(self, bitstream_uuid):
+        endpoint = f"/core/bitstreams/{bitstream_uuid}"
+        resp = self._request("DELETE", endpoint)
+        if resp is not None and resp.status_code in (200, 204, 404):
+            return True
+        self._raise_rest_error("DSpace delete old bitstream", endpoint, resp)
 
     def upload_to_item(self, item_uuid, file_path, upload_name=None):
         if not os.path.exists(file_path):

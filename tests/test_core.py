@@ -226,6 +226,50 @@ def test_run_dspace_reuses_existing_uid_item_and_handle(tmp_path):
     assert dspace.uploaded == []
 
 
+def test_run_dspace_replacement_verifies_and_swaps_primary_without_deleting_old(tmp_path):
+    class ReplaceDSpace(StubDSpace):
+        def __init__(self):
+            super().__init__()
+            self.primary_uuid = "old-bitstream"
+            self.operations = []
+
+        def find_item_by_record_uid(self, _uid):
+            return {"uuid": "existing-item", "handle": "1/2"}
+
+        def get_primary_bitstream(self, _item_uuid):
+            return {"uuid": self.primary_uuid}
+
+        def upload_to_item(self, item_uuid, path, upload_name=None):
+            self.uploaded.append((item_uuid, path, upload_name))
+            return {"uuid": "new-bitstream"}
+
+        def verify_bitstream_upload(self, bitstream_uuid, _path):
+            self.operations.append(("verify", bitstream_uuid))
+            return True
+
+        def set_primary_bitstream(self, _item_uuid, bitstream_uuid):
+            self.operations.append(("set_primary", bitstream_uuid))
+            self.primary_uuid = bitstream_uuid
+
+    pdf = tmp_path / "replacement.pdf"
+    pdf.write_bytes(b"new pdf")
+    dspace = ReplaceDSpace()
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+        replace_existing=True,
+    )
+
+    assert result["status"] == "replaced"
+    assert result["old_bitstream_uuid"] == "old-bitstream"
+    assert result["bitstream_uuid"] == "new-bitstream"
+    assert dspace.operations == [
+        ("verify", "new-bitstream"), ("set_primary", "new-bitstream")
+    ]
+
+
 def test_task_manager_integration(tmp_path):
     # ensure task_manager propagates kwargs
     koha = StubKoha()

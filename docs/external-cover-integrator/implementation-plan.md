@@ -536,7 +536,8 @@ replacement`; безпечна заміна bitstream — задача 7.2. От
 # Verify MARC 957$c == records.cover_asset_sha256 == SHA of assets/<sha>.webp,
 # status=ok, retries=0, no checkpoint, CDN/Koha display, and unchanged NO-OP.
 # Use isolated tests for corrupt/encrypted PDF; avoid deliberately poisoning a
-# live record. Existing DSpace Item + changed PDF remains blocked until Task 7.2.
+# live record. Changed PDF replacement is covered by Task 7.2; runtime smoke is
+# documented in the Task 7.2 acceptance section below.
 ```
 
 ---
@@ -634,18 +635,21 @@ curl --get --silent --show-error "${DSPACE_API_URL}/discover/search/objects" \
 
 ### Задача 7.2 — Безпечна заміна PDF (upload → verify → swap)
 
-**Опис:** Новий bitstream завантажується і перевіряється до видалення старого; кроки upload/verify/update-links виконуються під `status = pending` (розділ 21, 22).
+**Стан на 2026-10-01:** Реалізовано для Drive PDF, що змінився в уже наявного DSpace Item. Workflow завантажує новий bitstream, звіряє його розмір і checksum із локальним файлом, призначає його primary bitstream у ORIGINAL bundle та перевіряє це читанням назад. Старий bitstream зберігається, доки Koha не підтвердить обидва `856$u` (посилання на файл і Handle) через read-back.
+
+Повний результат DSpace записується у наявний `pending_cover_work` до Koha write-back. Якщо Koha update/read-back не вдався, checkpoint зберігає UUID нового й старого bitstream; повтор використовує його без повторного upload. Старий bitstream видаляється після успішного read-back посилань; видалення ідемпотентне. Локальні тести моделюють збій Koha update та успішне відновлення. Runtime acceptance після redeploy ще очікує перевірки користувачем.
 
 **Acceptance criteria:**
-- Старий bitstream доступний до підтвердженого завантаження нового.
-- Симуляція збою на кроці "update Koha links": `status = pending`, старий bitstream **не** видалено, наступний запуск не перезавантажує вже завантажений новий bitstream повторно.
+- Старий bitstream доступний до перевірки нового upload і лишається доступним, поки обидва Koha links не підтверджені read-back.
+- Симуляція збою Koha write-back: checkpoint зберігає новий bitstream, запис лишається незавершеним, старий bitstream **не** видалений; повтор не завантажує новий bitstream удруге.
+- Після успішного Koha read-back новий bitstream є primary, старий видалений, state збережено як `ok`.
 
 **Validation:**
 ```bash
-python -m integrator.dspace_pipeline --record test-uid-3 --simulate-koha-link-fail
-sqlite3 state.db "SELECT status FROM records WHERE record_uid='test-uid-3';"  # очікується pending
-curl -s "https://${DSPACE_BASE_URL}/server/api/core/bitstreams/<old_bitstream_uuid>" \
-  -H "Authorization: Bearer ${DSPACE_API_TOKEN}" -o /dev/null -w "%{http_code}\n"  # очікується 200 (ще існує)
+# Repository behavior is covered by tests/test_api_drive_gate.py and
+# tests/test_core.py. After deployment, repeat against an approved test record:
+# fail Koha link write-back, verify old+new bitstreams and pending checkpoint,
+# retry, then verify both Koha 856$u values, new primary bitstream and old delete.
 ```
 
 ### Задача 7.3 — UID → Koha resolver

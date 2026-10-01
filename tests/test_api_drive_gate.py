@@ -22,6 +22,7 @@ from src.app import app  # noqa: E402
 from src.core import process_integration_logic  # noqa: E402
 from src.cover_state.state_machine import StateMachine  # noqa: E402
 from src.services.sources import GoogleDriveSource, SourceResolver  # noqa: E402
+from src.config import DSPACE_UI_URL  # noqa: E402
 
 UID = "019d4312-1234-7abc-8123-0123456789ab"
 with BytesIO() as pdf_bytes:
@@ -139,7 +140,8 @@ def test_unchanged_source_repairs_missing_dspace_handle_link(workflow):
     assert result == {"status": "links_repaired"}
     dspace_client.get_item.assert_called_once_with("item")
     dspace_client.get_primary_bitstream.assert_called_once_with("item")
-    file_url = "http://dspace.test/bitstreams/primary-bitstream/download"
+    handle_url = f"{DSPACE_UI_URL}/handle/1/2"
+    file_url = f"{DSPACE_UI_URL}/bitstreams/primary-bitstream/download"
     koha.repair_dspace_links.assert_called_once_with(42, file_url, handle_url)
     assert meta["dspace_links"] == [
         file_url, handle_url,
@@ -222,6 +224,60 @@ def test_existing_dspace_link_cannot_confirm_changed_pdf(workflow):
     koha.set_success.assert_not_called()
     assert state.get(UID)["file_source_id"] is None
     assert state.get(UID)["status"] == "pending"
+
+
+def test_changed_pdf_retry_reuses_uploaded_bitstream_and_deletes_old_after_koha(workflow):
+    state, koha, meta, _, _, dspace_workflow = workflow
+    assert state.mark_pending(UID)
+    old_sha = "a" * 64
+    state.complete_cycle(UID, {"file": ("primary", old_sha)}, {
+        "uuid": "item", "bitstream_uuid": "old-bitstream",
+    })
+    meta["file_path"] = "https://drive.google.com/file/d/new-source/view"
+
+    upload_result = {
+        "uuid": "item", "bitstream_uuid": "new-bitstream",
+        "old_bitstream_uuid": "old-bitstream",
+        "handle": "http://dspace.test/handle/1/2",
+        "primary_download_url": "http://dspace.test/bitstreams/new-bitstream/download",
+        "status": "replaced",
+    }
+
+    def replace_pdf(*_args, **kwargs):
+        assert kwargs["replace_existing"] is True
+        kwargs["result_callback"](upload_result)
+        return upload_result
+
+    dspace_workflow.side_effect = replace_pdf
+    dspace_client = Mock()
+    calls = {"write": 0}
+
+    def set_success(*args, **kwargs):
+        calls["write"] += 1
+        if calls["write"] == 1:
+            return False
+        meta["dspace_uuid"] = kwargs["item_uuid"]
+        meta["cover_asset_sha256"] = kwargs["cover_url"]
+        meta["dspace_links"] = [kwargs["primary_download_url"], args[1]]
+        return True
+
+    koha.set_success.side_effect = set_success
+    with pytest.raises(RuntimeError, match="write-back"):
+        run(workflow, dspace_client=dspace_client)
+    assert dspace_client.delete_bitstream.call_count == 0
+    checkpoint = state.get_cover_work(UID)
+    assert checkpoint["result"]["bitstream_uuid"] == "new-bitstream"
+    assert checkpoint["result"]["old_bitstream_uuid"] == "old-bitstream"
+
+    retry_due(state)
+    result = run(workflow, dspace_client=dspace_client)
+
+    assert result["bitstream_uuid"] == "new-bitstream"
+    assert dspace_workflow.call_count == 1
+    dspace_client.delete_bitstream.assert_called_once_with("old-bitstream")
+    assert state.get(UID)["dspace_bitstream_uuid"] == "new-bitstream"
+    assert state.get(UID)["file_source_sha256"] == SHA
+    assert state.get_cover_work(UID) is None
 
 
 def test_corrupt_download_and_missing_uid_fail_closed(workflow):

@@ -746,19 +746,22 @@ update source ID
 Якщо PDF дійсно змінився:
 
 ```text
-1. Download new PDF
-2. Validate
-3. Optimize if required
-4. Upload new bitstream
-5. Verify upload
-6. Update Koha links
-7. Remove old bitstream
-8. Save new source ID/SHA in state DB
+1. Download and validate new PDF; optimize if required
+2. Upload a new bitstream while the old one remains available
+3. Verify uploaded size and checksum against the local file
+4. Set the new bitstream as primary in the DSpace ORIGINAL bundle and read it back
+5. Persist the DSpace result in the pending-work checkpoint
+6. Update both Koha `856$u` links (PDF and Handle) and confirm them by read-back
+7. Remove the old bitstream and complete the source ID/SHA state update
 ```
 
-Старий bitstream не видаляється до успішного завантаження нового.
+Старий bitstream не видаляється до підтвердження обох Koha links. Якщо Koha
+write-back або read-back завершується помилкою, checkpoint зберігає UUID нового
+bitstream; повтор використовує його без повторного upload, а старий лишається.
 
-Кроки 4–6 (upload, verify, update Koha links) виконуються під `status = pending` у state DB — див. розділ 22.
+Увесь цикл виконується під `status = pending` до Koha read-back, видалення
+старого bitstream і commit у state DB — див. розділ 22. Runtime acceptance
+реалізованого циклу очікує перевірки після deployment.
 
 ---
 

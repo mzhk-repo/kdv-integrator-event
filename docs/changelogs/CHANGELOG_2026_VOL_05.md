@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Safe DSpace PDF bitstream replacement (Task 7.2)
+
+- **Context:** A changed Drive PDF for an existing DSpace Item must replace its bitstream without losing the old file when upload verification or Koha link write-back fails.
+- **Change:** Upload and verify the new bitstream by size/checksum, set and read back the ORIGINAL bundle primary bitstream, then checkpoint the completed DSpace result before Koha write-back. Retain the old bitstream until both Koha `856$u` links pass read-back; then delete it. Retry reuses the checkpointed new UUID and deletion accepts an already absent old bitstream. Updated architecture, implementation plan, AI context and runbook.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_core.py tests/test_api_drive_gate.py` — 78 passed. Tests cover upload verification, primary-bitstream switch, Koha write failure, retry without a second upload, and old-bitstream deletion only after link read-back. `python -m compileall -q src/core.py src/dspace.py` and `git diff --check` passed. No live Koha/DSpace records or services were changed; runtime acceptance requires deployment and user smoke.
+- **Risks:** DSpace/Koha runtime behavior and deployed REST permissions remain unverified. Preserve the cover state DB/checkpoints during deployment and rollback; do not manually delete either bitstream while a replacement is pending.
+- **Rollback:** Revert the replacement flow and related tests/docs through the normal deployment process. Preserve DSpace items/bitstreams and the state DB until pending replacement checkpoints are resolved; no destructive migration is involved.
+
 ## 2026-10-01 — Reconcile both DSpace 856 links on unchanged-source runs
 
 - **Context:** User log showed the Drive gate returned `noop` for an unchanged `956$u` after the DSpace Handle `856$u` had been removed from Koha. The early NO-OP return skipped link reconciliation.

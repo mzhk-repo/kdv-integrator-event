@@ -209,10 +209,10 @@ Local sources retain the legacy CGI path without Drive state identity tracking.
 `complete_cycle()` atomically commits source IDs/SHA, returned DSpace UUIDs,
 `ok` and zero retries only after confirmed required cover processing and a true
 Koha write-back result. Downstream failures retain unconfirmed identities and
-increment retries once. A changed/new PDF that merely links an existing DSpace
-Item is rejected before successful Koha write-back, since the existing workflow
-does not replace that Item's bitstream. Safe replacement/recovery of this case
-belongs to the DSpace phase; manual retry alone does not implement replacement.
+increment retries once. For changed PDFs on an existing DSpace Item, the
+replacement flow retains the old bitstream until the new primary and both Koha
+links are confirmed. A pending checkpoint lets retry reuse the uploaded
+bitstream. Post-deployment DSpace/Koha runtime acceptance remains open.
 Local API tests cover route-to-core invocation, NO-OP, same-content identity
 changes, cover-only work, checksum mismatch, write-back failure, missing UID,
 missing checksum, two-source retry and concurrent duplicate requests.
@@ -267,8 +267,8 @@ MARC read-back, checkpoint reuse and source/asset commit follow Task 4.3. A
 confirmed PDF without an asset SHA is rebuilt; unchanged confirmed PDFs skip
 work. A PDF with no renderable first page causes a permanent failed state for
 that record, while other tasks continue. Transient render errors retain the
-normal retry policy. An existing DSpace Item still cannot prove changed-PDF
-replacement; Phase 7 handles that case. Local PDF paths retain the CGI path.
+normal retry policy. Changed PDFs for existing DSpace Items use the verified
+replacement flow described below; local PDF paths retain the CGI path.
 Repository tests cover real PDF rendering, corrupt and protected PDF behavior,
 failure isolation, asset/retry reuse and NO-OP. On 2026-10-01 the user supplied
 a successful test run after correcting the DSpace collection: Item creation and
@@ -284,16 +284,21 @@ Drive-backed records carry canonical MARC `001` UUIDv7 to DSpace as
 `koha.uid`. The shared workflow searches by that UID before its legacy
 `koha.biblionumber` lookup, so a retry reuses the same Item and Handle. If an
 earlier attempt created the Item but failed before its first ORIGINAL
-bitstream, a retry uploads the missing PDF to that same Item. Existing primary
-bitstreams are linked without replacement; changed-PDF replacement and its
-durable recovery remain Task 7.2. The DSpace metadata registry and discovery
+bitstream, a retry uploads the missing PDF to that same Item. For a changed
+Drive PDF, the workflow uploads and checksum/size verifies a new bitstream,
+switches and reads back the ORIGINAL bundle primary bitstream, then checkpoints
+the DSpace result before Koha write-back. Both Koha `856$u` links must pass
+read-back before the old bitstream is deleted and state can complete. A failed
+Koha write retains the old bitstream and checkpoint; retry reuses the new UUID
+without uploading again. The DSpace metadata registry and discovery
 index must contain `koha.uid`; this repository change does not configure the
 DSpace server.
 User-provided runtime log on 2026-10-01 confirms the field contains MARC `001`,
 the PDF uploaded to the Item, and the task completed successfully. This is
 positive first-cycle evidence. The user also confirmed that a repeated search
-finds the same Item and its Handle remains unchanged. Changed-PDF replacement
-and recovery remain Task 7.2.
+finds the same Item and its Handle remains unchanged. Task 7.2 local failure and
+retry checks pass; runtime replacement acceptance requires deployment and a
+user-run smoke test.
 
 ⚡ Деталі Реалізації (M2-M7)
 

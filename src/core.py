@@ -462,6 +462,8 @@ def run_dspace_workflow(
     optimizer_client: PDFOptimizerClient | None = None,
     upload_name: str | None = None,
     dpi: int | None = None,
+    replace_existing: bool = False,
+    result_callback=None,
 ):
     """Execute metadata extraction and file upload to DSpace.
 
@@ -494,6 +496,7 @@ def run_dspace_workflow(
     existing_item = find_by_uid(record_uid) if record_uid and find_by_uid else None
     if existing_item is None:
         existing_item = local_dspace.find_item_by_biblionumber(biblionumber)
+    replacement_old_bitstream_uuid = None
     if existing_item:
         logger.info("DSpace item found for biblionumber=%s uuid=%s", biblionumber, existing_item["uuid"])
         item_uuid = existing_item["uuid"]
@@ -504,7 +507,11 @@ def run_dspace_workflow(
             else f"{DSPACE_UI_URL}/items/{item_uuid}"
         )
         primary_bitstream = local_dspace.get_primary_bitstream(item_uuid)
-        if primary_bitstream:
+        if primary_bitstream and replace_existing:
+            replacement_old_bitstream_uuid = primary_bitstream.get("uuid")
+            if not replacement_old_bitstream_uuid:
+                raise RuntimeError("Existing DSpace primary bitstream has no UUID")
+        elif primary_bitstream:
             result = {
                 "handle": final_link,
                 "uuid": item_uuid,
@@ -553,6 +560,14 @@ def run_dspace_workflow(
         )
         if not primary_bitstream:
             raise Exception("Failed to upload file")
+        if replacement_old_bitstream_uuid:
+            if not primary_bitstream.get("uuid"):
+                raise RuntimeError("DSpace did not return the replacement bitstream UUID")
+            local_dspace.verify_bitstream_upload(primary_bitstream["uuid"], final_pdf_path)
+            local_dspace.set_primary_bitstream(item_uuid, primary_bitstream["uuid"])
+            confirmed_primary = local_dspace.get_primary_bitstream(item_uuid)
+            if not confirmed_primary or confirmed_primary.get("uuid") != primary_bitstream["uuid"]:
+                raise RuntimeError("DSpace primary bitstream replacement was not confirmed")
         primary_download_url = _primary_download_url(primary_bitstream)
         additional_telemetry = _upload_additional_files(
             local_dspace, item_uuid, meta.get("additional_files")
@@ -567,8 +582,15 @@ def run_dspace_workflow(
         "bitstream_uuid": primary_bitstream.get("uuid"),
         "primary_download_url": primary_download_url,
     }
+    if replacement_old_bitstream_uuid:
+        result.update({
+            "status": "replaced",
+            "old_bitstream_uuid": replacement_old_bitstream_uuid,
+        })
     result.update(pdf_telemetry)
     result.update(additional_telemetry)
+    if result_callback:
+        result_callback(result)
     return result
 
 
@@ -723,10 +745,17 @@ def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
     result = checkpoint['result'] if checkpoint else None
     if file_work and result is None:
         # Explicit Drive covers use WebP; the legacy PDF cover fallback is Phase 5.
+        def checkpoint_dspace_result(dspace_result):
+            state.save_cover_work(
+                uid, inputs_sha, sources, asset_sha, file_work=True,
+                result=dspace_result,
+            )
+
         result = _run_integration_logic(
             task_id, biblionumber, meta=meta, resolver=resolver, checks=checks,
             file_work=True, cover_work=False, strict=True, write_back=False,
-            source_shas={source: value[1] for source, value in sources.items()}, **options,
+            source_shas={source: value[1] for source, value in sources.items()},
+            result_callback=checkpoint_dspace_result, **options,
         )
         state.save_cover_work(uid, inputs_sha, sources, asset_sha, file_work=True, result=result)
     koha = options['koha_client']
@@ -749,6 +778,12 @@ def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
         result['handle'], result.get('primary_download_url'),
     ) if link):
         raise RuntimeError('Koha 856 read-back was not confirmed')
+    old_bitstream_uuid = result.get('old_bitstream_uuid') if file_work else None
+    if old_bitstream_uuid:
+        if old_bitstream_uuid == result.get('bitstream_uuid'):
+            raise RuntimeError('DSpace replacement returned the existing bitstream UUID')
+        dspace = options['dspace_client'] or DSpaceClient()
+        dspace.delete_bitstream(old_bitstream_uuid)
     return dict(result or {'status': 'cover_updated'}, cover_asset_sha256=asset_sha)
 
 
@@ -761,7 +796,7 @@ def _run_integration_logic(
     optimizer_client: PDFOptimizerClient | None = None,
     dpi: int | None = None,
     *, meta=None, resolver=None, checks=None, file_work=True, cover_work=True, strict=False,
-    source_shas=None, write_back=True,
+    source_shas=None, write_back=True, result_callback=None,
 ):
     """Main orchestration logic executed inside a background thread.
 
@@ -874,6 +909,11 @@ def _run_integration_logic(
                 optimizer_client=optimizer_client,
                 dpi=dpi,
                 upload_name=primary_source.original_name,
+                replace_existing=bool(
+                    strict and checks.get('file')
+                    and checks['file'].action == 'resource_changed'
+                ),
+                result_callback=result_callback,
             )
 
             logger.info("⚡ [Core] Parallel tasks started: Cover + DSpace")

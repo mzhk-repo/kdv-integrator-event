@@ -278,13 +278,19 @@ Koha UI or authenticated API and poll the task. Verify that `957$c`,
 visible first PDF page, state is `ok` with zero retries and no checkpoint, and
 the cover appears in Koha. An unchanged repeat should return `noop`.
 The local tests cover corrupt/encrypted PDFs and record-level failure isolation;
-do not damage a live test record to exercise that case. Changed PDFs attached
-to an existing DSpace Item remain blocked until Phase 7 replacement is available.
+do not damage a live test record to exercise that case. For Task 7.2 runtime
+acceptance, use an approved test record with an existing DSpace Item, change its
+Drive PDF, and force Koha link write-back to fail after upload. Verify the old
+bitstream remains available, the pending checkpoint records old/new UUIDs, and
+retry does not upload another bitstream. After Koha succeeds, verify both `856$u`
+values by read-back, the new primary bitstream, old bitstream deletion, and
+completed state. Local tests cover the failure/retry sequence; runtime acceptance
+requires deployment and a user-run smoke test.
 
 The user confirmed a successful PDF/Item run on 2026-10-01 after correcting the
 record's DSpace collection. A later run restored a removed `856$u` by linking the
-existing Item. Replacing `956$u` with a new PDF for that Item is expected to fail
-closed until Task 7.2 implements verified bitstream replacement.
+existing Item. Task 7.2 now implements verified changed-PDF bitstream replacement;
+the end-to-end behavior still needs runtime acceptance after deployment.
 
 On an unchanged-source run, if either DSpace `856$u` link is missing, the
 reconciliation path now reads the Item and primary ORIGINAL bitstream and
