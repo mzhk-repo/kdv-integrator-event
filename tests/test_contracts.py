@@ -172,24 +172,45 @@ def test_dspace_verifies_uploaded_bitstream_checksum(tmp_path, monkeypatch):
     assert client.verify_bitstream_upload("new-bitstream", str(path)) is True
 
 
-def test_dspace_sets_primary_bitstream_after_upload(monkeypatch):
+def test_dspace_creates_primary_bitstream_when_bundle_has_none(monkeypatch):
     client = DSpaceClient()
     calls = []
 
     def fake_request(method, endpoint, **kwargs):
         calls.append((method, endpoint, kwargs))
-        if method == "GET":
+        if endpoint == "/core/items/item/bundles":
             return _Resp(payload={"_embedded": {"bundles": [
                 {"name": "ORIGINAL", "uuid": "original-bundle"}
             ]}})
-        return _Resp(status_code=200)
+        if endpoint.endswith("/primaryBitstream") and method == "GET":
+            return _Resp(status_code=204)
+        return _Resp(status_code=201)
 
     monkeypatch.setattr(client, "_request", fake_request)
 
     assert client.set_primary_bitstream("item", "new-bitstream") is True
-    assert calls[1][0:2] == ("PUT", "/core/bundles/original-bundle/primaryBitstream")
-    assert calls[1][2]["headers"] == {"Content-Type": "text/uri-list"}
-    assert calls[1][2]["data"].endswith("/core/bitstreams/new-bitstream")
+    assert calls[-1][0:2] == ("POST", "/core/bundles/original-bundle/primaryBitstream")
+    assert calls[-1][2]["headers"] == {"Content-Type": "text/uri-list"}
+    assert calls[-1][2]["data"].endswith("/core/bitstreams/new-bitstream")
+
+
+def test_dspace_updates_existing_primary_bitstream(monkeypatch):
+    client = DSpaceClient()
+
+    def fake_request(method, endpoint, **kwargs):
+        if endpoint == "/core/items/item/bundles":
+            return _Resp(payload={"_embedded": {"bundles": [
+                {"name": "ORIGINAL", "uuid": "original-bundle"}
+            ]}})
+        if endpoint.endswith("/primaryBitstream") and method == "GET":
+            return _Resp(payload={"uuid": "old-bitstream"})
+        if endpoint.endswith("/primaryBitstream") and method == "PUT":
+            return _Resp(status_code=200)
+        return _Resp(status_code=404)
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert client.set_primary_bitstream("item", "new-bitstream") is True
 
 
 def test_dspace_delete_bitstream_treats_missing_as_already_deleted(monkeypatch):
@@ -206,6 +227,28 @@ def test_dspace_delete_bitstream_verifies_resource_is_gone(monkeypatch):
 
     with pytest.raises(DSpaceRestError, match="verify old bitstream deletion"):
         client.delete_bitstream("old-bitstream")
+
+
+def test_dspace_lists_all_original_bundle_bitstreams(monkeypatch):
+    client = DSpaceClient()
+    responses = iter((
+        _Resp(status_code=200, payload={
+            "_embedded": {"bundles": [{"name": "ORIGINAL", "uuid": "bundle"}]}
+        }),
+        _Resp(status_code=200, payload={
+            "_embedded": {"bitstreams": [{"uuid": "old-1"}]},
+            "page": {"totalPages": 2},
+        }),
+        _Resp(status_code=200, payload={
+            "_embedded": {"bitstreams": [{"uuid": "old-2"}]},
+            "page": {"totalPages": 2},
+        }),
+    ))
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: next(responses))
+
+    assert client.get_original_bitstreams("item") == [
+        {"uuid": "old-1"}, {"uuid": "old-2"}
+    ]
 
 
 def test_dspace_upload_to_item_uses_explicit_upload_name(monkeypatch, tmp_path):

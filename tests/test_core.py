@@ -237,7 +237,10 @@ def test_run_dspace_replacement_verifies_and_swaps_primary_without_deleting_old(
             return {"uuid": "existing-item", "handle": "1/2"}
 
         def get_primary_bitstream(self, _item_uuid):
-            return {"uuid": self.primary_uuid}
+            return {"uuid": self.primary_uuid} if self.primary_uuid else None
+
+        def get_original_bitstreams(self, _item_uuid):
+            return [{"uuid": "old-bitstream", "name": "replacement.pdf"}]
 
         def upload_to_item(self, item_uuid, path, upload_name=None):
             self.uploaded.append((item_uuid, path, upload_name))
@@ -268,6 +271,52 @@ def test_run_dspace_replacement_verifies_and_swaps_primary_without_deleting_old(
     assert dspace.operations == [
         ("verify", "new-bitstream"), ("set_primary", "new-bitstream")
     ]
+
+
+def test_run_dspace_replacement_recovers_old_named_bitstream_without_primary(tmp_path):
+    class NoPrimaryDSpace(StubDSpace):
+        def __init__(self):
+            super().__init__()
+            self.primary_uuid = None
+            self.primary_set = None
+
+        def find_item_by_record_uid(self, _uid):
+            return {"uuid": "existing-item", "handle": "1/2"}
+
+        def get_primary_bitstream(self, _item_uuid):
+            return {"uuid": self.primary_uuid} if self.primary_uuid else None
+
+        def get_original_bitstreams(self, _item_uuid):
+            return [
+                {"uuid": "legacy-pdf", "name": "replacement.pdf"},
+                {"uuid": "other-file", "name": "supplement.pdf"},
+            ]
+
+        def upload_to_item(self, item_uuid, path, upload_name=None):
+            self.uploaded.append((item_uuid, path, upload_name))
+            return {"uuid": "new-bitstream"}
+
+        def verify_bitstream_upload(self, _bitstream_uuid, _path):
+            return True
+
+        def set_primary_bitstream(self, _item_uuid, bitstream_uuid):
+            self.primary_set = bitstream_uuid
+            self.primary_uuid = bitstream_uuid
+
+    pdf = tmp_path / "replacement.pdf"
+    pdf.write_bytes(b"new pdf")
+    dspace = NoPrimaryDSpace()
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+        replace_existing=True,
+    )
+
+    assert dspace.primary_set == "new-bitstream"
+    assert result["old_bitstream_uuids"] == ["legacy-pdf"]
+    assert result["bitstream_uuid"] == "new-bitstream"
 
 
 def test_task_manager_integration(tmp_path):

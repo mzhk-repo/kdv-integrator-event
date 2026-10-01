@@ -2,12 +2,12 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
-## 2026-10-01 — Verify DSpace old bitstream deletion (Task 7.2)
+## 2026-10-01 — Replace DSpace PDF when no primary is set (Task 7.2)
 
-- **Context:** Після двох redeploy smoke користувач підтвердив, що попередній PDF лишився у DSpace; другий task завершився успішно, але не містив повідомлення про підтверджене видалення.
-- **Change:** `DSpaceClient.delete_bitstream()` після DELETE читає bitstream UUID назад і приймає видалення лише коли GET повертає 404; UUID, що досі доступний, спричиняє помилку task. Додано логи вибору primary UUID та cleanup старого/нового UUID, щоб визначити, чи гілка cleanup викликається. Runbook і план відображають фактичний стан acceptance.
-- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_api_drive_gate.py -k 'bitstream or replacement'` — 6 passed, 36 deselected; `.venv/bin/python -m compileall -q src/dspace.py` і `git diff --check` пройшли. Нові логи потребують redeploy для runtime діагностики.
-- **Risks:** За поточним log неможливо відрізнити старий runtime image від сценарію без визначеного старого primary UUID. Видалення ще не підтверджене runtime.
+- **Context:** Новий runtime log показав `enabled=True` і `primary_bitstream_uuid=None`; DSpace Item мав старий PDF, але workflow зберігав старий UUID лише з primary relation, тому cleanup не запускався.
+- **Change:** До завантаження workflow тепер перераховує сторінки bitstream-ів ORIGINAL bundle і запам'ятовує попередні bitstream-и з тим самим ім'ям (та наявний primary незалежно від імені). Після перевірки upload новий файл завжди призначається primary: POST коли primary відсутній, PUT коли він є. Після Koha `856` read-back видаляються лише збережені старі UUID; GET-перевірка вимагає 404. Інші імена у bundle зберігаються.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_core.py tests/test_api_drive_gate.py -k 'bitstream or replacement'` — 11 passed, 71 deselected; `.venv/bin/python -m compileall -q src/core.py src/dspace.py tests/test_core.py tests/test_contracts.py` і `git diff --check` пройшли.
+- **Risks:** Runtime acceptance після redeploy очікується; збіг імені визначає попередні версії для заміни. Локальні дані/DSpace не змінювалися.
 - **Rollback:** Повернути `delete_bitstream()` до перевірки лише статусу DELETE та відкликати цю зміну документації/тесту.
 
 ## 2026-10-01 — Safe DSpace PDF bitstream replacement (Task 7.2)

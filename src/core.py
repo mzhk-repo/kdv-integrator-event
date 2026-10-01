@@ -496,7 +496,8 @@ def run_dspace_workflow(
     existing_item = find_by_uid(record_uid) if record_uid and find_by_uid else None
     if existing_item is None:
         existing_item = local_dspace.find_item_by_biblionumber(biblionumber)
-    replacement_old_bitstream_uuid = None
+    replacement_old_bitstream_uuids = []
+    primary_bitstream = None
     if existing_item:
         logger.info("DSpace item found for biblionumber=%s uuid=%s", biblionumber, existing_item["uuid"])
         item_uuid = existing_item["uuid"]
@@ -513,8 +514,7 @@ def run_dspace_workflow(
             primary_bitstream.get("uuid") if primary_bitstream else None,
         )
         if primary_bitstream and replace_existing:
-            replacement_old_bitstream_uuid = primary_bitstream.get("uuid")
-            if not replacement_old_bitstream_uuid:
+            if not primary_bitstream.get("uuid"):
                 raise RuntimeError("Existing DSpace primary bitstream has no UUID")
         elif primary_bitstream:
             result = {
@@ -554,6 +554,22 @@ def run_dspace_workflow(
             dpi=dpi,
         )
         primary_upload_name = upload_name or os.path.basename(file_path)
+        if replace_existing:
+            old_bitstreams = local_dspace.get_original_bitstreams(item_uuid)
+            replacement_old_bitstream_uuids = list(dict.fromkeys(
+                [
+                    bitstream.get("uuid") for bitstream in old_bitstreams
+                    if bitstream.get("uuid")
+                    and (
+                        (primary_bitstream and bitstream["uuid"] == primary_bitstream.get("uuid"))
+                        or bitstream.get("name") == primary_upload_name
+                    )
+                ]
+            ))
+            logger.info(
+                "DSpace replacement candidates item_uuid=%s filename=%s old_bitstream_uuids=%s",
+                item_uuid, primary_upload_name, replacement_old_bitstream_uuids,
+            )
         logger.info(
             "📤 [DSpace-Thread] Uploading file to Item %s upload_path=%s upload_name=%s",
             item_uuid,
@@ -565,7 +581,7 @@ def run_dspace_workflow(
         )
         if not primary_bitstream:
             raise Exception("Failed to upload file")
-        if replacement_old_bitstream_uuid:
+        if replace_existing:
             if not primary_bitstream.get("uuid"):
                 raise RuntimeError("DSpace did not return the replacement bitstream UUID")
             local_dspace.verify_bitstream_upload(primary_bitstream["uuid"], final_pdf_path)
@@ -587,11 +603,13 @@ def run_dspace_workflow(
         "bitstream_uuid": primary_bitstream.get("uuid"),
         "primary_download_url": primary_download_url,
     }
-    if replacement_old_bitstream_uuid:
+    if replace_existing:
         result.update({
             "status": "replaced",
-            "old_bitstream_uuid": replacement_old_bitstream_uuid,
+            "old_bitstream_uuids": replacement_old_bitstream_uuids,
         })
+        if replacement_old_bitstream_uuids:
+            result["old_bitstream_uuid"] = replacement_old_bitstream_uuids[0]
     result.update(pdf_telemetry)
     result.update(additional_telemetry)
     if result_callback:
@@ -783,14 +801,17 @@ def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
         result['handle'], result.get('primary_download_url'),
     ) if link):
         raise RuntimeError('Koha 856 read-back was not confirmed')
-    old_bitstream_uuid = result.get('old_bitstream_uuid') if file_work else None
+    old_bitstream_uuids = (
+        result.get('old_bitstream_uuids') or
+        ([result['old_bitstream_uuid']] if result.get('old_bitstream_uuid') else [])
+    ) if file_work and result else []
     logger.info(
-        'DSpace replacement cleanup item_uuid=%s old_bitstream_uuid=%s new_bitstream_uuid=%s',
+        'DSpace replacement cleanup item_uuid=%s old_bitstream_uuids=%s new_bitstream_uuid=%s',
         result.get('uuid') if file_work and result else None,
-        old_bitstream_uuid,
+        old_bitstream_uuids,
         result.get('bitstream_uuid') if file_work and result else None,
     )
-    if old_bitstream_uuid:
+    for old_bitstream_uuid in old_bitstream_uuids:
         if old_bitstream_uuid == result.get('bitstream_uuid'):
             raise RuntimeError('DSpace replacement returned the existing bitstream UUID')
         dspace = options['dspace_client'] or DSpaceClient()

@@ -276,17 +276,38 @@ class DSpaceClient:
             if bundle.get("name") == "ORIGINAL"
         ), None)
 
+    def get_original_bitstreams(self, item_uuid):
+        bundle_uuid = self._get_original_bundle_uuid(item_uuid)
+        if not bundle_uuid:
+            return []
+        endpoint = f"/core/bundles/{bundle_uuid}/bitstreams"
+        bitstreams = []
+        page = 0
+        while True:
+            resp = self._request(
+                "GET", endpoint, params={"page": page, "size": 100}
+            )
+            if resp is None or resp.status_code != 200:
+                self._raise_rest_error("DSpace list ORIGINAL bitstreams", endpoint, resp)
+            data = resp.json()
+            bitstreams.extend(data.get("_embedded", {}).get("bitstreams", []))
+            page_info = data.get("page", {})
+            if page + 1 >= page_info.get("totalPages", 1):
+                return bitstreams
+            page += 1
+
     def set_primary_bitstream(self, item_uuid, bitstream_uuid):
         bundle_uuid = self._get_original_bundle_uuid(item_uuid)
         if not bundle_uuid:
             raise DSpaceRestError("DSpace Item has no ORIGINAL bundle")
         endpoint = f"/core/bundles/{bundle_uuid}/primaryBitstream"
         bitstream_url = f"{self.base_url}/core/bitstreams/{bitstream_uuid}"
+        method = "PUT" if self.get_primary_bitstream(item_uuid) else "POST"
         resp = self._request(
-            "PUT", endpoint, data=bitstream_url,
+            method, endpoint, data=bitstream_url,
             headers={"Content-Type": "text/uri-list"},
         )
-        if resp is not None and resp.status_code == 200:
+        if resp is not None and resp.status_code in ((200,) if method == "PUT" else (200, 201)):
             return True
         self._raise_rest_error("DSpace set primary bitstream", endpoint, resp)
 

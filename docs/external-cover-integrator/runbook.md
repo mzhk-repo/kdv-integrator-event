@@ -291,6 +291,11 @@ updated, so runtime acceptance of deletion remains pending. Local tests cover
 the failure/retry sequence; runtime acceptance requires deployment and a
 user-run smoke test.
 
+If `get_primary_bitstream()` returns no primary for an existing Item, inspect
+the `ORIGINAL` bundle list. Replacement now makes the uploaded PDF primary and
+removes only pre-existing bitstreams with the same filename, after Koha link
+read-back; other filenames are preserved.
+
 The user confirmed a successful PDF/Item run on 2026-10-01 after correcting the
 record's DSpace collection. A later run restored a removed `856$u` by linking the
 existing Item. Task 7.2 now implements verified changed-PDF bitstream replacement;
