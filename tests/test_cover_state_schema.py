@@ -32,7 +32,7 @@ def test_cover_migration_is_durable_and_separate_from_export(tmp_path):
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall() == [("records",)]
+        ).fetchall() == [("records",), ("pending_cover_work",)]
         columns = {row[1] for row in connection.execute("PRAGMA table_info(records)")}
         assert columns == {
             "record_uid", "cover_source_id", "cover_source_sha256",
@@ -122,3 +122,19 @@ def test_cover_migration_rejects_newer_schema_without_downgrading(tmp_path):
 def test_cover_migration_requires_absolute_path(db_path):
     with pytest.raises(ValueError, match="absolute"):
         migrate(db_path)
+
+
+def test_additive_cover_checkpoint_migration_preserves_existing_records(tmp_path):
+    path = str(tmp_path / 'legacy.db')
+    migrate(path)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('DROP TABLE pending_cover_work')
+        connection.execute("INSERT INTO records (record_uid, cover_source_id, cover_source_sha256, status) "
+                           "VALUES ('old', 'source', 'confirmed', 'ok')")
+        before = connection.execute('SELECT * FROM records').fetchall()
+    migrate(path)
+    migrate(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute('SELECT * FROM records').fetchall() == before
+        assert connection.execute('SELECT * FROM pending_cover_work').fetchall() == []
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == 1

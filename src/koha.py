@@ -112,6 +112,9 @@ class KohaClient:
             "status": self._get_subfield_safe(field, "y"),
             "dspace_uuid": self._get_subfield_safe(managed_field, "3")
             or self._get_subfield_safe(field, "3"),
+            "cover_asset_sha256": self._get_subfield_safe(managed_field, "c"),
+            "dspace_links": [link for field in record.get_fields("856")
+                             for link in field.get_subfields("u")],
         }
 
     def get_biblio_timestamp(self, biblio_id: int):

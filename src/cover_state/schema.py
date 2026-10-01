@@ -26,6 +26,15 @@ CREATE TABLE IF NOT EXISTS records (
 );
 
 CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+
+CREATE TABLE IF NOT EXISTS pending_cover_work (
+    record_uid TEXT NOT NULL PRIMARY KEY,
+    inputs_sha256 TEXT NOT NULL,
+    sources TEXT NOT NULL,
+    file_work INTEGER NOT NULL CHECK(file_work IN (0, 1)),
+    result TEXT,
+    cover_asset_sha256 TEXT NOT NULL
+);
 """
 
 

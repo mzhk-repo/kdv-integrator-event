@@ -91,7 +91,8 @@ The host storage settings are consumed by `scripts/init-volume.sh` before Swarm
 deploy. Task 0.2 adds a non-root, read-only `covers-cdn` on the existing proxy
 network, pinned to the local storage node. Routing hostname and versioned nginx
 config name are derived by the orchestrator. API now mounts cover/state storage;
-WebP publication is callable and Koha adoption remains Task 4.3. On 2026-09-29 the user confirmed folder-only service-account access;
+WebP publication and Koha adoption are implemented for explicit Drive covers;
+Task 4.3 live Koha/OPAC acceptance remains pending. On 2026-09-29 the user confirmed folder-only service-account access;
 public CDN HTTPS, redirect and origin isolation await the user's deployment.
 
 Runtime storage is not repository structure:
@@ -175,7 +176,7 @@ Task 4.1 provides `src/services/cover_pipeline.py:download_and_normalize` and
 It reuses Drive download/auth and optional gate metadata, checks downloaded SHA,
 applies EXIF orientation, RGB, metadata stripping, width <=600 without upscale,
 and WebP quality 82. Source SHA and final WebP SHA stay separate. Core shares the
-download verifier; Task 4.2 supplies publication and write-back integration remains Task 4.3.
+download verifier; Task 4.2 supplies publication and Task 4.3 integrates write-back.
 Local real-image/stub-Drive tests cover this stage; live acceptance remains open.
 
 Task 4.2 implements `publish_cover(webp_path, storage_path=None, expected_sha256=...)`
@@ -200,7 +201,20 @@ returned identical bytes with `image/webp` and one-year immutable cache headers.
 Runtime publish/delivery is confirmed for that asset, not through a Koha record
 workflow. The test asset remains and may stay cached for a year; dev/prod was
 unidentified.
-Koha write-back/recovery is Task 4.3.
+Task 4.3 is now implemented in the repository; live Koha acceptance remains pending.
+
+Task 4.3 adds additive `pending_cover_work` to schema version 1 without changing
+the 11 `records` columns or export DB. Explicit Drive covers use WebP publishing
+and SHA-only `957$c`; legacy Drive covers without asset SHA are rebuilt. Published
+asset SHA and an input/source/completed-DSpace checkpoint survive pending failures.
+Confirmed source columns commit only after true Koha PUT and MARC read-back:
+`001`/`957$c`, plus `957$3` and required `856$u` for PDF cycles. Matching eligible
+retries validate the asset and reuse completed processing, repeating only write-back;
+changed inputs/options invalidate the checkpoint. Success deletes it atomically
+with `ok`/zero retries. Cutoff/reset and changed-PDF fail-closed behavior remain.
+Local tests pass; deployment/live Koha and OPAC verification are still required.
+Crashes before DSpace result checkpointing remain Phase 7 recovery work. Local
+cover/PDF-derived fallback retains its existing pipeline until Phase 5.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.
@@ -254,4 +268,4 @@ Record architecture-affecting choices in the proper source document/ADR, not onl
 
 ## Last Updated
 
-2026-09-30
+2026-10-01

@@ -205,3 +205,19 @@ have legacy values in `956$c` and `956$3`. Migrate and verify those values befor
 enabling a Koha overlay rule that protects `957` while allowing `956` updates.
 The new cover pipeline stores a WebP SHA-256 in `957$c`, so the legacy URL writer
 must not run against records after that transition.
+
+Task 4.3 now routes explicit Drive covers in the shared API/Robot core through
+the WebP publisher and existing MARC writer, using required `COVERS_STORAGE_PATH`.
+No new environment variables are introduced. Before Koha write-back, published
+asset SHA and completed work are saved in `pending_cover_work` in the same cover
+DB. API startup creates this additive table idempotently; schema version 1 and
+the 11 record columns remain unchanged. Back up the whole DB, including the new
+checkpoint table, with the existing WAL-aware procedure. Retries reuse completed
+work only for matching inputs/options and enforce the existing backoff/cutoff.
+
+After a successful PUT, MARC read-back must confirm `001`/`957$c` and required
+DSpace UUID/links before `ok`. Deployment and live Koha/OPAC validation are still
+pending. For OPAC/staff display, the Koha custom cover template must use the
+configured CDN HTTPS origin plus `/{957$c}.webp` and the relevant custom cover
+display preferences. Local covers/PDF fallback retain their legacy writer until
+Phase 5; do not manually run that writer over a converted record.

@@ -1,5 +1,7 @@
 import contextlib
 import fcntl
+import hashlib
+import json
 import os
 import logging
 import re
@@ -8,6 +10,8 @@ import time
 import uuid
 import concurrent.futures
 from io import BytesIO
+from pathlib import Path
+import tempfile
 from pymarc import parse_xml_to_array
 
 from .config import INTEGRATOR_MOUNT_PATH, DSPACE_UI_URL
@@ -15,6 +19,7 @@ from .koha import KohaClient
 from .dspace import DSpaceClient
 from .services.covers import CoverService
 from .services.cover_pipeline import verify_drive_download as _verify_drive_download
+from .services.cover_pipeline import download_and_normalize, publish_cover
 from .services.files import FileService
 from .services.sources import (
     SourceResolutionError,
@@ -26,7 +31,7 @@ from .services.pdf import (
     needs_optimization,
 )
 from .mapping import METADATA_RULES, TYPE_CONVERSION, strip_metadata_edges
-from .cover_state.drive import DriveMetadataError, check_drive_metadata
+from .cover_state.drive import DriveCheckResult, DriveMetadataError, check_drive_metadata
 from .cover_state.state_machine import StateMachine
 
 logger = logging.getLogger("KDV-Core")
@@ -554,13 +559,29 @@ def process_integration_logic(
             existing = state.get(uid)
             if existing is not None and existing['status'] != 'ok' and not state.is_retry_eligible(uid):
                 return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
+            inputs_sha = hashlib.sha256(json.dumps({
+                'file': refs['file'].file_id if refs['file'] else meta.get('file_path'),
+                'cover': refs['cover'].file_id if refs['cover'] else meta.get('cover_path'),
+                'additional': meta.get('additional_files'), 'collection': meta.get('collection_uuid'),
+                'dpi': dpi, 'skip_optimization': skip_optimization,
+            }, sort_keys=True).encode()).hexdigest()
+            checkpoint = state.get_cover_work(uid)
+            if checkpoint and checkpoint['inputs_sha256'] != inputs_sha:
+                checkpoint = None
             for source, ref in refs.items():
                 if ref is not None:
-                    checks[source] = check_drive_metadata(
-                        state, uid, ref.file_id, source=source, resource_key=ref.resource_key,
-                        drive_source=resolver.gdrive_source,
-                        retry_checked=True,
-                    )
+                    staged = checkpoint['sources'].get(source) if checkpoint else None
+                    if staged and staged[0] == ref.file_id:
+                        checks[source] = DriveCheckResult('resume', staged[1])
+                    elif existing and existing['status'] == 'ok' and existing[f'{source}_source_id'] == ref.file_id:
+                        # Another source's gate may already have marked the whole record pending.
+                        checks[source] = DriveCheckResult('noop')
+                    else:
+                        checks[source] = check_drive_metadata(
+                            state, uid, ref.file_id, source=source, resource_key=ref.resource_key,
+                            drive_source=resolver.gdrive_source,
+                            retry_checked=True,
+                        )
                     logger.info('Drive gate record_uid=%r source=%s action=%s', uid, source, checks[source].action)
                     if checks[source].action == 'deferred':
                         return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
@@ -573,6 +594,12 @@ def process_integration_logic(
                 checks['cover'].action not in ('noop', 'same_content') if 'cover' in checks
                 else bool(meta.get('cover_path')) or file_work
             )
+            if checkpoint:
+                file_work = bool(checkpoint['file_work'])
+                cover_work = True
+            elif refs['cover'] and not (existing and existing['cover_asset_sha256']):
+                # Upgrade previously confirmed CGI covers to the canonical WebP asset.
+                cover_work = True
             if not file_work and not cover_work:
                 return {'status': 'noop', 'reason': 'confirmed_sources_unchanged'}
             if not state.mark_pending(uid):
@@ -583,11 +610,17 @@ def process_integration_logic(
                 source: (ref.file_id, checks[source].sha256 or current[f'{source}_source_sha256'])
                 for source, ref in refs.items() if ref is not None
             }
-            result = _run_integration_logic(
-                task_id, biblionumber, meta=meta, resolver=resolver, checks=checks,
-                file_work=file_work, cover_work=cover_work, strict=True,
-                source_shas={source: value[1] for source, value in sources.items()}, **options,
-            )
+            if refs['cover'] and cover_work:
+                result = _run_external_cover_cycle(
+                    task_id, biblionumber, state, uid, inputs_sha, sources,
+                    meta, resolver, checks, file_work, checkpoint, options,
+                )
+            else:
+                result = _run_integration_logic(
+                    task_id, biblionumber, meta=meta, resolver=resolver, checks=checks,
+                    file_work=file_work, cover_work=cover_work, strict=True,
+                    source_shas={source: value[1] for source, value in sources.items()}, **options,
+                )
             state.complete_cycle(uid, sources, result)
             return result
         except Exception as error:
@@ -599,6 +632,61 @@ def process_integration_logic(
             raise
 
 
+def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
+                              sources, meta, resolver, checks, file_work, checkpoint, options):
+    configured = os.environ.get('COVERS_STORAGE_PATH')
+    if not configured:
+        raise ValueError('COVERS_STORAGE_PATH is required for external cover write-back')
+    if checkpoint:
+        asset_sha = checkpoint['cover_asset_sha256']
+        if re.fullmatch(r'[0-9a-f]{64}', asset_sha) is None:
+            raise ValueError('Invalid checkpoint asset SHA')
+        asset = Path(configured) / 'assets' / f'{asset_sha}.webp'
+        # Validate the durable asset; publish_cover reuses it without rewriting.
+        publish_cover(asset, expected_sha256=asset_sha)
+    else:
+        with tempfile.TemporaryDirectory(prefix='kdv-cover-normalize-') as temporary:
+            output = Path(temporary) / 'cover.webp'
+            normalized = download_and_normalize(
+                meta['cover_path'], output, resolver=resolver, metadata=checks['cover'].metadata,
+            )
+            if normalized['source_sha256'] != sources['cover'][1]:
+                raise RuntimeError('Cover source SHA changed after the Drive gate')
+            asset_sha = normalized['cover_asset_sha256']
+            publish_cover(output, expected_sha256=asset_sha)
+        state.save_cover_work(uid, inputs_sha, sources, asset_sha, file_work=file_work)
+    result = checkpoint['result'] if checkpoint else None
+    if file_work and result is None:
+        # Explicit Drive covers use WebP; the legacy PDF cover fallback is Phase 5.
+        result = _run_integration_logic(
+            task_id, biblionumber, meta=meta, resolver=resolver, checks=checks,
+            file_work=True, cover_work=False, strict=True, write_back=False,
+            source_shas={source: value[1] for source, value in sources.items()}, **options,
+        )
+        state.save_cover_work(uid, inputs_sha, sources, asset_sha, file_work=True, result=result)
+    koha = options['koha_client']
+    if file_work:
+        confirmed = koha.set_success(
+            biblionumber, result['handle'], item_uuid=result['uuid'], cover_url=asset_sha,
+            primary_download_url=result.get('primary_download_url'),
+        )
+    else:
+        confirmed = koha.set_cover_url(biblionumber, asset_sha)
+    if confirmed is not True:
+        raise RuntimeError('Koha cover write-back was not confirmed')
+    readback = koha.get_biblio_metadata(biblionumber)
+    if (not readback or readback.get('cover_asset_sha256') != asset_sha
+            or str(readback.get('record_uid')).lower() != uid):
+        raise RuntimeError('Koha 957$c read-back was not confirmed')
+    if file_work and readback.get('dspace_uuid') != result['uuid']:
+        raise RuntimeError('Koha 957$3 read-back was not confirmed')
+    if file_work and any(link not in readback.get('dspace_links', []) for link in (
+        result['handle'], result.get('primary_download_url'),
+    ) if link):
+        raise RuntimeError('Koha 856 read-back was not confirmed')
+    return dict(result or {'status': 'cover_updated'}, cover_asset_sha256=asset_sha)
+
+
 def _run_integration_logic(
     task_id,
     biblionumber,
@@ -608,7 +696,7 @@ def _run_integration_logic(
     optimizer_client: PDFOptimizerClient | None = None,
     dpi: int | None = None,
     *, meta=None, resolver=None, checks=None, file_work=True, cover_work=True, strict=False,
-    source_shas=None,
+    source_shas=None, write_back=True,
 ):
     """Main orchestration logic executed inside a background thread.
 
@@ -779,7 +867,7 @@ def _run_integration_logic(
                 item_uuid=dspace_result["uuid"],
                 cover_url=cover_url,
                 primary_download_url=dspace_result.get("primary_download_url"),
-            )
+            ) if write_back else True
             if strict and confirmed is not True:
                 raise RuntimeError('Koha write-back was not confirmed')
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import os
 import sqlite3
 from contextlib import closing, contextmanager
@@ -125,6 +126,9 @@ class StateMachine:
             if cursor.rowcount != 1:
                 raise KeyError(record_uid)
 
+            if success:
+                connection.execute("DELETE FROM pending_cover_work WHERE record_uid=?", (record_uid,))
+
     def update_source_id(
         self, record_uid: str, file_id: str, sha256: str, *, source: Literal["cover", "file"]
     ) -> bool:
@@ -200,6 +204,9 @@ class StateMachine:
             if result.get(key):
                 assignments.append(f"{column}=?")
                 values.append(result[key])
+        if result.get("cover_asset_sha256"):
+            assignments.append("cover_asset_sha256=?")
+            values.append(result["cover_asset_sha256"])
         with self._connect() as connection:
             cursor = connection.execute(
                 f"UPDATE records SET {', '.join(assignments)} WHERE record_uid=?",
@@ -207,3 +214,37 @@ class StateMachine:
             )
             if cursor.rowcount != 1:
                 raise KeyError(record_uid)
+            connection.execute("DELETE FROM pending_cover_work WHERE record_uid=?", (record_uid,))
+
+    def get_cover_work(self, record_uid: str) -> dict | None:
+        self._validate_uid(record_uid)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM pending_cover_work WHERE record_uid=?", (record_uid,)
+            ).fetchone()
+        if row is None:
+            return None
+        work = dict(row)
+        work["sources"] = json.loads(work["sources"])
+        work["result"] = json.loads(work["result"]) if work["result"] is not None else None
+        return work
+
+    def save_cover_work(self, record_uid: str, inputs_sha256: str, sources: dict,
+                        asset_sha256: str, *, file_work: bool, result: dict | None = None) -> None:
+        """Checkpoint published cover/PDF work without confirming source identities."""
+        self._validate_uid(record_uid)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE records SET cover_asset_sha256=?, updated_at=CURRENT_TIMESTAMP "
+                "WHERE record_uid=? AND status='pending' AND retry_count < ?",
+                (asset_sha256, record_uid, self.max_retry_count),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Cover checkpoint requires an eligible pending cycle")
+            connection.execute(
+                "INSERT OR REPLACE INTO pending_cover_work "
+                "(record_uid, inputs_sha256, sources, file_work, result, cover_asset_sha256) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (record_uid, inputs_sha256, json.dumps(sources), int(file_work),
+                 json.dumps(result) if result is not None else None, asset_sha256),
+            )

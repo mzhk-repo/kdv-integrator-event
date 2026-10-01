@@ -245,6 +245,21 @@ def test_koha_set_cover_url_writes_957c(monkeypatch):
     assert fields_856[0]["u"] == "old"
 
 
+def test_koha_metadata_reads_managed_hash_uuid_and_links(monkeypatch):
+    client = KohaClient()
+    xml = ('<record><controlfield tag="001">019d4312-1234-7abc-8123-0123456789ab</controlfield>'
+           '<datafield tag="956" ind1=" " ind2=" "><subfield code="p">source</subfield></datafield>'
+           '<datafield tag="957" ind1=" " ind2=" "><subfield code="c">' + 'a' * 64 + '</subfield>'
+           '<subfield code="3">item</subfield></datafield>'
+           '<datafield tag="856" ind1="4" ind2="0"><subfield code="u">https://repo.test/handle/1/2</subfield>'
+           '</datafield></record>')
+    monkeypatch.setattr(client, '_get_biblio_xml', lambda _: xml)
+    metadata = client.get_biblio_metadata(42)
+    assert metadata['cover_asset_sha256'] == 'a' * 64
+    assert metadata['dspace_uuid'] == 'item'
+    assert metadata['dspace_links'] == ['https://repo.test/handle/1/2']
+
+
 def test_dspace_create_item_error_is_diagnostic(monkeypatch):
     client = DSpaceClient()
 

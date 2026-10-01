@@ -199,10 +199,52 @@ may cache it for a year unless that URL is purged. The environment was not
 identified as dev/prod. This confirms Task 4.2 runtime publishing and CDN delivery
 for the synthetic asset; Koha write-back and record workflow recovery belong to Task 4.3.
 
+### Task 4.3 deployment and acceptance
+
+The API startup migration creates additive `pending_cover_work` in the existing
+cover DB. Deploy the updated API through the normal procedure in the selected
+environment, then confirm the table is present and the deployed core/Koha/state
+code matches the repository. Preserve both the cover DB and asset storage.
+
+For an approved test record with MARC `001` UUIDv7 and a binary Drive image in
+`956$p`, invoke the existing authenticated integration API or Koha UI and poll
+the returned task. Confirm:
+
+- MARC `957$c` equals the final WebP SHA and the filename in mounted `assets`.
+- `records.status=ok`, retries are zero and confirmed source ID/SHA match the input.
+- `pending_cover_work` has no row for that UID after success.
+- The CDN URL returns the expected WebP; the OPAC uses that URL for its image.
+- An unchanged repeat returns `noop` without Drive/download/downstream processing.
+
+Koha custom cover display must already be configured for the selected deployment:
+`CustomCoverImagesURL=<HTTPS CDN origin>/{957$c}.webp`,
+`OPACCustomCoverImages=Show` and, for staff display, `CustomCoverImages=Show`.
+The MARC field/subfield placeholder syntax is documented in the
+[official Koha manual](https://koha-community.org/manual/25.05/fr/html/enhancedcontentpreferences.html#customcoverimagesurl).
+Do not disable/remove legacy LocalCover data until the migration is accepted.
+
+Use local temporary-DB/stub-client tests for the failure scenario:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_api_drive_gate.py \
+  -k 'external_cover_retry or cover_readback or cover_retry_cutoff or pending_cover_corruption'
+```
+
+These tests force write-back/read-back failures after publication, reopen the DB
+and verify recovery without another download/normalization/completed DSpace job.
+Failures retain asset/checkpoint and pending state until cutoff; operator retry
+reset preserves the checkpoint. A corrupted/missing staged asset fails closed.
+Source/input/options changes invalidate staged work. DSpace crashes before its
+result is checkpointed still need Phase 7 recovery. Live Koha/OPAC acceptance for
+Task 4.3 is not yet recorded; do not infer it from Task 4.2's synthetic CDN smoke.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use
 the normal deployment procedure for the chosen environment. Preserve storage and
 existing assets. Remove external CDN hostname routing only as a separately
-authorized Cloudflare change. Current Koha cover fields and the legacy writer
-are unaffected by this skeleton.
+authorized Cloudflare change. For Task 4.3 rollback, preserve the additive checkpoint
+table and assess converted `957$c` SHA values before restoring older application
+code or cover templates. Older CGI/JPEG code must not overwrite converted records.
+Restoring previous MARC values or changing Koha display settings is a separate
+authorized operation.

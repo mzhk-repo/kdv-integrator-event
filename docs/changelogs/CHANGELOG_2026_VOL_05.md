@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Durable WebP Koha SHA write-back and retry recovery (Task 4.3)
+
+- **Context:** Explicit Drive covers need SHA-only `957$c` write-back and recovery after Koha failures without repeating completed download/normalization/PDF work.
+- **Change:** Wired the existing WebP downloader/publisher into the shared API/Robot core for explicit Drive covers. Added idempotent `pending_cover_work` to the cover DB, preserving schema version 1 and all 11 record columns. Published asset SHA and an input/source/completed-DSpace checkpoint persist before Koha write-back; confirmed source IDs/SHA remain unchanged until success. Matching eligible retries validate the asset and reuse completed work. Changed inputs/options invalidate the checkpoint. A true PUT must pass MARC read-back of UID/hash and required DSpace UUID/links before atomic source/UUID/ok completion and checkpoint removal. Previously confirmed Drive covers without asset SHA are rebuilt; local/PDF fallback keeps its legacy path. Updated architecture/context/environment/plan/runbook and acceptance instructions.
+- **Verification:** Relevant API/core/Robot/cover/state/Koha-contract/export checks: 152 passed, 14 deselected. Tests cover reopened-DB retry with no repeated download/normalize/completed DSpace job, asset inode/mtime preservation, confirmed source commit, missing read-back values, cutoff/manual reset, changed inputs, corrupt assets, additive migration, old-cover conversion and regressions. An earlier broader run had one existing Robot API payload test fail because it requests 200 DPI outside the unchanged 100–150 allowlist; unrelated optimizer/DPI cases were excluded from the final run. Python compilation and `git diff --check` passed. No deployment or live Koha/Drive/DSpace/state write was performed.
+- **Risks:** Runtime acceptance requires user-run redeployment, the additive checkpoint table and an approved test record with configured Koha custom-cover display. A crash between DSpace completion and result checkpointing still needs Phase 7 recovery; a mere existing Item link remains insufficient for changed PDF replacement. Checkpoints describe matching input identities/options; local/additional source contents remain outside Drive identity tracking. Preserve DB/assets and include the checkpoint table in backups. Task 4.3/Phase 4 live acceptance remains open.
+- **Rollback:** Revert the new core/checkpoint/read-back logic and related tests/docs through the existing deployment procedure. Preserve state/assets/checkpoint data and assess SHA-converted MARC records before restoring older CGI/JPEG code or cover URL templates; any MARC/config rollback is a separately authorized operation.
+
 ## 2026-10-01 — Confirm mounted WebP publication and CDN delivery (Task 4.2)
 
 - **Context:** The user supplied the requested real-mount synthetic asset smoke output after redeployment.

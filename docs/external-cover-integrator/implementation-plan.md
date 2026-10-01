@@ -434,23 +434,54 @@ python -m src.services.cover_pipeline --source "$COVER_SOURCE_URL" \
 
 **Опис:** Перед записом у Koha — `status = pending` у state DB; після підтвердженого успіху REST API — `status = ok` (розділ 15, 22).
 
+**Стан на 2026-10-01:** репозиторну частину реалізовано у спільному
+`src/core.py:process_integration_logic()` для API/Robot. Explicit Drive `956$p`
+використовує download → normalize → WebP → atomic publish і записує SHA у `957$c`,
+без CGI upload. Cover-only зміна не обробляє незмінний PDF. Старі confirmed Drive
+covers без asset SHA перебудовуються у WebP; local/PDF fallback лишається наявним
+шляхом до Фази 5.
+
+У cover SQLite DB додано idempotent `pending_cover_work` (версія 1 і 11 колонок
+`records` збережені). Після publish атомарно зберігаються asset SHA у pending record
+та checkpoint: fingerprint input IDs/collection/additional inputs/DPI/options,
+source IDs/SHA, потреба PDF work і завершений результат DSpace. Підтверджені source
+колонки `records` до успіху не змінюються. Повторний eligible запуск із тими самими
+inputs перевіряє immutable asset і повторює лише Koha write-back, якщо PDF робота
+вже завершена. Checkpoint переживає повторне відкриття DB; зміна inputs робить його
+непридатним для цього запиту. Retry backoff/cutoff і ручний reset збережені.
+
+Після true Koha PUT виконується MARC read-back: `001` і `957$c`, а для PDF циклу
+також `957$3` та потрібні `856$u`. Лише після цього `complete_cycle()` атомарно
+фіксує source IDs/SHA, UUIDs, `ok`/retry=0 і видаляє checkpoint. Збій PUT/read-back
+залишає `pending` до cutoff; asset/checkpoint зберігаються. Збій DSpace також не
+підтверджує цикл. Crash між DSpace upload і збереженням його результату все ще
+потребує recovery Фази 7; наявний fail-closed guard не дозволяє прийняти простий
+`linked_existing` за replacement нового/зміненого PDF.
+
+Локальні перевірки: 152 passed, 14 deselected (непов'язані optimizer/DPI cases,
+включно з існуючим Robot payload test, який передає 200 DPI поза allowlist 100–150).
+Тести перевіряють restart/retry без повторного download/normalize/DSpace, source
+commit після read-back, cutoff/reset, input invalidation, corrupted asset,
+additive migration і legacy regressions. Runtime Koha write-back та показ у OPAC
+потребують редеплою користувача й перевірки на визначеному тестовому записі;
+задачу 4.3 і Фазу 4 повністю ще не закрито.
+
 **Acceptance criteria:**
 - Успішний цикл: OPAC показує нову обкладинку, `status = ok`, `stored_file_id` оновлено.
 - Симуляція збою Koha REST API після публікації asset: `status` лишається `pending`, повторний запуск **не** перезавантажує/не переконвертує asset повторно, а лише повторює запис у Koha.
 
 **Validation:**
 ```bash
-curl -s -X PUT "https://${KOHA_STAFF_BASE_URL}/api/v1/biblios/<biblio_id>" \
-  -H "Authorization: Bearer ${KOHA_API_TOKEN}" -H "Content-Type: application/marc-in-json" \
-  -d @payload_956.json -o /dev/null -w "%{http_code}\n"
-
-sqlite3 state.db "SELECT status FROM records WHERE record_uid='test-uid-1';"  # очікується ok
-
-# Симуляція збою Koha API після успішної публікації asset
-python -m integrator.run --record test-uid-2 --simulate-koha-write-fail
-sqlite3 state.db "SELECT status FROM records WHERE record_uid='test-uid-2';"  # очікується pending
-ls /data/koha-covers/assets/ | grep "$(sqlite3 state.db "SELECT cover_asset_sha256 FROM records WHERE record_uid='test-uid-2';")"
-# файл має існувати — повторного download/convert при наступному запуску не буде (перевірити за логом)
+# Temporary DB/storage and stub Koha/Drive/DSpace; includes write-back failure/restart.
+.venv/bin/python -m pytest -q tests/test_api_drive_gate.py tests/test_cover_state_schema.py
+# After redeployment, in an identified environment and an approved test record:
+# use the existing authenticated integration API/Koha UI, then poll its task.
+# Compare MARC 957$c with records.cover_asset_sha256 and the CDN SHA-named WebP.
+# Confirm records.status=ok, retry_count=0 and no pending_cover_work row.
+# Repeat the unchanged request: noop, zero Drive/downstream processing.
+# OPAC: CustomCoverImagesURL=<configured HTTPS CDN origin>/{957$c}.webp;
+# OPACCustomCoverImages=Show. Check the rendered image URL and actual HTTP bytes.
+# Local failure tests reopen SQLite and assert no repeated download/normalize/DSpace.
 ```
 
 ---

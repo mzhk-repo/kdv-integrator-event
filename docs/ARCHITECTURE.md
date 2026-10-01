@@ -156,7 +156,8 @@ Both Compose files give API the full cover root read-write at
 `COVERS_STORAGE_PATH`; nginx keeps only read-only assets. Swarm API placement
 also requires the orchestrator's storage node, preserving its manager-zone
 constraint. These are deployment configuration changes; no deployment occurred.
-Koha adoption and durable record-level publish reconciliation remain Task 4.3.
+Task 4.3 now implements Koha adoption and durable record-level publish reconciliation
+in the repository; deployed Koha acceptance remains pending.
 
 Post-redeploy checks on 2026-09-30 confirmed all three services at 1/1, API/CDN
 on `pinokew`, matching deployed publisher SHA, the expected read-write API root
@@ -180,7 +181,7 @@ decoding, applies EXIF orientation and RGB, strips metadata, downsizes to at mos
 600 px wide without upscale and encodes WebP at quality 82. It returns separate
 source/asset hashes. The core reuses its download verifier. This callable/CLI
 stage writes a temporary normalized output; Task 4.2 publishes it on request,
-and Koha workflow adoption belongs to Task 4.3. Local image/stub-Drive checks do not
+and Task 4.3 wires it into the explicit Drive cover workflow. Local image/stub-Drive checks do not
 establish live Drive or Koha acceptance.
 
 When `COVER_STATE_DB_PATH` is configured, `process_integration_logic()` reads
@@ -198,8 +199,8 @@ Drive `956$p` image sources are resolved/materialized with an image MIME allowli
 Gate metadata is reused during materialization; downloaded bytes must match
 source SHA before downstream processing. Unchanged explicit covers are skipped;
 cover-only changes can update Koha without materializing an unchanged PDF or
-calling DSpace. Existing CGI/JPEG cover behavior remains the output pipeline;
-WebP/CDN publishing is still Phase 4 work.
+calling DSpace. Task 4.3 uses the WebP/CDN pipeline for explicit Drive covers;
+local covers and PDF-derived fallback retain the legacy output path until Phase 5.
 `complete_cycle()` atomically commits source IDs/SHA, returned DSpace UUIDs,
 `ok` and zero retries only after confirmed required cover processing and a true
 Koha write-back result. Downstream failures retain unconfirmed identities and
@@ -220,6 +221,31 @@ only temporary state without downstream work. Cleanup completed. This verifies
 deployed route/core execution in isolation, not an integration POST to the running
 Gunicorn server or live Koha/DSpace writes. Active external authentication modes,
 Robot execution and changed-content write-back were not exercised by this smoke.
+
+### External cover Koha write-back and recovery (Task 4.3)
+
+Explicit Drive `956$p` cycles publish canonical WebP and write only its SHA to
+`957$c` through the existing Koha MARC writer. Before write-back, the separate
+cover DB durably checkpoints work in additive `pending_cover_work`: input
+fingerprint, source IDs/SHA, asset SHA, whether PDF work is required and a completed
+DSpace result. `records.cover_asset_sha256` is saved while pending; confirmed
+source columns remain unchanged. The existing schema version 1 and record columns
+are preserved. API startup's idempotent migration creates the additional table.
+
+For matching inputs, an eligible retry validates the published asset and reuses
+completed PDF work, repeating only Koha write-back. Input identity/collection/
+additional input/DPI/options changes invalidate the checkpoint. Backoff, cutoff
+and manual reset remain active. A true PUT is followed by MARC read-back of
+`001`/`957$c` and, for a PDF cycle, `957$3` and required `856$u` links. Only then
+are source IDs/SHA, UUIDs and `ok`/zero retries committed and the checkpoint deleted
+in one SQLite transaction. Failed writes/read-back remain pending until cutoff.
+Previously confirmed Drive covers without an asset SHA are rebuilt as WebP.
+
+Local tests prove recovery after reopened SQLite without another cover download,
+normalization or completed DSpace job; corrupt assets and incomplete read-back
+fail closed. Live Koha/OPAC acceptance needs user-run redeployment and an approved
+test record. DSpace crashes before its completed result is checkpointed still need
+Phase 7 reconciliation; a mere existing Item link does not prove PDF replacement.
 
 ⚡ Деталі Реалізації (M2-M7)
 

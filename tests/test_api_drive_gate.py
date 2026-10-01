@@ -3,10 +3,12 @@ import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from PIL import Image
 
 for key, value in {
     "KDV_API_TOKEN": "test-token", "KOHA_API_URL": "http://koha.test",
@@ -24,6 +26,10 @@ from src.services.sources import GoogleDriveSource, SourceResolver  # noqa: E402
 UID = "019d4312-1234-7abc-8123-0123456789ab"
 CONTENT = b"binary source bytes"
 SHA = hashlib.sha256(CONTENT).hexdigest()
+with BytesIO() as image_bytes:
+    Image.new('RGB', (900, 1200), 'blue').save(image_bytes, 'PNG')
+    COVER_CONTENT = image_bytes.getvalue()
+COVER_SHA = hashlib.sha256(COVER_CONTENT).hexdigest()
 
 
 @pytest.fixture
@@ -31,6 +37,10 @@ def workflow(tmp_path, monkeypatch):
     path = str(tmp_path / "state.db")
     monkeypatch.setenv("COVER_STATE_DB_PATH", path)
     monkeypatch.setenv("MAX_RETRY_COUNT", "3")
+    storage = tmp_path / 'covers'
+    (storage / 'assets').mkdir(parents=True)
+    (storage / '.incoming').mkdir(mode=0o700)
+    monkeypatch.setenv('COVERS_STORAGE_PATH', str(storage))
     state = StateMachine()
     koha = Mock()
     meta = {"record_uid": UID, "file_path": "https://drive.google.com/file/d/primary/view",
@@ -38,11 +48,24 @@ def workflow(tmp_path, monkeypatch):
     koha.get_biblio_metadata.return_value = meta
     koha.set_success.return_value = True
     koha.set_cover_url.return_value = True
+    def set_success(*args, **kwargs):
+        meta['dspace_uuid'] = kwargs.get('item_uuid')
+        meta['dspace_links'] = [args[1], kwargs.get('primary_download_url')]
+        if kwargs.get('cover_url'):
+            meta['cover_asset_sha256'] = kwargs['cover_url']
+        return True
+    def set_cover(*args):
+        meta['cover_asset_sha256'] = args[1]
+        return True
+    koha.set_success.side_effect = set_success
+    koha.set_cover_url.side_effect = set_cover
     koha.get_cover_image_url.return_value = "http://koha.test/cover.jpg"
     drive = Mock()
     drive.get_metadata.return_value = {"name": "book.pdf", "mimeType": "application/pdf",
                                        "sha256Checksum": SHA, "size": str(len(CONTENT))}
-    drive.download_to_file.side_effect = lambda **kw: Path(kw["destination_path"]).write_bytes(CONTENT)
+    drive.download_to_file.side_effect = lambda **kw: Path(kw["destination_path"]).write_bytes(
+        COVER_CONTENT if kw['file_id'] == 'cover' else CONTENT
+    )
     resolver = SourceResolver(str(tmp_path), GoogleDriveSource(
         enabled=True, tmp_dir=str(tmp_path / "drive"), drive_client=drive,
     ))
@@ -89,6 +112,7 @@ def test_authenticated_api_reaches_gate_and_next_cycle_is_zero_work(workflow, mo
 def test_writeback_failure_does_not_commit_source_or_double_increment(workflow):
     state, koha, _, _, _, _ = workflow
     koha.set_success.return_value = False
+    koha.set_success.side_effect = None
     with pytest.raises(RuntimeError, match="write-back"):
         run(workflow)
     row = state.get(UID)
@@ -126,12 +150,15 @@ def test_changed_cover_skips_unchanged_pdf_and_dspace(workflow):
         )
     meta["cover_path"] = "https://drive.google.com/file/d/cover/view"
     drive.get_metadata.return_value = {"mimeType": "image/png", "name": "cover.png",
-                                       "sha256Checksum": SHA, "size": str(len(CONTENT))}
+                                       "sha256Checksum": COVER_SHA, "size": str(len(COVER_CONTENT))}
     assert run(workflow)["status"] == "cover_updated"
     drive.get_metadata.assert_called_once_with(file_id="cover", resource_key=None)
     dspace.assert_not_called()
     koha.set_success.assert_not_called()
     koha.set_cover_url.assert_called_once()
+    cover.assert_not_called()
+    asset_sha = state.get(UID)['cover_asset_sha256']
+    assert koha.set_cover_url.call_args.args == (42, asset_sha)
     assert state.get(UID)["cover_source_id"] == "cover"
     assert state.get(UID)["status"] == "ok"
 
@@ -168,7 +195,8 @@ def test_retry_with_two_sources_checks_backoff_once_for_the_cycle(workflow):
         connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00'")
     meta['cover_path'] = 'https://drive.google.com/file/d/cover/view'
     drive.get_metadata.side_effect = lambda file_id, resource_key: {
-        'sha256Checksum': SHA, 'name': 'book.pdf' if file_id == 'primary' else 'cover.png',
+        'sha256Checksum': SHA if file_id == 'primary' else COVER_SHA,
+        'name': 'book.pdf' if file_id == 'primary' else 'cover.png',
         'mimeType': 'application/pdf' if file_id == 'primary' else 'image/png',
         'size': str(len(CONTENT)),
     }
@@ -176,3 +204,192 @@ def test_retry_with_two_sources_checks_backoff_once_for_the_cycle(workflow):
     assert state.get(UID)['status'] == 'ok'
     assert state.get(UID)['retry_count'] == 0
     assert drive.get_metadata.call_count == 2
+
+
+def external_cover(workflow, *, cover_only=False):
+    _, _, meta, drive, _, _ = workflow
+    meta['cover_path'] = 'https://drive.google.com/file/d/cover/view'
+    if cover_only:
+        meta['file_path'] = None
+    drive.get_metadata.side_effect = lambda file_id, resource_key: {
+        'sha256Checksum': SHA if file_id == 'primary' else COVER_SHA,
+        'name': 'book.pdf' if file_id == 'primary' else 'cover.png',
+        'mimeType': 'application/pdf' if file_id == 'primary' else 'image/png',
+        'size': str(len(CONTENT if file_id == 'primary' else COVER_CONTENT)),
+    }
+
+
+def retry_due(state):
+    with closing(sqlite3.connect(state.db_path)) as connection, connection:
+        connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00'")
+
+
+@pytest.mark.parametrize('cover_only', [True, False])
+def test_external_cover_retry_only_repeats_koha_after_reopening_state(workflow, monkeypatch, cover_only):
+    import src.core as core
+    state, koha, _, drive, legacy_cover, dspace = workflow
+    external_cover(workflow, cover_only=cover_only)
+    normalize = Mock(wraps=core.download_and_normalize)
+    monkeypatch.setattr(core, 'download_and_normalize', normalize)
+    writer = koha.set_cover_url if cover_only else koha.set_success
+    succeed = writer.side_effect
+    writer.side_effect = None
+    writer.return_value = False
+    with pytest.raises(RuntimeError, match='write-back'):
+        run(workflow)
+    row = state.get(UID)
+    assert (row['status'], row['retry_count'], row['cover_source_id'], row['file_source_id']) == (
+        'pending', 1, None, None,
+    )
+    asset = Path(os.environ['COVERS_STORAGE_PATH']) / 'assets' / f"{row['cover_asset_sha256']}.webp"
+    before = asset.stat()
+    assert state.get_cover_work(UID) is not None
+    calls = (drive.get_metadata.call_count, drive.download_to_file.call_count, normalize.call_count, dspace.call_count)
+    retry_due(state)
+    writer.side_effect = succeed
+    reopened = StateMachine(state.db_path, max_retry_count=3)
+    result = process_integration_logic('retry', 42, koha_client=koha, state_machine=reopened,
+                                       skip_optimization=True)
+    assert result['cover_asset_sha256'] == row['cover_asset_sha256']
+    assert (drive.get_metadata.call_count, drive.download_to_file.call_count, normalize.call_count, dspace.call_count) == calls
+    assert (asset.stat().st_ino, asset.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert reopened.get(UID)['status'] == 'ok'
+    assert reopened.get(UID)['retry_count'] == 0
+    assert reopened.get(UID)['cover_source_id'] == 'cover'
+    assert reopened.get(UID)['cover_source_sha256'] == COVER_SHA
+    assert reopened.get_cover_work(UID) is None
+    assert run(workflow)['status'] == 'noop'
+    legacy_cover.assert_not_called()
+
+
+def test_cover_readback_failure_is_pending_and_retry_does_not_convert(workflow):
+    state, koha, _, drive, _, _ = workflow
+    external_cover(workflow, cover_only=True)
+    succeed = koha.set_cover_url.side_effect
+    koha.set_cover_url.side_effect = None
+    with pytest.raises(RuntimeError, match=r'957\$c read-back'):
+        run(workflow)
+    assert state.get(UID)['status'] == 'pending'
+    assert state.get(UID)['cover_source_id'] is None
+    retry_due(state)
+    koha.set_cover_url.side_effect = succeed
+    run(workflow)
+    assert drive.get_metadata.call_count == drive.download_to_file.call_count == 1
+
+
+def test_pending_cover_corruption_blocks_koha_write(workflow):
+    state, koha, _, _, _, _ = workflow
+    external_cover(workflow, cover_only=True)
+    koha.set_cover_url.side_effect = None
+    koha.set_cover_url.return_value = False
+    with pytest.raises(RuntimeError):
+        run(workflow)
+    digest = state.get(UID)['cover_asset_sha256']
+    asset = Path(os.environ['COVERS_STORAGE_PATH']) / 'assets' / f'{digest}.webp'
+    asset.write_bytes(b'corrupt')
+    retry_due(state)
+    koha.set_cover_url.reset_mock()
+    with pytest.raises(Exception):
+        run(workflow)
+    koha.set_cover_url.assert_not_called()
+    assert state.get(UID)['status'] == 'pending'
+
+
+def test_cover_retry_cutoff_and_manual_reset_keep_checkpoint(workflow):
+    state, koha, _, drive, _, _ = workflow
+    external_cover(workflow, cover_only=True)
+    succeed = koha.set_cover_url.side_effect
+    koha.set_cover_url.side_effect = None
+    koha.set_cover_url.return_value = False
+    for _ in range(3):
+        retry_due(state)
+        with pytest.raises(RuntimeError, match='write-back'):
+            run(workflow)
+    assert (state.get(UID)['status'], state.get(UID)['retry_count']) == ('failed', 3)
+    assert state.get_cover_work(UID) is not None
+    assert run(workflow)['status'] == 'deferred'
+    state.reset_retry_count(UID)
+    koha.set_cover_url.side_effect = succeed
+    run(workflow)
+    assert state.get(UID)['status'] == 'ok'
+    assert drive.get_metadata.call_count == drive.download_to_file.call_count == 1
+
+
+def test_input_change_invalidates_staged_work(workflow):
+    state, koha, meta, drive, _, _ = workflow
+    external_cover(workflow, cover_only=True)
+    succeed = koha.set_cover_url.side_effect
+    koha.set_cover_url.side_effect = None
+    koha.set_cover_url.return_value = False
+    with pytest.raises(RuntimeError):
+        run(workflow)
+    retry_due(state)
+    meta['cover_path'] = 'https://drive.google.com/file/d/changed-cover/view'
+    drive.download_to_file.side_effect = lambda **kw: Path(kw['destination_path']).write_bytes(COVER_CONTENT)
+    koha.set_cover_url.side_effect = succeed
+    run(workflow)
+    assert state.get(UID)['cover_source_id'] == 'changed-cover'
+    assert drive.get_metadata.call_count == drive.download_to_file.call_count == 2
+
+
+def test_legacy_confirmed_drive_cover_is_migrated_to_webp(workflow):
+    state, _, _, drive, legacy, _ = workflow
+    external_cover(workflow, cover_only=True)
+    state.mark_pending(UID)
+    state.complete_cycle(UID, {'cover': ('cover', COVER_SHA)}, {})
+    assert state.get(UID)['cover_asset_sha256'] is None
+    run(workflow)
+    assert state.get(UID)['cover_asset_sha256'] is not None
+    assert state.get(UID)['status'] == 'ok'
+    legacy.assert_not_called()
+
+
+def test_external_cover_failed_dspace_retains_asset_and_never_writes_koha(workflow):
+    state, koha, _, drive, _, dspace = workflow
+    external_cover(workflow)
+    dspace.side_effect = RuntimeError('DSpace unavailable')
+    with pytest.raises(RuntimeError, match='DSpace unavailable'):
+        run(workflow)
+    koha.set_success.assert_not_called()
+    assert state.get(UID)['status'] == 'pending'
+    assert state.get_cover_work(UID)['result'] is None
+    retry_due(state)
+    dspace.side_effect = None
+    run(workflow)
+    assert state.get(UID)['status'] == 'ok'
+    # Cover metadata/download was not repeated; the unfinished PDF may resume.
+    assert [call.kwargs['file_id'] for call in drive.download_to_file.call_args_list].count('cover') == 1
+
+
+@pytest.mark.parametrize('field,expected', [('dspace_uuid', r'957\$3'), ('dspace_links', '856')])
+def test_pdf_writeback_readback_checks_all_managed_values(workflow, field, expected):
+    state, koha, meta, _, _, _ = workflow
+    external_cover(workflow)
+    succeed = koha.set_success.side_effect
+    def incomplete(*args, **kwargs):
+        succeed(*args, **kwargs)
+        meta.pop(field, None)
+        return True
+    koha.set_success.side_effect = incomplete
+    with pytest.raises(RuntimeError, match=expected):
+        run(workflow)
+    assert state.get(UID)['status'] == 'pending'
+    assert state.get(UID)['file_source_id'] is None
+    assert state.get_cover_work(UID)['result'] is not None
+
+
+def test_changed_pdf_gate_keeps_confirmed_cover_on_zero_work_path(workflow):
+    state, _, meta, drive, _, _ = workflow
+    external_cover(workflow)
+    run(workflow)
+    # The PDF changes; its gate enters pending before the cover is checked.
+    meta['file_path'] = 'https://drive.google.com/file/d/changed-pdf/view'
+    drive.get_metadata.reset_mock()
+    drive.get_metadata.side_effect = lambda file_id, resource_key: {
+        'sha256Checksum': hashlib.sha256(b'new pdf').hexdigest(),
+        'name': 'book.pdf', 'mimeType': 'application/pdf', 'size': '7',
+    }
+    drive.download_to_file.side_effect = lambda **kw: Path(kw['destination_path']).write_bytes(b'new pdf')
+    run(workflow)
+    drive.get_metadata.assert_called_once_with(file_id='changed-pdf', resource_key=None)
+    assert state.get(UID)['cover_source_id'] == 'cover'
