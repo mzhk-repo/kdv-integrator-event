@@ -150,6 +150,13 @@ class DSpaceClient:
             return resp.json().get("lastModified")
         return None
 
+    def get_item(self, item_uuid):
+        endpoint = f"/core/items/{item_uuid}"
+        resp = self._request("GET", endpoint)
+        if resp is not None and resp.status_code == 200:
+            return resp.json()
+        self._raise_rest_error("DSpace get item", endpoint, resp)
+
     def _format_metadata_value(self, value):
         if isinstance(value, list):
             values = value

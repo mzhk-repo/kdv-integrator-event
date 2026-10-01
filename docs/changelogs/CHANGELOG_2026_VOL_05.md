@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Reconcile both DSpace 856 links on unchanged-source runs
+
+- **Context:** User log showed the Drive gate returned `noop` for an unchanged `956$u` after the DSpace Handle `856$u` had been removed from Koha. The early NO-OP return skipped link reconciliation.
+- **Change:** On confirmed `ok` records only, if either DSpace link is absent, fetch the existing Item and ORIGINAL bitstream by stored UUIDs and rewrite the two DSpace `856` fields: PDF download and repository Handle. Require successful Koha write and read-back of both links. No Drive download, PDF processing or DSpace upload occurs. Updated architecture, AI context and Task 7.1 plan.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_api_drive_gate.py tests/test_contracts.py tests/test_core.py` — 73 passed. Coverage includes unchanged-source repair, both DSpace links and Koha `856` rewriting. Python compilation and `git diff --check` passed. No live Koha/DSpace record was changed; runtime verification requires redeployment.
+- **Risks:** A failed link repair leaves the state `ok`; a later request can retry the reconciliation. Runtime repair/read-back remains unverified until redeploy and user smoke.
+- **Rollback:** Revert the link reconciliation helper, Koha `856` rewrite, tests and documentation; no database migration or remote data change is involved.
+
 ## 2026-10-01 — Confirm DSpace UID retry lookup and stable Handle (Task 7.1)
 
 - **Context:** The initial successful runtime cycle confirmed DSpace Item creation, `koha.uid` metadata and PDF upload; repeated lookup and Handle stability were still to be checked.

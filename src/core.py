@@ -73,6 +73,40 @@ def _primary_download_url(bitstream_data) -> str | None:
     return f"{DSPACE_UI_URL}/bitstreams/{bitstream_uuid}/download"
 
 
+def _repair_missing_dspace_handle_link(koha, dspace, biblionumber, meta, record_state):
+    if not meta.get("file_path") or not record_state or record_state.get("status") != "ok":
+        return False
+    item_uuid = record_state.get("dspace_item_uuid") or meta.get("dspace_uuid")
+    if not item_uuid:
+        return False
+    links = meta.get("dspace_links") or []
+    has_record_link = any(
+        "/handle/" in link or f"/items/{item_uuid}" in link for link in links
+    )
+    has_file_link = any("/bitstreams/" in link for link in links)
+    if has_record_link and has_file_link:
+        return False
+
+    dspace = dspace or DSpaceClient()
+    item = dspace.get_item(item_uuid)
+    handle = item.get("handle")
+    handle_url = f"{DSPACE_UI_URL}/handle/{handle}" if handle else f"{DSPACE_UI_URL}/items/{item_uuid}"
+    bitstream = dspace.get_primary_bitstream(item_uuid)
+    primary_download_url = _primary_download_url(bitstream)
+    if not primary_download_url:
+        raise RuntimeError("DSpace primary bitstream is unavailable for link repair")
+    if koha.repair_dspace_links(biblionumber, primary_download_url, handle_url) is not True:
+        raise RuntimeError("Koha DSpace links repair was not confirmed")
+    readback = koha.get_biblio_metadata(biblionumber)
+    if not readback or any(
+        link not in readback.get("dspace_links", [])
+        for link in (primary_download_url, handle_url)
+    ):
+        raise RuntimeError("Koha DSpace links read-back was not confirmed")
+    logger.info("Restored DSpace links for record_uid=%r item_uuid=%s", meta.get("record_uid"), item_uuid)
+    return True
+
+
 def _disk_free_mb(path: str) -> float | None:
     try:
         return round(shutil.disk_usage(path).free / 1024 / 1024, 2)
@@ -621,6 +655,10 @@ def process_integration_logic(
                 # Upgrade confirmed legacy covers to the canonical WebP asset.
                 cover_work = True
             if not file_work and not cover_work:
+                if _repair_missing_dspace_handle_link(
+                    koha, options['dspace_client'], biblionumber, meta, existing
+                ):
+                    return {'status': 'links_repaired'}
                 return {'status': 'noop', 'reason': 'confirmed_sources_unchanged'}
             if not state.mark_pending(uid):
                 return {'status': 'deferred', 'reason': 'retry_cutoff'}

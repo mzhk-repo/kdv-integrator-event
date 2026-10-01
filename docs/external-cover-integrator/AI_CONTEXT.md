@@ -239,7 +239,11 @@ legacy `koha.biblionumber` lookup remains as a fallback. Existing bitstreams are
 not replaced here; that is Task 7.2. User-provided runtime log on 2026-10-01
 confirms a new Item, MARC `001` stored in `koha.uid`, successful PDF upload and
 task completion. The user also confirmed a successful repeated lookup returning
-the same Item with an unchanged Handle. Changed-PDF replacement remains Task 7.2.
+the same Item with an unchanged Handle. If a later unchanged-source NO-OP finds
+either DSpace link missing from Koha, core resolves the existing DSpace Item
+and ORIGINAL bitstream by stored UUIDs, rewrites the two DSpace `856` links
+(PDF download and repository Handle), and confirms both by read-back. Changed-
+PDF replacement remains Task 7.2.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.

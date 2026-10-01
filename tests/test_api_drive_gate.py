@@ -52,7 +52,7 @@ def workflow(tmp_path, monkeypatch):
     koha.set_cover_url.return_value = True
     def set_success(*args, **kwargs):
         meta['dspace_uuid'] = kwargs.get('item_uuid')
-        meta['dspace_links'] = [args[1], kwargs.get('primary_download_url')]
+        meta['dspace_links'] = [link for link in (args[1], kwargs.get('primary_download_url')) if link]
         if kwargs.get('cover_url'):
             meta['cover_asset_sha256'] = kwargs['cover_url']
         return True
@@ -74,15 +74,17 @@ def workflow(tmp_path, monkeypatch):
     monkeypatch.setattr("src.core._source_resolver", lambda: resolver)
     cover = Mock(return_value={"status": "success"})
     dspace = Mock(return_value={"handle": "http://dspace.test/handle/1/2", "uuid": "item",
-                               "bitstream_uuid": "bitstream"})
+                               "bitstream_uuid": "bitstream",
+                               "primary_download_url": "http://dspace.test/bitstreams/bitstream/download"})
     monkeypatch.setattr("src.core.CoverService.process_book", cover)
     monkeypatch.setattr("src.core.run_dspace_workflow", dspace)
     monkeypatch.setattr("src.app._make_clients", lambda: (koha, Mock()))
     return state, koha, meta, drive, cover, dspace
 
 
-def run(workflow):
-    return process_integration_logic("task", 42, koha_client=workflow[1], skip_optimization=True)
+def run(workflow, dspace_client=None):
+    return process_integration_logic("task", 42, koha_client=workflow[1],
+                                    dspace_client=dspace_client, skip_optimization=True)
 
 
 def test_authenticated_api_reaches_gate_and_next_cycle_is_zero_work(workflow, monkeypatch):
@@ -116,6 +118,36 @@ def test_authenticated_api_reaches_gate_and_next_cycle_is_zero_work(workflow, mo
     assert run(workflow)["status"] == "noop"
     assert state.get(UID)["file_source_id"] == "new-id"
     assert drive.get_metadata.call_count == 2 and drive.download_to_file.call_count == 1
+
+
+def test_unchanged_source_repairs_missing_dspace_handle_link(workflow):
+    state, koha, meta, drive, cover, dspace_workflow = workflow
+    assert run(workflow)["uuid"] == "item"
+    handle_url = "http://dspace.test/handle/1/2"
+    meta["dspace_links"] = ["https://catalog.test/existing"]
+    def repair_links(_biblio, file_url, handle_url):
+        meta["dspace_links"] = [file_url, handle_url]
+        return True
+    koha.repair_dspace_links.side_effect = repair_links
+    dspace_client = Mock()
+    dspace_client.get_item.return_value = {"handle": "1/2"}
+    dspace_client.get_primary_bitstream.return_value = {"uuid": "primary-bitstream"}
+    drive_calls = (drive.get_metadata.call_count, drive.download_to_file.call_count)
+
+    result = run(workflow, dspace_client=dspace_client)
+
+    assert result == {"status": "links_repaired"}
+    dspace_client.get_item.assert_called_once_with("item")
+    dspace_client.get_primary_bitstream.assert_called_once_with("item")
+    file_url = "http://dspace.test/bitstreams/primary-bitstream/download"
+    koha.repair_dspace_links.assert_called_once_with(42, file_url, handle_url)
+    assert meta["dspace_links"] == [
+        file_url, handle_url,
+    ]
+    assert (drive.get_metadata.call_count, drive.download_to_file.call_count) == drive_calls
+    assert dspace_workflow.call_count == 1
+    cover.assert_not_called()
+    assert state.get(UID)["status"] == "ok"
 
 
 def test_writeback_failure_does_not_commit_source_or_double_increment(workflow):

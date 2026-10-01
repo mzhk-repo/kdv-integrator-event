@@ -340,6 +340,48 @@ class KohaClient:
     def set_cover_url(self, biblio_id, cover_url):
         return self._update_956(biblio_id, cover_url=cover_url)
 
+    def repair_dspace_links(self, biblio_id, primary_download_url, handle_url):
+        """Replace the 856 links with the DSpace file and record links."""
+        if not primary_download_url or not handle_url:
+            return False
+        xml_data = self._get_biblio_xml(biblio_id)
+        if not xml_data:
+            return False
+        record = self._parse_marc(xml_data)
+        for field in record.get_fields("856"):
+            record.remove_field(field)
+        record.add_ordered_field(
+            Field(
+                tag="856",
+                indicators=["4", "0"],
+                subfields=[
+                    Subfield(code="u", value=primary_download_url),
+                    Subfield(code="y", value="Файл"),
+                ],
+            )
+        )
+        record.add_ordered_field(
+            Field(
+                tag="856",
+                indicators=["4", "0"],
+                subfields=[
+                    Subfield(code="u", value=handle_url),
+                    Subfield(code="y", value="Запис в репозиторії"),
+                ],
+            )
+        )
+        new_xml = pymarc.record_to_xml(record).decode("utf-8")
+        try:
+            resp = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=new_xml.encode("utf-8"),
+                headers={"Content-Type": "application/marcxml+xml"},
+            )
+            return resp.status_code == 200
+        except Exception as e:
+            logger.error("Failed to repair DSpace handle link for #%s: %s", biblio_id, e)
+            return False
+
     def _update_956(
         self,
         biblio_id,

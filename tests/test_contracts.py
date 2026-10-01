@@ -233,6 +233,39 @@ def test_koha_success_writes_file_856_before_handle_856(monkeypatch):
     assert fields_856[1]["y"] == "Запис в репозиторії"
 
 
+def test_koha_dspace_link_repair_replaces_856_with_both_links(monkeypatch):
+    client = KohaClient()
+    captured = {}
+    xml = (
+        '<record><datafield tag="856" ind1="4" ind2="0">'
+        '<subfield code="u">https://catalog.test/resource</subfield>'
+        '<subfield code="y">Каталог</subfield>'
+        '</datafield>'
+        '<datafield tag="856" ind1="4" ind2="0">'
+        '<subfield code="u">https://repo.test/bitstreams/old/download</subfield>'
+        '<subfield code="y">Файл</subfield>'
+        '</datafield></record>'
+    )
+    monkeypatch.setattr(client, "_get_biblio_xml", lambda _biblio_id: xml)
+
+    def fake_put(url, data=None, headers=None):
+        captured["data"] = data.decode("utf-8")
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    assert client.repair_dspace_links(
+        42,
+        "https://repo.test/bitstreams/new/download",
+        "https://repo.test/handle/1/2",
+    ) is True
+    fields = client._parse_marc(captured["data"]).get_fields("856")
+    assert [(field["u"], field["y"]) for field in fields] == [
+        ("https://repo.test/bitstreams/new/download", "Файл"),
+        ("https://repo.test/handle/1/2", "Запис в репозиторії"),
+    ]
+
+
 def test_koha_set_cover_url_writes_957c(monkeypatch):
     client = KohaClient()
     captured = {}

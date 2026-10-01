@@ -192,7 +192,11 @@ checks record retry eligibility once before checking both sources, so the first
 source's pending timestamp cannot accidentally defer the second source.
 The existing authenticated API/task/polling contract and Robot caller use this
 same core entry point. An all-confirmed unchanged Drive-only cycle returns
-`status=noop`; exhausted or waiting retries return `status=deferred` without
+`status=noop`; if either DSpace link is missing from Koha, the
+fast path reads the existing Item and ORIGINAL bitstream by their stored UUIDs
+and rewrites the DSpace `856` pair: the PDF download URL and repository Handle
+URL. It confirms both links by read-back. Exhausted or waiting retries return
+`status=deferred` without
 downstream work or another retry increment. Local paths and additional files
 are not included in the identity gate and retain their processing path.
 Drive `956$p` image sources are resolved/materialized with an image MIME allowlist.

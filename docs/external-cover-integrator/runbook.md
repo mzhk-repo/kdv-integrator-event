@@ -286,6 +286,11 @@ record's DSpace collection. A later run restored a removed `856$u` by linking th
 existing Item. Replacing `956$u` with a new PDF for that Item is expected to fail
 closed until Task 7.2 implements verified bitstream replacement.
 
+On an unchanged-source run, if either DSpace `856$u` link is missing, the
+reconciliation path now reads the Item and primary ORIGINAL bitstream and
+rewrites both links (PDF download and Handle) in Koha. Runtime acceptance of
+this repair path requires redeployment and read-back verification.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use
