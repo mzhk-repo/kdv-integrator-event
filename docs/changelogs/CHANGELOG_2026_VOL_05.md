@@ -10,6 +10,14 @@
 - **Risks:** Runtime PDF/Koha/OPAC acceptance remains pending. Local PDF paths retain the legacy CGI path because they have no Drive identity tracking. A changed PDF for an existing DSpace Item still fails closed until Phase 7 bitstream replacement. Preserve the cover DB and assets during deployment/rollback.
 - **Rollback:** Revert the PDF fallback branch and related tests/docs through the existing deployment process; retain state, checkpoints and published assets. Assess SHA-converted MARC records before restoring an older cover writer.
 
+## 2026-10-01 — Confirm PDF cover runtime and changed-file guard (Task 5.1)
+
+- **Context:** The user supplied test-record logs after correcting its DSpace collection.
+- **Change:** Recorded the live PDF/Koha success and the expected boundary for changing the PDF linked to an existing DSpace Item in architecture, implementation plan, AI context and runbook.
+- **Verification:** User logs show the PDF bitstream upload and task completion; the user confirmed correct Koha fields and visible cover. Another record restored a removed `856$u` by linking its existing Item. Replacing `956$u` with a different PDF for that Item correctly stopped at `Changed Drive PDF requires DSpace bitstream replacement`. Environment was not identified.
+- **Risks:** Existing-item PDF replacement and safe old-bitstream cleanup remain unimplemented until Task 7.2. The failed attempt may have a pending retry/checkpoint; verify state before retrying after future code changes. Do not delete the existing DSpace bitstream manually.
+- **Rollback:** Documentation evidence only; preserve the generated cover asset and existing DSpace Item/bitstream.
+
 ## 2026-10-01 — Confirm live Koha cover write-back (Task 4.3)
 
 - **Context:** The user tested an approved Koha record with a Drive PNG in `956$p` after deployment.

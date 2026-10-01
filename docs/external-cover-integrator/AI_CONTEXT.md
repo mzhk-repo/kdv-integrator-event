@@ -226,7 +226,11 @@ page at 150 DPI with a 15-second timeout, and normalizes to <=600 px WebP qualit
 82. Matching checkpoint retries reuse the asset and completed DSpace work;
 confirmed unchanged PDFs NO-OP. A PDF with no renderable first page permanently
 fails only its record; transient render errors use normal backoff. Local PDF paths
-retain the CGI pipeline. Local tests pass; live PDF/Koha/OPAC acceptance is open.
+retain the CGI pipeline. User supplied a successful live test on 2026-10-01 after
+correcting the DSpace collection: Item/PDF upload completed and the cover showed
+in Koha. A missing `856$u` was restored by linking the existing Item. Changing
+the PDF for an existing Item still fails closed until Task 7.2 replaces the
+bitstream. The environment was not identified.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.

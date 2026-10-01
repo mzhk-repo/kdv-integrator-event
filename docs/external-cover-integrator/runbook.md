@@ -253,6 +253,11 @@ The local tests cover corrupt/encrypted PDFs and record-level failure isolation;
 do not damage a live test record to exercise that case. Changed PDFs attached
 to an existing DSpace Item remain blocked until Phase 7 replacement is available.
 
+The user confirmed a successful PDF/Item run on 2026-10-01 after correcting the
+record's DSpace collection. A later run restored a removed `856$u` by linking the
+existing Item. Replacing `956$u` with a new PDF for that Item is expected to fail
+closed until Task 7.2 implements verified bitstream replacement.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use

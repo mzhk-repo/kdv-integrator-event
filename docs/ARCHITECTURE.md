@@ -266,8 +266,13 @@ that record, while other tasks continue. Transient render errors retain the
 normal retry policy. An existing DSpace Item still cannot prove changed-PDF
 replacement; Phase 7 handles that case. Local PDF paths retain the CGI path.
 Repository tests cover real PDF rendering, corrupt and protected PDF behavior,
-failure isolation, asset/retry reuse and NO-OP. Live PDF/Koha/OPAC acceptance
-remains pending.
+failure isolation, asset/retry reuse and NO-OP. On 2026-10-01 the user supplied
+a successful test run after correcting the DSpace collection: Item creation and
+PDF bitstream upload completed, Koha fields were correct and the cover displayed.
+A separate record successfully restored a deleted `856$u` by linking its existing
+Item. Changing `956$u` for that existing Item produced the intentional
+`Changed Drive PDF requires DSpace bitstream replacement` guard; safe replacement
+is Task 7.2. The runtime environment was not identified.
 
 ⚡ Деталі Реалізації (M2-M7)
 

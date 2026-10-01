@@ -513,8 +513,15 @@ NO-OP, а старий підтверджений PDF cover без asset SHA п�
 порожній або зашифрований PDF із неможливою першою сторінкою переводить лише свій
 запис у permanent `failed` з cutoff; наступні задачі виконуються незалежно.
 Тимчасова помилка рендеру зберігає звичайний retry/backoff. Local path продовжує
-legacy CGI шлях; зміни локальних джерел не відстежуються Drive state DB. Live PDF
-запис, Koha/OPAC і runtime recovery ще не перевірені; задача відкрита до приймання.
+legacy CGI шлях; зміни локальних джерел не відстежуються Drive state DB.
+
+**Live перевірка 2026-10-01:** користувач виправив неправильну DSpace collection
+для Koha запису 72. Після цього Item створився, PDF bitstream завантажився, задача
+завершилась успішно; користувач підтвердив коректні поля Koha та показ обкладинки.
+Для запису 71 повторний запуск відновив видалене `856$u`, під'єднавши вже існуючий
+DSpace Item. Заміна `956$u` на інший PDF для запису з існуючим Item завершилась
+очікуваною fail-closed помилкою `Changed Drive PDF requires DSpace bitstream
+replacement`; безпечна заміна bitstream — задача 7.2. Оточення не ідентифіковане.
 
 **Acceptance criteria:**
 - Обкладинка коректно згенерована для тестового PDF (перевірка розміру/формату).
@@ -529,7 +536,7 @@ legacy CGI шлях; зміни локальних джерел не відст�
 # Verify MARC 957$c == records.cover_asset_sha256 == SHA of assets/<sha>.webp,
 # status=ok, retries=0, no checkpoint, CDN/Koha display, and unchanged NO-OP.
 # Use isolated tests for corrupt/encrypted PDF; avoid deliberately poisoning a
-# live record. An existing DSpace Item with changed PDF remains Phase 7 fail-closed.
+# live record. Existing DSpace Item + changed PDF remains blocked until Task 7.2.
 ```
 
 ---
