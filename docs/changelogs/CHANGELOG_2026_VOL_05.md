@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — Confirm mounted WebP publication and CDN delivery (Task 4.2)
+
+- **Context:** The user supplied the requested real-mount synthetic asset smoke output after redeployment.
+- **Change:** Recorded runtime acceptance in the implementation plan, architecture, AI context, environment contract and CDN runbook.
+- **Verification:** User output confirms publication at `/data/koha-covers/assets/<sha>.webp`, mode `0644`, matching asset SHA, deduplication by unchanged inode/mtime, and byte-identical HTTP 200 responses from internal and public CDN. Both set `image/webp` and `public, max-age=31536000, immutable`. `git diff --check` passed.
+- **Risks:** This verifies a synthetic asset and the static serving path, not Drive-to-Koha record processing or Koha write-back. The asset remains in mounted storage and may be cached for one year. Deployment environment was not identified.
+- **Rollback:** Revert these evidence-only documentation changes. Keep the test asset until its CDN cache is purged or expires.
+
 ## 2026-09-30 — Verify deployed publisher and cover storage mounts (Task 4.2)
 
 - **Context:** The user redeployed Task 4.2 and supplied read-only smoke output showing correct mounts/code hashes but a missing `COVERS_STORAGE_PATH` assertion, then authorized agent Docker socket access.

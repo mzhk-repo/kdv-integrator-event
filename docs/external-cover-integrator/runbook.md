@@ -188,10 +188,16 @@ storage under `/tmp`: valid 600x800 WebP, matching SHA, mode `0644`, identical
 second publication, unchanged inode/mtime and no remaining staging files passed.
 Temporary storage deletion was confirmed. No persistent assets/state changed.
 Internal CDN `/healthz` and public HTTPS via curl/requests returned `200 ok`;
-the initial urllib public request returned `403`. Mounted assets were empty,
-so actual mounted publication and CDN delivery/cache headers for a real asset
-remain unverified. The environment was not identified as dev/prod. Koha write-back
-and recovery belong to Task 4.3.
+the initial urllib public request returned `403`. A subsequent synthetic WebP
+publication into the real mount returned status 200 from both the internal CDN
+and `https://covers.pinokew.buzz/<sha>.webp`. Both responses matched the source
+bytes and reported `image/webp` plus `public, max-age=31536000, immutable`.
+Repeated publish retained inode/mtime. The asset SHA is
+`c6f0dada6b6dc55ca861938b930d68ee46d79e5bd15f5edc6727a81d2e151499`; mode was
+`0644`. The synthetic asset remains in storage; avoid deleting it while the CDN
+may cache it for a year unless that URL is purged. The environment was not
+identified as dev/prod. This confirms Task 4.2 runtime publishing and CDN delivery
+for the synthetic asset; Koha write-back and record workflow recovery belong to Task 4.3.
 
 ## Rollback
 

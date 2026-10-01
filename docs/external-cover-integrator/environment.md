@@ -152,8 +152,11 @@ Active Gunicorn had `COVERS_STORAGE_PATH=/data/koha-covers`. Standalone `docker 
 does not inherit env sourced by the entrypoint: the initial smoke's missing-env
 assertion was a diagnostic context error. For read-only diagnostics, read only
 the needed non-secret keys from `/proc/1/environ`; do not dump its full contents.
-An isolated `/tmp` deployed publisher smoke passed; persistent assets were empty,
-so real mounted publication/CDN asset delivery remains unverified.
+An isolated `/tmp` deployed publisher smoke passed. A subsequent synthetic WebP
+was published to mounted assets and returned with matching bytes over internal
+and public CDN URLs (`image/webp`, one-year immutable cache). This confirms runtime
+publication/CDN delivery for that test asset. It remains in assets and may remain
+cached for a year; no Koha record workflow was exercised.
 
 Task 2.2 `StateMachine()` reads `COVER_STATE_DB_PATH` and `MAX_RETRY_COUNT` directly
 from the already-loaded runtime environment. Explicit `db_path` and integer

@@ -167,8 +167,12 @@ The corrected diagnostic reads only selected non-secret variables from PID 1.
 The deployed publisher passed normalization, publish/dedup/hash/mode and
 inode/mtime checks in isolated `/tmp` storage; cleanup succeeded. Internal CDN
 health and public HTTPS via curl/requests returned 200; urllib received 403.
-Mounted assets were empty, so real mounted publication and CDN asset delivery
-were not exercised. No persistent assets/state changed; dev/prod was unidentified.
+A synthetic WebP was then published to mounted assets. Repeated publication
+preserved inode/mtime; internal and public CDN responses returned the same bytes,
+`image/webp`, and one-year immutable cache headers. This confirms runtime
+publication/CDN delivery for that test asset, not a Koha record workflow. The
+test asset remains in storage and may remain cached for one year. Dev/prod was
+unidentified.
 
 Task 4.1 adds `src/services/cover_pipeline.py`: `download_and_normalize()` reuses
 the Drive resolver/download and optional gate metadata, verifies source SHA before

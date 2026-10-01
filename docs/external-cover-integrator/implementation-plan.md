@@ -406,9 +406,13 @@ smoke була через окреме оточення `docker exec`, яке н
 Deployed publisher пройшов normalize/publish/dedup/SHA/mode/inode/mtime smoke
 на окремому `/tmp` storage; cleanup підтверджено. CDN health внутрішньо та через
 HTTPS (`curl`/`requests`) повернув `200 ok`; HTTPS-запит `urllib` отримав `403`.
-Mounted assets поки порожні: публікація у справжній mount і віддача asset CDN
-залишаються неперевіреними. Dev/prod не визначено; persistent assets/state не
-змінювалися. Koha write-back — задача 4.3.
+Окремий synthetic WebP опубліковано у справжній mounted `assets`: SHA/name
+збіглися, mode `0644`, повторна публікація зберегла inode/mtime. Внутрішній і
+публічний CDN повернули однаковий вміст із `image/webp` та
+`public, max-age=31536000, immutable`. Тестовий asset залишено у сховищі; його
+CDN-кеш може зберігатися рік. Runtime-публікацію і CDN-віддачу підтверджено для
+synthetic asset; Koha/source-record workflow не перевірявся. Dev/prod не
+визначено; Koha write-back — задача 4.3.
 
 **Acceptance criteria:**
 - Два записи з однаковим вмістом обкладинки фізично використовують один файл (dedup).

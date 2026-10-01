@@ -194,8 +194,12 @@ entrypoint's sourced env, so diagnostics must read selected non-secret PID 1
 variables or load runtime env in their own process. Deployed publisher passed
 isolated `/tmp` normalize/publish/dedup/hash/mode/inode/mtime checks and cleanup.
 CDN health was 200 internally and over HTTPS with curl/requests; urllib got 403.
-Mounted assets were empty: actual mounted publish/CDN asset delivery is still
-unverified. Persistent state/assets were untouched; dev/prod was unidentified.
+Mounted assets were empty during the initial check. A synthetic WebP was then
+published: repeated publication preserved inode/mtime and internal/public CDN
+returned identical bytes with `image/webp` and one-year immutable cache headers.
+Runtime publish/delivery is confirmed for that asset, not through a Koha record
+workflow. The test asset remains and may stay cached for a year; dev/prod was
+unidentified.
 Koha write-back/recovery is Task 4.3.
 
 - `external-cover-integrator.md` — architecture source of truth: identity, MARC fields, dirty-check, state/error semantics, cover/DSpace pipelines, caching, rollback, GC, backup, migration, observability.
