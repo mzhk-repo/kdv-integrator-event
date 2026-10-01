@@ -441,16 +441,27 @@ def run_dspace_workflow(
     raw_xml = local_koha._get_biblio_xml(biblionumber)
     md = parse_marc_details(raw_xml)
     md["koha.biblionumber"] = str(biblionumber)
+    record_uid = meta.get("record_uid")
+    if record_uid:
+        try:
+            parsed_uid = uuid.UUID(record_uid)
+            if parsed_uid.version != 7:
+                raise ValueError
+            record_uid = str(parsed_uid)
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError("DSpace workflow requires MARC 001 UUIDv7") from None
+        md["local.koha.uid"] = record_uid
 
     collection_uuid = meta.get("collection_uuid")
     if not collection_uuid:
         raise Exception("Collection UUID missing")
 
-    existing_item = local_dspace.find_item_by_biblionumber(biblionumber)
+    find_by_uid = getattr(local_dspace, "find_item_by_record_uid", None)
+    existing_item = find_by_uid(record_uid) if record_uid and find_by_uid else None
+    if existing_item is None:
+        existing_item = local_dspace.find_item_by_biblionumber(biblionumber)
     if existing_item:
-        logger.warning(
-            f"🔄 Item already exists (UUID: {existing_item['uuid']}). Linking only."
-        )
+        logger.info("DSpace item found for biblionumber=%s uuid=%s", biblionumber, existing_item["uuid"])
         item_uuid = existing_item["uuid"]
         handle = existing_item.get("handle")
         final_link = (
@@ -459,29 +470,32 @@ def run_dspace_workflow(
             else f"{DSPACE_UI_URL}/items/{item_uuid}"
         )
         primary_bitstream = local_dspace.get_primary_bitstream(item_uuid)
-        result = {
-            "handle": final_link,
-            "uuid": item_uuid,
-            "status": "linked_existing",
-            "bitstream_uuid": primary_bitstream.get("uuid") if primary_bitstream else None,
-            "primary_download_url": _primary_download_url(primary_bitstream),
-        }
-        result.update(
-            _upload_additional_files(local_dspace, item_uuid, meta.get("additional_files"))
+        if primary_bitstream:
+            result = {
+                "handle": final_link,
+                "uuid": item_uuid,
+                "status": "linked_existing",
+                "bitstream_uuid": primary_bitstream.get("uuid"),
+                "primary_download_url": _primary_download_url(primary_bitstream),
+            }
+            result.update(
+                _upload_additional_files(local_dspace, item_uuid, meta.get("additional_files"))
+            )
+            return result
+        # A previous attempt may have created the Item and failed before its first upload.
+        if record_uid:
+            local_dspace.update_metadata(item_uuid, md)
+    else:
+        item_data = local_dspace.create_item_direct(collection_uuid, md)
+        if not item_data:
+            raise Exception("Failed to create item in DSpace")
+        item_uuid = item_data["uuid"]
+        handle = item_data.get("handle")
+        final_link = (
+            f"{DSPACE_UI_URL}/handle/{handle}"
+            if handle
+            else f"{DSPACE_UI_URL}/items/{item_uuid}"
         )
-        return result
-
-    item_data = local_dspace.create_item_direct(collection_uuid, md)
-    if not item_data:
-        raise Exception("Failed to create item in DSpace")
-
-    item_uuid = item_data["uuid"]
-    handle = item_data.get("handle")
-    final_link = (
-        f"{DSPACE_UI_URL}/handle/{handle}"
-        if handle
-        else f"{DSPACE_UI_URL}/items/{item_uuid}"
-    )
 
     final_pdf_path = file_path
     pdf_telemetry = _build_pdf_telemetry(file_path, requested_dpi=dpi)

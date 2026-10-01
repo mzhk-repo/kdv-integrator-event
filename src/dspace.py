@@ -106,6 +106,42 @@ class DSpaceClient:
                 pass
         return None
 
+    def find_item_by_record_uid(self, record_uid):
+        """Find the DSpace item linked to a Koha MARC 001 UUID."""
+        resp = self._request(
+            "GET",
+            "/discover/search/objects",
+            params={"query": f"local.koha.uid:{record_uid}", "dsoType": "item", "size": 2},
+        )
+        if resp is None or resp.status_code != 200:
+            self._raise_rest_error("DSpace find item by record UID", "/discover/search/objects", resp)
+        try:
+            search_results = resp.json().get("_embedded", {}).get("searchResults", {})
+            page = search_results.get("page", {})
+            if page.get("totalElements", 0) > 1:
+                raise DSpaceRestError("Multiple DSpace items match record UID")
+            hits = search_results.get("_embedded", {}).get("objects", [])
+            if not hits:
+                return None
+            item = hits[0].get("_embedded", {}).get("indexableObject", {})
+            item_uuid = item.get("uuid")
+            if not item_uuid:
+                raise DSpaceRestError("DSpace record UID search result has no Item UUID")
+            item_resp = self._request("GET", f"/core/items/{item_uuid}")
+            if item_resp is None or item_resp.status_code != 200:
+                self._raise_rest_error(
+                    "DSpace verify record UID", f"/core/items/{item_uuid}", item_resp
+                )
+            values = item_resp.json().get("metadata", {}).get("local.koha.uid", [])
+            if not any(value.get("value") == record_uid for value in values):
+                return None
+            return {"uuid": item_uuid, "handle": item.get("handle")}
+        except DSpaceRestError:
+            raise
+        except (AttributeError, KeyError, TypeError, IndexError):
+            raise DSpaceRestError("Invalid DSpace record UID search response") from None
+        return None
+
     # 🟢 НОВИЙ МЕТОД
     def get_item_last_modified(self, item_uuid):
         """Повертає рядок lastModified (ISO 8601) для Item"""
@@ -211,21 +247,26 @@ class DSpaceClient:
     def get_primary_bitstream(self, item_uuid):
         bundle_uuid = None
         resp = self._request("GET", f"/core/items/{item_uuid}/bundles")
-        if resp is not None and resp.status_code == 200:
-            for bundle in resp.json().get("_embedded", {}).get("bundles", []):
-                if bundle.get("name") == "ORIGINAL":
-                    bundle_uuid = bundle.get("uuid")
-                    break
+        if resp is None or resp.status_code != 200:
+            self._raise_rest_error(
+                "DSpace list item bundles", f"/core/items/{item_uuid}/bundles", resp
+            )
+        for bundle in resp.json().get("_embedded", {}).get("bundles", []):
+            if bundle.get("name") == "ORIGINAL":
+                bundle_uuid = bundle.get("uuid")
+                break
 
         if not bundle_uuid:
             return None
 
         resp = self._request("GET", f"/core/bundles/{bundle_uuid}/bitstreams")
-        if resp is not None and resp.status_code == 200:
-            bitstreams = resp.json().get("_embedded", {}).get("bitstreams", [])
-            if bitstreams:
-                return bitstreams[0]
-        return None
+        if resp is None or resp.status_code != 200:
+            self._raise_rest_error(
+                "DSpace list bundle bitstreams",
+                f"/core/bundles/{bundle_uuid}/bitstreams", resp,
+            )
+        bitstreams = resp.json().get("_embedded", {}).get("bitstreams", [])
+        return bitstreams[0] if bitstreams else None
 
     def upload_to_item(self, item_uuid, file_path, upload_name=None):
         if not os.path.exists(file_path):

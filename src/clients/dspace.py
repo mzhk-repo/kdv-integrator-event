@@ -22,6 +22,9 @@ class DSpaceClientWrapper:
     def find_item_by_biblionumber(self, biblionumber):
         return self._client.find_item_by_biblionumber(biblionumber)
 
+    def find_item_by_record_uid(self, record_uid):
+        return self._client.find_item_by_record_uid(record_uid)
+
     def create_item_direct(self, collection_uuid, metadata_dict):
         return self._client.create_item_direct(collection_uuid, metadata_dict)
 

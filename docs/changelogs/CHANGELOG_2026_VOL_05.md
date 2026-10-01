@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-01 — DSpace Item UUID identity and first-bitstream retry (Task 7.1)
+
+- **Context:** The DSpace workflow found Items by Koha-local `biblionumber`, and a retry after Item creation but before the first PDF upload only linked the incomplete Item.
+- **Change:** Added DSpace lookup by exact `local.koha.uid` metadata, writes MARC `001` UUIDv7 into new Item metadata, and reuses the matched Item/Handle. An existing Item without an ORIGINAL bitstream receives the initial PDF on retry. DSpace lookup/bundle API failures now fail closed rather than being mistaken for missing state. Legacy `biblionumber` lookup remains as fallback; replacement of an existing bitstream remains Task 7.2. Updated architecture, AI context and implementation plan.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_contracts.py tests/test_core.py` — 49 passed. Coverage includes exact UID search, UUID metadata, stable existing Item/Handle, same-Item first-upload retry, and existing DSpace/core contracts. `git diff --check` passed. No DSpace server or live record was changed.
+- **Risks:** DSpace must have `local.koha.uid` registered and indexed for discovery search; this repository change does not configure the DSpace metadata registry. Live server acceptance remains pending. Existing bitstream replacement and recovery after changed PDF remain Task 7.2.
+- **Rollback:** Revert the UID lookup/metadata and retry behavior with related tests/docs. Preserve DSpace Items and bitstreams; no remote data was changed.
+
 ## 2026-10-01 — PDF first-page WebP cover fallback (Task 5.1)
 
 - **Context:** Drive PDF records without a separate `956$p` cover still used the legacy Koha CGI/JPEG generator instead of content-addressed WebP and SHA-only `957$c`.

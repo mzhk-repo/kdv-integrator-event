@@ -596,14 +596,29 @@ done
 
 **Опис:** Створення/оновлення DSpace item та bitstream за зміненим `file_source`.
 
+Реалізовано в репозиторії: DSpace Item ідентифікується за MARC `001` у
+`local.koha.uid`; при першій обробці UUID записується в metadata. Повторний
+запуск знаходить той самий Item і зберігає Handle. Якщо попередній запуск
+створив Item, але завершився до першого bitstream, повтор використовує Item і
+довантажує PDF. Пошук за наявним Koha `biblionumber` лишається сумісним шляхом
+для старих Items. Заміна вже наявного bitstream належить задачі 7.2.
+
+Перед runtime acceptance у DSpace має бути зареєстроване й індексоване поле
+`local.koha.uid`. Локальні перевірки не підтверджують конфігурацію поля на
+сервері DSpace; runtime acceptance задачі 7.1 ще не виконаний.
+
 **Acceptance criteria:**
 - Новий item у DSpace створюється з коректними метаданими, пов'язаними з `record_uid` (UUIDv7).
 - Handle стабільний і не змінюється при повторних запусках без реальної зміни джерела.
 
 **Validation:**
 ```bash
-curl -s "https://${DSPACE_BASE_URL}/server/api/core/items?query=record_uid:test-uid-1" \
-  -H "Authorization: Bearer ${DSPACE_API_TOKEN}" | jq '.embedded.items | length'  # очікується 1
+record_uid="<approved-uuidv7>"
+curl --get --silent --show-error "${DSPACE_API_URL}/discover/search/objects" \
+  -H "Authorization: Bearer ${DSPACE_API_TOKEN}" \
+  --data-urlencode "query=local.koha.uid:${record_uid}" \
+  --data-urlencode "dsoType=item" --data-urlencode "size=2" \
+  | jq '._embedded.searchResults.page.totalElements'  # очікується 1
 ```
 
 ### Задача 7.2 — Безпечна заміна PDF (upload → verify → swap)

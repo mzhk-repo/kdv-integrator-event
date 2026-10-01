@@ -166,6 +166,66 @@ def test_run_dspace_with_stubs(tmp_path):
     assert dspace.uploaded[0][0] == "u1"
 
 
+def test_run_dspace_associates_new_item_with_record_uid(tmp_path):
+    pdf = tmp_path / "record.pdf"
+    pdf.write_bytes(b"pdf")
+    dspace = StubDSpace()
+    created = {}
+    dspace.find_item_by_record_uid = lambda uid: None
+    original_create = dspace.create_item_direct
+
+    def create_item(collection_uuid, metadata):
+        created.update(metadata)
+        return original_create(collection_uuid, metadata)
+
+    dspace.create_item_direct = create_item
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+    )
+
+    assert created["local.koha.uid"] == uid
+    assert result["handle"].endswith("/handle/1/2")
+
+
+def test_run_dspace_retry_uploads_missing_first_bitstream_to_same_item(tmp_path):
+    pdf = tmp_path / "record.pdf"
+    pdf.write_bytes(b"pdf")
+    dspace = StubDSpace()
+    dspace.find_item_by_record_uid = lambda uid: {"uuid": "existing-item", "handle": "1/2"}
+    dspace.get_primary_bitstream = lambda item_uuid: None
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+    )
+
+    assert dspace.uploaded == [("existing-item", str(pdf), "record.pdf")]
+    assert result["uuid"] == "existing-item"
+    assert result["handle"].endswith("/handle/1/2")
+
+
+def test_run_dspace_reuses_existing_uid_item_and_handle(tmp_path):
+    pdf = tmp_path / "record.pdf"
+    pdf.write_bytes(b"pdf")
+    dspace = StubDSpace()
+    dspace.find_item_by_record_uid = lambda uid: {"uuid": "existing-item", "handle": "1/2"}
+    dspace.get_primary_bitstream = lambda item_uuid: {"uuid": "existing-bitstream"}
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace,
+    )
+
+    assert result["handle"].endswith("/handle/1/2")
+    assert result["uuid"] == "existing-item"
+    assert dspace.uploaded == []
+
+
 def test_task_manager_integration(tmp_path):
     # ensure task_manager propagates kwargs
     koha = StubKoha()

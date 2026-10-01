@@ -48,6 +48,32 @@ def test_dspace_pid_find_contract_uses_expected_endpoint_and_params(monkeypatch)
     assert captured["kwargs"]["params"] == {"id": "123/456"}
 
 
+def test_dspace_find_item_by_record_uid_uses_exact_metadata_match(monkeypatch):
+    client = DSpaceClient()
+    captured = {}
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    def fake_request(method, endpoint, **kwargs):
+        captured.setdefault("calls", []).append((method, endpoint, kwargs))
+        if endpoint == "/discover/search/objects":
+            return _Resp(payload={"_embedded": {"searchResults": {
+                "page": {"totalElements": 1},
+                "_embedded": {"objects": [{"_embedded": {"indexableObject": {
+                    "uuid": "item-uuid", "handle": "123/456",
+                }}}]},
+            }}})
+        return _Resp(payload={"metadata": {"local.koha.uid": [{"value": uid}]}})
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert client.find_item_by_record_uid(uid) == {"uuid": "item-uuid", "handle": "123/456"}
+    assert captured["calls"][0][0:2] == ("GET", "/discover/search/objects")
+    assert captured["calls"][0][2]["params"] == {
+        "query": f"local.koha.uid:{uid}", "dsoType": "item", "size": 2
+    }
+    assert captured["calls"][1][0:2] == ("GET", "/core/items/item-uuid")
+
+
 def test_dspace_update_metadata_contract_builds_json_patch(monkeypatch):
     client = DSpaceClient()
     captured = {}
