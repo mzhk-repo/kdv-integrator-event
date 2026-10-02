@@ -713,6 +713,10 @@ def process_integration_logic(
         downstream_started = False
         try:
             existing = state.get(uid)
+            if existing is None:
+                state.mark_pending(uid)
+            state.set_biblionumber(uid, int(biblionumber))
+            existing = state.get(uid)
             restore_missing_957_from_state(koha, biblionumber, meta, existing)
             if existing:
                 meta = dict(
@@ -721,7 +725,7 @@ def process_integration_logic(
                     previous_dspace_bitstream_uuid=existing['dspace_bitstream_uuid'],
                 )
             if existing is not None and existing['status'] != 'ok' and not state.is_retry_eligible(uid):
-                return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
+                return _deferred_result(state, uid)
             inputs_sha = hashlib.sha256(json.dumps({
                 'file': refs['file'].file_id if refs['file'] else meta.get('file_path'),
                 'cover': refs['cover'].file_id if refs['cover'] else meta.get('cover_path'),
@@ -750,7 +754,7 @@ def process_integration_logic(
                         )
                     logger.info('Drive gate record_uid=%r source=%s action=%s', uid, source, checks[source].action)
                     if checks[source].action == 'deferred':
-                        return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
+                        return _deferred_result(state, uid)
             file_work = bool(meta.get('file_path')) and (
                 'file' not in checks or checks['file'].action not in ('noop', 'same_content')
             )
@@ -788,7 +792,7 @@ def process_integration_logic(
                         force_refresh=True,
                     )
                     if checks['file'].action == 'deferred':
-                        return {'status': 'deferred', 'reason': 'retry_backoff_or_cutoff'}
+                        return _deferred_result(state, uid)
                     if checks['file'].action == 'same_content':
                         checks['file'] = DriveCheckResult(
                             'resource_changed', checks['file'].sha256, checks['file'].metadata
@@ -798,7 +802,7 @@ def process_integration_logic(
                 # biblionumber match; its bitstream cannot belong to a new Item.
                 meta = dict(meta, previous_dspace_bitstream_uuid=None)
             if not state.mark_pending(uid):
-                return {'status': 'deferred', 'reason': 'retry_cutoff'}
+                return _deferred_result(state, uid)
             downstream_started = True
             current = state.get(uid)
             sources = {
@@ -828,10 +832,30 @@ def process_integration_logic(
             # Metadata failures already incremented/saturated their own retry state.
             if downstream_started:
                 state.record_result(uid, success=False, partial=True,
-                                    permanent=isinstance(error, InvalidPDFCoverError))
+                                    permanent=isinstance(error, InvalidPDFCoverError),
+                                    reason=("invalid_pdf_cover" if isinstance(error, InvalidPDFCoverError)
+                                            else type(error).__name__))
             if isinstance(error, DriveMetadataError):
                 koha.set_status(biblionumber, 'error', str(error))
             raise
+
+
+def _deferred_result(state, uid):
+    detail = state.get_deferred(uid) or {
+        "record_uid": uid, "reason": "cutoff", "retry_count": None,
+        "next_retry_at": None, "failure_reason": None,
+    }
+    detail["status"] = "deferred"
+    detail["message"] = (
+        "Потрібне втручання оператора: досягнуто ліміт повторів"
+        if detail["reason"] == "cutoff"
+        else f"Очікує автоматичного повтору після {detail['next_retry_at']}"
+    )
+    logger.warning(
+        "Integration deferred record_uid=%r reason=%s retry_count=%s next_retry_at=%s",
+        uid, detail["reason"], detail["retry_count"], detail["next_retry_at"] or "operator_intervention",
+    )
+    return detail
 
 
 def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,

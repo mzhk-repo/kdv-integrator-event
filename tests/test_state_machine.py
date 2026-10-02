@@ -73,6 +73,87 @@ def test_backoff_and_operator_reset(tmp_path):
         state.get_retry_eligible(now=datetime(2026, 1, 1))
 
 
+def test_persisted_defer_reason_due_time_and_single_claim(tmp_path):
+    state = StateMachine(str(tmp_path / "state.db"), 3)
+    state.mark_pending("scheduled")
+    state.set_biblionumber("scheduled", 71)
+    state.record_result("scheduled", success=False, reason="dspace_timeout")
+    row = state.get("scheduled")
+    assert row["defer_reason"] == "backoff"
+    assert row["retry_reason"] == "dspace_timeout"
+    assert row["next_retry_at"]
+    assert state.get_retry_eligible(now=datetime(2000, 1, 1, tzinfo=timezone.utc)) == []
+
+    due = datetime.fromisoformat(row["next_retry_at"]).replace(tzinfo=timezone.utc)
+    assert state.claim_due_retries(now=due - timedelta(seconds=1)) == []
+    assert state.claim_due_retries(now=due)
+    assert state.claim_due_retries(now=due) == []
+
+
+def test_cutoff_has_operator_recovery_state(tmp_path):
+    state = StateMachine(str(tmp_path / "state.db"), 1)
+    state.mark_pending("cutoff")
+    state.set_biblionumber("cutoff", 72)
+    state.record_result("cutoff", success=False, permanent=True, reason="missing_checksum")
+    detail = state.get_deferred("cutoff")
+    assert detail["reason"] == "cutoff"
+    assert detail["retry_count"] == 1
+    assert detail["next_retry_at"] is None
+    assert state.claim_due_retries() == []
+    state.reset_retry_count("cutoff")
+    assert state.get("cutoff")["retry_count"] == 0
+    assert state.get_deferred("cutoff")["reason"] == "backoff"
+
+
+def test_scheduler_dispatches_one_valid_due_record(tmp_path, monkeypatch):
+    from src.cover_state.retry_scheduler import RetryScheduler
+
+    state = StateMachine(str(tmp_path / "state.db"), 2)
+    state.mark_pending("scheduled")
+    state.set_biblionumber("scheduled", 71)
+    state.record_result("scheduled", success=False, reason="network_timeout")
+    with closing(sqlite3.connect(state.db_path)) as connection, connection:
+        connection.execute(
+            "UPDATE records SET next_retry_at='2000-01-01 00:00:00' WHERE record_uid='scheduled'"
+        )
+
+    class Koha:
+        def get_biblio_metadata(self, _biblionumber):
+            return {"record_uid": "scheduled"}
+
+    class Wrapper:
+        def __new__(cls):
+            return Koha()
+
+    monkeypatch.setattr("src.clients.koha.KohaClientWrapper", Wrapper)
+    queued = []
+    monkeypatch.setattr("src.cover_state.retry_scheduler.task_manager.start_task",
+                        lambda func, bib: queued.append((func, bib)) or "task-id")
+    scheduler = RetryScheduler(state_factory=lambda: state)
+    scheduler.run_once()
+    scheduler.run_once()
+    assert len(queued) == 1
+    assert queued[0][1] == 71
+
+
+def test_legacy_rows_receive_a_due_time_or_cutoff_on_upgrade(tmp_path):
+    from src.cover_state.schema import SCHEMA_V1
+    from src.export_module.db.schema import MigrationManager
+
+    path = str(tmp_path / "legacy.db")
+    MigrationManager(path, SCHEMA_V1, wal=True).migrate()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.executemany(
+            "INSERT INTO records (record_uid,status,retry_count,updated_at) VALUES (?, 'failed', ?, ?)",
+            [("due", 2, "2026-01-01 00:00:00"), ("cutoff", 3, "2026-01-01 00:00:00")],
+        )
+    state = StateMachine(path, 3)
+    assert state.get("due")["defer_reason"] == "backoff"
+    assert state.get("due")["next_retry_at"] == "2026-01-01 00:00:02"
+    assert state.get("cutoff")["defer_reason"] == "cutoff"
+    assert state.get("cutoff")["next_retry_at"] is None
+
+
 def test_atomic_failure_increments(tmp_path):
     state = StateMachine(str(tmp_path / "state.db"), 20)
     state.mark_pending("record")

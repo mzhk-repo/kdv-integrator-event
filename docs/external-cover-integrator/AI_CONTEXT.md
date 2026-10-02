@@ -126,15 +126,16 @@ Since host bind paths are node-local,
 API placement must use the prepared node or shared storage.
 Task 2.2 implements `StateMachine` in `src/cover_state/state_machine.py`:
 `mark_pending`, `record_result`, `get_retry_eligible`, `reset_retry_count`, `get`.
-Required `MAX_RETRY_COUNT` has no implicit default. Success clears retries;
-errors increment them, partial failures may retain `pending`, and cutoff forces
-`failed` and excludes retries. Backoff is 1, 2, 4, ... seconds from `updated_at`;
-zero retries (including manual reset) are immediately eligible. Existing resource
-columns survive transitions. SQLite writes are transactional, but selection is
-not a worker claim; the future pipeline must serialize each complete record cycle.
-39 focused state/schema/export tests passed on temporary DBs on 2026-09-30.
-The API/Robot core now invokes the Drive gate and serializes configured cycles
-with a shared `.workflow.lock` in the state DB directory.
+Required `MAX_RETRY_COUNT` has no implicit default. Success clears retry metadata;
+errors increment retries, partial failures may retain `pending`, and cutoff
+excludes automatic retries. Backoff is 1, 2, 4, ... seconds, persisted as
+`next_retry_at` alongside `retry_reason` and `defer_reason` (`backoff` or `cutoff`).
+Koha `biblionumber` is stored as a local routing hint; the scheduler verifies
+MARC `001` before dispatch. The API scheduler atomically claims due rows with a
+one-hour lease and submits the shared integration workflow. TaskManager reports
+returned deferred results distinctly; exceptions are failed. Koha shows cutoff
+records and provides an authenticated operator retry. State writes remain
+transactional, and complete cycles use `.workflow.lock`.
 
 Task 3.1 adds read-only `StateMachine.check_source(record_uid, incoming_file_id,
 source="cover"|"file")` before `mark_pending` and external client construction.

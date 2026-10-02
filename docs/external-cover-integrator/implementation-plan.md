@@ -212,12 +212,14 @@ sqlite3 "$COVER_STATE_DB_PATH" "SELECT sql FROM sqlite_master WHERE type='index'
 `get_retry_eligible()` виключає `ok` та записи на ліміті й застосовує backoff
 1, 2, 4, ... секунд від UTC `updated_at`. Reset до нуля через метод або прямий
 SQL повертає запис у вибірку одразу, зберігаючи status/resources.
-39 цільових state/schema/export тестів пройшли на тимчасових БД, включно з
-persistence, cutoff, backoff, reset та атомарними concurrent increments.
-Вибірка не резервує записи: майбутній pipeline має використовувати один
-writer-процес або per-record lock на весь цикл. API/Robot core тепер використовує
-спільний filesystem workflow lock; metadata gate підключено до цього шляху;
-runtime-схема 2.1 прийнята за наданим користувачем виводом. Фаза 2 завершена.
+Поточне доповнення додає retry-метадані (`retry_reason`, `defer_reason`,
+`next_retry_at`, `biblionumber`) адитивно до наявної state DB. API scheduler
+атомарно захоплює due записи з годинною lease та запускає спільний
+workflow; перед обробкою він перевіряє MARC `001` для збереженого biblionumber.
+TaskManager повертає окремий `deferred`, винятки мають статус `failed`, а Koha
+показує cutoff з явною операторською дією retry. Цільові локальні тести
+перевіряють backoff, cutoff, міграцію та одноразове захоплення due retry;
+runtime-приймання очікує redeploy.
 
 **Acceptance criteria:**
 - Успішний цикл: `status → ok`, `retry_count → 0`.

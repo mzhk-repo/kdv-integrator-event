@@ -2,6 +2,13 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Persist, report, and automatically retry deferred integrations
+
+- **Context:** Integration tasks treated every returned value as success, while retry backoff/cutoff existed only implicitly in state and due records had no automatic dispatcher.
+- **Change:** TaskManager now reports `success`, `deferred`, and `failed` distinctly. Additive cover-state schema v2 columns persist the safe failure reason, backoff/cutoff classification, next retry time, Koha routing ID, and an atomic retry claim lease. The API scheduler dispatches due retries through the normal core after MARC `001` verification. Koha shows cutoff records and offers an authenticated operator retry; Robot Batch keeps deferred counts distinct from success.
+- **Verification:** Targeted state, schema, Drive gate, core, DSpace contract, TaskManager, Robot and API checks: 190 passed; 2 existing DPI fixtures were deselected because their values conflict with the configured supported DPI list. Python compilation, JavaScript syntax check and `git diff --check` passed. Runtime/deployment acceptance remains pending.
+- **Risks:** The scheduler starts after the API's first request and requires persistent shared state storage; node-local DB replicas remain unsupported unless they share the same DB/lock filesystem. Previously existing rows receive derived retry deadlines, but historical failure reasons are labeled `legacy_failure`. No live Koha/DSpace records were changed.
+
 ## 2026-10-02 — Reuse verified saved DSpace Items before discovery
 
 - **Context:** Repeated refreshes created new Items because a zero discovery result bypassed the live Item UUID already saved in state. The previous stale-bitstream fix allowed upload but did not resolve this identity problem.

@@ -83,6 +83,32 @@ def test_robot_default_payload_keeps_optimization_enabled(monkeypatch):
     assert captured["json"] == {"skip_optimization": False}
 
 
+def test_robot_reports_deferred_task_separately(monkeypatch):
+    def fake_post(_url, headers=None, json=None):
+        return FakeResponse(202, {"task_id": "task-deferred"})
+
+    def fake_get(_url, headers=None):
+        return FakeResponse(200, {"status": "deferred", "progress": "backoff",
+                                  "result": {"status": "deferred", "message": "backoff"}})
+
+    monkeypatch.setattr(robot.requests, "post", fake_post)
+    monkeypatch.setattr(robot.requests, "get", fake_get)
+    monkeypatch.setattr(robot.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(robot, "POLL_INTERVAL", 0)
+
+    assert robot.process_single_biblio("123", max_wait=1) == "DEFERRED"
+
+
+def test_robot_batch_returns_deferred_without_success(monkeypatch):
+    monkeypatch.setattr(robot, "parse_candidates_text", lambda _text: ["123"])
+    monkeypatch.setattr(robot, "run_batch_ids", lambda *args, **kwargs: {"DEFERRED": 1, "SUCCESS": 0})
+
+    result = robot.run_batch_from_text("task", "123")
+
+    assert result["status"] == "deferred"
+    assert result["stats"]["DEFERRED"] == 1
+
+
 def test_robot_selected_dpi_sets_payload(monkeypatch):
     captured = {}
 
@@ -202,6 +228,7 @@ def test_ui_robot_batch_returns_stats_without_failures(monkeypatch):
     result = robot.run_batch_from_text("ui-task", "31")
 
     assert result == {
+        "status": "success",
         "candidates_count": 1,
         "preview": ["31"],
         "stats": expected_stats,

@@ -26,6 +26,7 @@ from .config import (
     KOHA_OPAC_URL,
 )
 from .core import process_integration_logic
+from .cover_state.retry_scheduler import start_retry_scheduler
 from .services.pdf import validate_optimizer_dpi
 from scripts import robot
 
@@ -40,6 +41,8 @@ app = Flask(__name__)
 
 # ponytail: process-local lock; use a shared lock only if the service gains replicas.
 _EXPORT_RUN_LOCK = threading.Lock()
+_RETRY_SCHEDULER_LOCK = threading.Lock()
+_RETRY_SCHEDULER = None
 
 
 def _normalize_cf_team_domain(raw: str) -> str:
@@ -143,6 +146,11 @@ def add_cors_headers(response):
 
 @app.before_request
 def check_security():
+    global _RETRY_SCHEDULER
+    if not app.testing and os.environ.get("COVER_STATE_DB_PATH") and _RETRY_SCHEDULER is None:
+        with _RETRY_SCHEDULER_LOCK:
+            if _RETRY_SCHEDULER is None:
+                _RETRY_SCHEDULER = start_retry_scheduler()
     if request.path in {"/kdv/api"} or request.path.endswith(("/health", "/ready", "/readiness")) or request.method == "OPTIONS":
         return
     if not _is_authorized():
@@ -491,3 +499,53 @@ def update_record(biblionumber):
             biblionumber, e,
         )
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/kdv/api/integrate/<int:biblionumber>/retry-state", methods=["GET"])
+def get_record_retry_state(biblionumber):
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "unavailable"}), 503
+    try:
+        koha, _ = _make_clients()
+        meta = koha.get_biblio_metadata(biblionumber)
+        uid = meta.get("record_uid") if meta else None
+        if not uid:
+            return jsonify({"status": "not_found"}), 404
+        from .cover_state.state_machine import StateMachine
+
+        detail = StateMachine().get_deferred(uid)
+        if detail and detail.get("biblionumber") not in (None, biblionumber):
+            return jsonify({"status": "not_found"}), 404
+        return jsonify(detail or {"status": "ok"})
+    except Exception as exc:
+        logger.error("Retry state lookup failed for biblionumber=%s type=%s", biblionumber, type(exc).__name__)
+        return jsonify({"status": "error", "message": "Retry state unavailable"}), 503
+
+
+@app.route("/kdv/api/integrate/<int:biblionumber>/retry", methods=["POST"])
+def retry_record_after_cutoff(biblionumber):
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "unavailable"}), 503
+    try:
+        koha, dspace = _make_clients()
+        meta = koha.get_biblio_metadata(biblionumber)
+        if not meta or not meta.get("record_uid"):
+            return jsonify({"status": "not_found"}), 404
+        from .cover_state.state_machine import StateMachine
+
+        state = StateMachine()
+        uid = meta["record_uid"]
+        detail = state.get_deferred(uid)
+        if detail and detail.get("biblionumber") not in (None, biblionumber):
+            return jsonify({"status": "conflict", "message": "Record routing ID does not match"}), 409
+        if not detail or detail["reason"] != "cutoff":
+            return jsonify({"status": "conflict", "message": "Record is not at retry cutoff"}), 409
+        state.reset_retry_count(uid)
+        task_id = task_manager.start_task(
+            process_integration_logic, biblionumber,
+            koha_client=koha, dspace_client=dspace,
+        )
+        return jsonify({"status": "accepted", "task_id": task_id}), 202
+    except Exception as exc:
+        logger.error("Cutoff retry failed for biblionumber=%s type=%s", biblionumber, type(exc).__name__)
+        return jsonify({"status": "error", "message": "Could not queue retry"}), 500

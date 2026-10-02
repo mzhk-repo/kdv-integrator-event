@@ -19,6 +19,7 @@ for key, value in {
     os.environ.setdefault(key, value)
 
 from src.app import app  # noqa: E402
+app.testing = True
 from src.core import process_integration_logic  # noqa: E402
 from src.cover_state.state_machine import StateMachine  # noqa: E402
 from src.services.sources import GoogleDriveSource, SourceResolver  # noqa: E402
@@ -348,7 +349,7 @@ def test_retry_with_two_sources_checks_backoff_once_for_the_cycle(workflow):
     state.mark_pending(UID)
     state.record_result(UID, success=False)
     with closing(sqlite3.connect(state.db_path)) as connection, connection:
-        connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00'")
+        connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00', next_retry_at='2000-01-01 00:00:00'")
     meta['cover_path'] = 'https://drive.google.com/file/d/cover/view'
     drive.get_metadata.side_effect = lambda file_id, resource_key: {
         'sha256Checksum': SHA if file_id == 'primary' else COVER_SHA,
@@ -431,7 +432,7 @@ def test_pdf_replacement_cleanup_with_unchanged_cover_or_resume(workflow, resume
 
 def retry_due(state):
     with closing(sqlite3.connect(state.db_path)) as connection, connection:
-        connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00'")
+        connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00', next_retry_at='2000-01-01 00:00:00'")
 
 
 @pytest.mark.parametrize('cover_only', [True, False])

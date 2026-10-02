@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from src.export_module.db.schema import MigrationManager
@@ -41,7 +43,24 @@ CREATE TABLE IF NOT EXISTS pending_cover_work (
 def migrate(db_path: str) -> None:
     if not db_path or not Path(db_path).is_absolute():
         raise ValueError("COVER_STATE_DB_PATH must be an absolute file path")
-    MigrationManager(db_path, SCHEMA_V1, wal=True).migrate()
+    MigrationManager(db_path, SCHEMA_V1, wal=True, target_version=2).migrate()
+    # Add retry scheduling metadata without rebuilding records or touching checkpoints.
+    columns = {
+        "biblionumber": "INTEGER",
+        "retry_reason": "TEXT",
+        "defer_reason": "TEXT",
+        "next_retry_at": "TIMESTAMP",
+        "retry_claimed_at": "TIMESTAMP",
+    }
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        existing = {row[1] for row in connection.execute("PRAGMA table_info(records)")}
+        for name, sql_type in columns.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE records ADD COLUMN {name} {sql_type}")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_records_retry_due "
+            "ON records(status, next_retry_at, retry_count)"
+        )
 
 
 if __name__ == "__main__":

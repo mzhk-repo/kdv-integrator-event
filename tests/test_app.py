@@ -15,6 +15,7 @@ os.environ.setdefault("DSPACE_API_PASS", "pass")
 os.environ.setdefault("INTEGRATOR_MOUNT_PATH", "/tmp")
 
 from src.app import _EXPORT_RUN_LOCK, _run_export_task, app
+app.testing = True
 
 
 def test_health_endpoint_is_public_and_ok():
@@ -428,3 +429,36 @@ def test_export_run_rejects_parallel_run(monkeypatch):
         _EXPORT_RUN_LOCK.release()
 
     assert response.status_code == 409
+
+
+def test_cutoff_retry_endpoint_resets_state_and_queues_task(tmp_path, monkeypatch):
+    from src.cover_state.state_machine import StateMachine
+
+    monkeypatch.setenv("COVER_STATE_DB_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("MAX_RETRY_COUNT", "1")
+    state = StateMachine()
+    state.mark_pending("record-uid")
+    state.set_biblionumber("record-uid", 70)
+    state.record_result("record-uid", success=False, permanent=True, reason="missing_checksum")
+
+    class Koha:
+        def get_biblio_metadata(self, _biblionumber):
+            return {"record_uid": "record-uid"}
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app._make_clients", lambda: (Koha(), object()))
+    queued = {}
+    monkeypatch.setattr(
+        "src.app.task_manager.start_task",
+        lambda func, bib, **kwargs: queued.update(func=func, bib=bib, kwargs=kwargs) or "retry-task",
+    )
+    client = app.test_client()
+    headers = {"X-KDV-TOKEN": "test-token"}
+
+    response = client.get("/kdv/api/integrate/70/retry-state", headers=headers)
+    assert response.get_json()["reason"] == "cutoff"
+    response = client.post("/kdv/api/integrate/70/retry", headers=headers)
+    assert response.status_code == 202
+    assert queued["bib"] == 70
+    assert state.get("record-uid")["retry_count"] == 0

@@ -358,11 +358,11 @@ def test_task_manager_integration(tmp_path):
     info = None
     while time.time() < deadline:
         info = task_manager.get_status(task_id)
-        if info and info["status"] in ("success", "error"):
+        if info and info["status"] in ("success", "failed"):
             break
         time.sleep(0.05)
     assert info is not None
-    assert info["status"] in ("error", "success")
+    assert info["status"] in ("failed", "success")
     assert koha.status_log
 
 

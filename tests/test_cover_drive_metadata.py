@@ -110,7 +110,7 @@ def test_network_errors_increment_to_cutoff_without_secret_logs(state, error, ca
     for attempt in range(1, 4):
         # Simulate separate scheduled runs after elapsed backoff, without sleep.
         with closing(sqlite3.connect(state.db_path)) as connection, connection:
-            connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00'")
+                connection.execute("UPDATE records SET updated_at='2000-01-01 00:00:00', next_retry_at='2000-01-01 00:00:00'")
         with pytest.raises(DriveMetadataError, match="request failed"):
             check_drive_metadata(state, "record", "new", source="cover", drive_source=drive)
         row = state.get("record")

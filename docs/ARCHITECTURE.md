@@ -58,7 +58,7 @@ acceptance are documented in [the CDN runbook](external-cover-integrator/runbook
 
 `src/cover_state/schema.py` defines the separate `records` SQLite table at
 `COVER_STATE_DB_PATH`. It reuses the export module's `MigrationManager`, with
-transactional DDL, schema version 1, required WAL, a unique `record_uid` primary
+transactional DDL, schema version 2, required WAL, a unique `record_uid` primary
 key and a `status` index. `EXPORT_DB_PATH` and `exported_records` remain separate.
 Both Compose files mount `COVER_STATE_HOST_PATH` read-write in `kdv-api` at
 `/data/kdv_cover_state`. `scripts/entrypoint.sh` runs
@@ -91,9 +91,17 @@ exponential backoff of 1, 2, 4, ... seconds from UTC `updated_at`. Zero retries
 bypass backoff, including after a deliberate reset. `reset_retry_count()` retains
 status and resource columns; the documented direct SQL reset works too.
 Connections close after each operation, and SQLite transactions serialize writes.
-Selection does not claim work. The API/Robot core holds a shared filesystem
-workflow lock across complete configured cycles; independent callers must also
-serialize processing. The state module is tested independently and through the API.
+Due failures persist `retry_reason`, `defer_reason` (`backoff` or `cutoff`),
+`next_retry_at`, and the Koha `biblionumber` routing hint. The API retry scheduler
+atomically claims due rows and dispatches them through `process_integration_logic`;
+the core verifies the current MARC `001` before processing. A five-minute claim
+one-hour claim lease recovers rows after a worker exits before the workflow starts. The API and
+Robot core hold the shared filesystem workflow lock across complete cycles.
+TaskManager reports returned `status=deferred` separately from `success`; raised
+exceptions report `failed`. The Koha record page shows cutoff rows and offers an
+authenticated operator retry that resets the cutoff and queues the normal flow.
+Successful completion clears retry metadata while retaining durable resources.
+The state module is tested independently and through the API.
 
 ### External cover fast dirty-check (Task 3.1)
 
@@ -234,8 +242,8 @@ Explicit Drive `956$p` cycles publish canonical WebP and write only its SHA to
 cover DB durably checkpoints work in additive `pending_cover_work`: input
 fingerprint, source IDs/SHA, asset SHA, whether PDF work is required and a completed
 DSpace result. `records.cover_asset_sha256` is saved while pending; confirmed
-source columns remain unchanged. The existing schema version 1 and record columns
-are preserved. API startup's idempotent migration creates the additional table.
+source columns remain unchanged. API migration v2 adds retry scheduling fields
+without rebuilding records or changing the existing checkpoint table.
 
 For matching inputs, an eligible retry validates the published asset and reuses
 completed PDF work, repeating only Koha write-back. Input identity/collection/

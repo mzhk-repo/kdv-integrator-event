@@ -63,7 +63,7 @@ def check_drive_metadata(
             raise ValueError("Drive metadata must be an object")
     except Exception as error:
         if state.mark_pending(record_uid):
-            state.record_result(record_uid, success=False)
+            state.record_result(record_uid, success=False, reason=f"drive_metadata_{type(error).__name__}")
         # Do not log API exception text: it can contain credential-bearing URLs.
         logger.warning("record_uid=%r source=%s Drive metadata request failed (%s)",
                        record_uid, source, type(error).__name__)
@@ -73,7 +73,7 @@ def check_drive_metadata(
     if not isinstance(checksum, str) or re.fullmatch(r"[a-fA-F0-9]{64}", checksum) is None:
         reason = "missing sha256Checksum" if checksum is None or checksum == "" else "invalid sha256Checksum"
         if state.mark_pending(record_uid):
-            state.record_result(record_uid, success=False, permanent=True)
+            state.record_result(record_uid, success=False, permanent=True, reason=reason)
         logger.error("record_uid=%r source=%s %s; manual reset required", record_uid, source, reason)
         raise MissingChecksumError(reason)
     checksum = checksum.lower()

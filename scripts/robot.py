@@ -285,10 +285,14 @@ def process_single_biblio(
                     logger.info(f"✅ #{biblionumber} SUCCESS! Handle: {handle}")
                     return "SUCCESS"
 
-            elif status == "error":
+            elif status in ("error", "failed"):
                 err_msg = s_data.get("error")
                 logger.error(f"❌ #{biblionumber} FAILED: {err_msg}")
                 return "FAILED"
+            elif status == "deferred":
+                result = s_data.get("result") or {}
+                logger.warning("⏳ #%s DEFERRED: %s", biblionumber, result.get("message", s_data.get("progress")))
+                return "DEFERRED"
 
             # Якщо processing/queued - чекаємо далі
 
@@ -334,6 +338,7 @@ def run_batch_ids(
 
     stats = {
         "SUCCESS": 0,
+        "DEFERRED": 0,
         "FAILED": 0,
         "SKIPPED": 0,
         "LINKED": 0,
@@ -425,14 +430,17 @@ def run_batch_from_text(
         if stats.get(status, 0) > 0
     ]
     if failures:
+        if stats.get("DEFERRED", 0):
+            failures.append(f"DEFERRED={stats['DEFERRED']}")
         summary = ", ".join(failures)
         logger.error(f"🏁 BATCH COMPLETED WITH ERRORS: {summary}")
         raise RobotBatchError(
-            f"Robot batch completed with errors: {summary}. "
+            f"Robot batch completed with non-success items: {summary}. "
             "See robot_batch.log for details."
         )
 
     return {
+        "status": "deferred" if stats.get("DEFERRED", 0) else "success",
         "candidates_count": len(ids),
         "preview": ids[:20],
         "stats": stats,

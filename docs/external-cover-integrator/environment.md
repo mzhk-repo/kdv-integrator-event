@@ -128,7 +128,7 @@ the API. A migration error fails API startup so deployment health checks fail.
 The CLI remains available for explicit maintenance with `COVER_STATE_DB_PATH`
 or `--db-path`; it does not load dotenv files or require Koha/Drive/DSpace
 credentials. Migration creates missing parent directories, checks WAL and records
-schema version 1 atomically with the table/index DDL. Export keeps its own schema
+cover-state schema version 2 with an idempotent additive retry-state migration. Export keeps its own schema
 and journal mode. Before environment use, provide a
 persistent directory mount for the cover DB, including WAL and SHM. Both Compose
 files mount the prepared host directory read-write at `/data/kdv_cover_state` in

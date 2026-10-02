@@ -45,10 +45,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_biblionumber_completed
 class MigrationManager:
     """Apply additive, idempotent migrations to the existing SQLite state DB."""
 
-    def __init__(self, db_path: str, schema: str = SCHEMA_V1, *, wal: bool = False) -> None:
+    def __init__(self, db_path: str, schema: str = SCHEMA_V1, *, wal: bool = False,
+                 target_version: int = 1) -> None:
         self.db_path = db_path
         self.schema = schema
         self.wal = wal
+        self.target_version = target_version
 
     def migrate(self) -> None:
         db_file = Path(self.db_path)
@@ -57,7 +59,7 @@ class MigrationManager:
 
         with closing(sqlite3.connect(self.db_path)) as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 1:
+            if version > self.target_version:
                 raise RuntimeError("SQLite schema is newer than this application")
             if self.wal:
                 mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
@@ -67,5 +69,5 @@ class MigrationManager:
                 connection.executescript(
                     "BEGIN IMMEDIATE;\n"
                     + self.schema
-                    + "PRAGMA user_version=1;\nCOMMIT;"
+                    + f"PRAGMA user_version={self.target_version};\nCOMMIT;"
                 )

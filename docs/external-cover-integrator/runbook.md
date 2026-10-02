@@ -291,6 +291,20 @@ updated, so runtime acceptance of deletion remains pending. Local tests cover
 the failure/retry sequence; runtime acceptance requires deployment and a
 user-run smoke test.
 
+### Deferred retries and cutoff recovery
+
+The API retry scheduler scans the durable cover state DB every five seconds.
+Eligible rows are dispatched through the normal workflow after `next_retry_at`;
+the stored Koha biblionumber is used only after its current MARC `001` matches
+`record_uid`. Task polling reports `deferred` separately from `success`; Robot
+Batch reports deferred candidates in its own count.
+
+When retry count reaches `MAX_RETRY_COUNT`, the record is marked `cutoff` and
+the Koha record page displays the failure reason and attempt count. After fixing
+the cause, use **Повторити після втручання** on that page. This authenticated
+action clears the retry cutoff, preserves resource/checkpoint data, and queues
+the normal integration workflow. Do not edit the SQLite retry fields directly.
+
 If `get_primary_bitstream()` returns no primary for an existing Item, inspect
 the `ORIGINAL` bundle list. Replacement uses the confirmed previous bitstream
 UUID from state even when its filename changes, and verifies its Item/bundle

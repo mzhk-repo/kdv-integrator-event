@@ -29,7 +29,7 @@ def test_cover_migration_is_durable_and_separate_from_export(tmp_path):
 
     with closing(sqlite3.connect(cover_path)) as connection:
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall() == [("records",), ("pending_cover_work",)]
@@ -38,7 +38,8 @@ def test_cover_migration_is_durable_and_separate_from_export(tmp_path):
             "record_uid", "cover_source_id", "cover_source_sha256",
             "cover_asset_sha256", "file_source_id", "file_source_sha256",
             "dspace_item_uuid", "dspace_bitstream_uuid", "status", "retry_count",
-            "updated_at",
+            "updated_at", "biblionumber", "retry_reason", "defer_reason",
+            "next_retry_at", "retry_claimed_at",
         }
         row = connection.execute(
             "SELECT status, retry_count, updated_at FROM records WHERE record_uid='record-1'"
@@ -108,11 +109,11 @@ def test_shared_runner_rolls_back_failed_schema(tmp_path):
 def test_cover_migration_rejects_newer_schema_without_downgrading(tmp_path):
     db_path = tmp_path / "state.db"
     with closing(sqlite3.connect(db_path)) as connection:
-        connection.execute("PRAGMA user_version=2")
+        connection.execute("PRAGMA user_version=3")
     with pytest.raises(RuntimeError, match="newer"):
         migrate(str(db_path))
     with closing(sqlite3.connect(db_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall() == []
@@ -137,4 +138,4 @@ def test_additive_cover_checkpoint_migration_preserves_existing_records(tmp_path
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute('SELECT * FROM records').fetchall() == before
         assert connection.execute('SELECT * FROM pending_cover_work').fetchall() == []
-        assert connection.execute('PRAGMA user_version').fetchone()[0] == 1
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == 2
