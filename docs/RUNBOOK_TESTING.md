@@ -80,7 +80,6 @@ class StubKoha:
         self.logged = (biblio,status,msg)
 
 class StubDSpace:
-    def find_item_by_biblionumber(self, b): return None
     def create_item_direct(self, coll, md): return {"uuid":"u1","handle":"1/2"}
     def upload_to_item(self, uuid, path): return True
 

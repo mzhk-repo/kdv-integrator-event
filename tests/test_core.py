@@ -73,9 +73,6 @@ class StubDSpace:
     def __init__(self):
         self.uploaded = []
 
-    def find_item_by_biblionumber(self, num):
-        return None
-
     def create_item_direct(self, uuid, md):
         return {"uuid": "u1", "handle": "1/2"}
 
@@ -361,7 +358,7 @@ def test_task_manager_integration(tmp_path):
 
 
 class ExistingItemDSpace(StubDSpace):
-    def find_item_by_biblionumber(self, num):
+    def find_item_by_record_uid(self, uid):
         return {"uuid": "existing-u1", "handle": "1/2"}
 
 
@@ -547,7 +544,11 @@ def test_run_dspace_existing_item_uploads_additional_files(tmp_path, monkeypatch
     res = run_dspace_workflow(
         75,
         str(primary),
-        {"collection_uuid": "coll", "additional_files": "extra.pdf"},
+        {
+            "collection_uuid": "coll",
+            "record_uid": "018f0f00-0000-7000-8000-000000000075",
+            "additional_files": "extra.pdf",
+        },
         koha_client=koha,
         dspace_client=dspace,
         skip_optimization=True,

@@ -254,8 +254,9 @@ Phase 7 reconciliation; a mere existing Item link does not prove PDF replacement
 If unchanged-source link repair receives an explicit DSpace Item HTTP 404, the
 saved Item UUID is stale. The workflow forces a Drive metadata/SHA refresh,
 searches DSpace again by `koha.uid`, and recreates the Item/PDF if no matching
-Item exists. Only HTTP 404 triggers this recovery; network, authorization and
-server errors remain retryable failures. Ambiguous UID matches fail closed.
+Item exists. Item resolution uses only exact `koha.uid` matches; a missing match
+creates a new Item. Only HTTP 404 triggers this recovery; network, authorization
+and server errors remain retryable failures. Ambiguous UID matches fail closed.
 
 On 2026-10-01, the user supplied a test-record run: Drive image download and task
 completion, MARC `957$c` matching the mounted WebP SHA, state `ok` with zero retries
@@ -287,10 +288,10 @@ is Task 7.2. The runtime environment was not identified.
 ### DSpace Item identity (Task 7.1)
 
 Drive-backed records carry canonical MARC `001` UUIDv7 to DSpace as
-`koha.uid`. The shared workflow searches by that UID before its legacy
-`koha.biblionumber` lookup, so a retry reuses the same Item and Handle. If an
-earlier attempt created the Item but failed before its first ORIGINAL
-bitstream, a retry uploads the missing PDF to that same Item. For a changed
+`koha.uid`. The shared workflow resolves Items only by that UID, so a retry
+reuses the same Item and Handle. If an earlier attempt created the Item but
+failed before its first ORIGINAL bitstream, a retry uploads the missing PDF to
+that same Item. For a changed
 Drive PDF, the workflow uploads and checksum/size verifies a new bitstream,
 switches and reads back the ORIGINAL bundle primary bitstream, then checkpoints
 the DSpace result before Koha write-back. Both Koha `856$u` links must pass

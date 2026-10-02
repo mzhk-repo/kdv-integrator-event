@@ -522,8 +522,6 @@ def run_dspace_workflow(
 
     find_by_uid = getattr(local_dspace, "find_item_by_record_uid", None)
     existing_item = find_by_uid(record_uid) if record_uid and find_by_uid else None
-    if existing_item is None:
-        existing_item = local_dspace.find_item_by_biblionumber(biblionumber)
     replacement_old_bitstream_uuids = []
     primary_bitstream = None
     if existing_item:
@@ -775,8 +773,9 @@ def process_integration_logic(
                             'resource_changed', checks['file'].sha256, checks['file'].metadata
                         )
                 file_work = True
-                meta = dict(meta, previous_dspace_item_uuid=None,
-                            previous_dspace_bitstream_uuid=None)
+                # Keep the old Item UUID to reject an unrelated legacy
+                # biblionumber match; its bitstream cannot belong to a new Item.
+                meta = dict(meta, previous_dspace_bitstream_uuid=None)
             if not state.mark_pending(uid):
                 return {'status': 'deferred', 'reason': 'retry_cutoff'}
             downstream_started = True

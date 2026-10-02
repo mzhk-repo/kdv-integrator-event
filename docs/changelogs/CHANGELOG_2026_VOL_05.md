@@ -2,12 +2,26 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Resolve DSpace Items only by Koha UID
+
+- **Context:** A stale Item could cause the legacy `koha.biblionumber` search to select an unrelated DSpace Item.
+- **Change:** Removed biblionumber-based lookup from the shared integration workflow. The DSpace client method remains for the untouched standalone Nightwalker legacy script. Phase 7 now documents UID-only resolution for the shared workflow.
+- **Verification:** `python3 -m py_compile src/core.py src/dspace.py src/clients/dspace.py scripts/nightwalker.py` and `git diff --check` passed. Source search confirms the shared workflow has no biblionumber lookup; the standalone Nightwalker legacy call remains. Tests and runtime acceptance were not run.
+- **Risks:** Existing DSpace Items without indexed `koha.uid` will no longer be reused automatically; they require `koha.uid` metadata before integration can resolve them.
+
 ## 2026-10-01 — Recreate missing DSpace Items from unchanged Drive sources
 
 - **Context:** An unchanged Drive PDF could NO-OP while link repair attempted to read a deleted DSpace Item UUID from state and failed with HTTP 404 before UID-based reconciliation.
 - **Change:** DSpace REST errors retain their HTTP status. A confirmed 404 during saved-Item link repair now forces Drive metadata/SHA validation and reruns resolution by `koha.uid`; if the Item is absent, the normal workflow creates it and uploads the PDF. Non-404 errors still fail for retry; ambiguous UID matches remain fail-closed. Updated architecture, context, plan and runbook.
 - **Verification:** `python3 -m py_compile src/core.py src/dspace.py` and `git diff --check` passed. Tests and runtime acceptance were not run.
 - **Risks:** Runtime acceptance requires redeployment and a controlled test record whose DSpace Item was removed. Existing duplicate Items matching one `koha.uid` require manual resolution.
+
+## 2026-10-01 — Reject unrelated legacy DSpace biblionumber matches
+
+- **Context:** A second deletion/retry selected another DSpace Item returned by the legacy `koha.biblionumber` search, then failed because the saved bitstream belonged to the deleted Item.
+- **Change:** Preserve the stale saved Item UUID during recovery and ignore a different legacy biblionumber candidate unless the canonical `koha.uid` search confirmed it. This lets the normal path create a fresh Item while retaining the bitstream membership guard. Updated Phase 7 architecture and operator guidance.
+- **Verification:** `python3 -m py_compile src/core.py src/dspace.py` and `git diff --check` passed. Tests and runtime acceptance were not run.
+- **Risks:** Runtime acceptance requires redeployment; pre-existing duplicate Items with the same biblionumber may remain and are not automatically deleted.
 
 ## 2026-10-01 — Update DSpace PDF from Koha intranet action
 

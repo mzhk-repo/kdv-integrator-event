@@ -319,9 +319,12 @@ workflow forces a Drive metadata/SHA check and resolves DSpace again by
 `koha.uid`. If no Item exists, it creates a replacement Item and uploads the
 PDF, then writes and reads back the new Koha UUID and links. HTTP 404 is the
 only response that triggers recreation; timeout, auth and 5xx errors should
-remain retryable failures. If UID search is ambiguous, stop and resolve the
-duplicate Items before retrying. Verify this path after redeployment with an
-approved test record whose DSpace Item was deliberately removed.
+remain retryable failures. The shared integration workflow resolves Items only
+by exact `koha.uid` matches. The standalone legacy Nightwalker script is outside
+this path and remains unchanged. If UID search is ambiguous, stop and resolve
+the duplicate Items before retrying. Verify this path after
+redeployment with an approved test record whose DSpace Item was deliberately
+removed.
 
 ## Rollback
 

@@ -35,7 +35,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - On Drive integration and explicit Item update, missing Koha `957$3`/`957$c` are restored from the matching `records` row and MARC read-back is required. Existing values and other subfields are preserved; no state row means no restoration.
 - Intranet archived-record `PUT /kdv/api/integrate/{biblionumber}` queues the shared workflow with `force_file_refresh=True`; it refreshes Drive metadata even for the same file ID, replaces the PDF safely, updates metadata, and returns a task ID for UI polling.
 - PDF replacement also selects `records.dspace_bitstream_uuid` regardless of filename, validating its saved Item UUID and ORIGINAL bundle membership before upload. A 2026-10-01 renamed-source smoke exposed empty same-name candidates; stored-identity forwarding is fixed locally, runtime acceptance remains pending. Historical leftovers from completed faulty cycles need separate identification.
-- If unchanged-source DSpace link repair gets HTTP 404 for the saved Item UUID, treat that identity as stale: force Drive metadata/SHA refresh, resolve again by `koha.uid`, and recreate the Item/PDF if absent. Only explicit 404 permits this; transport, auth and 5xx failures remain failures. Multiple UID matches fail closed. Runtime acceptance requires redeploy.
+- If unchanged-source DSpace link repair gets HTTP 404 for the saved Item UUID, treat that identity as stale: force Drive metadata/SHA refresh, resolve again by `koha.uid`, and recreate the Item/PDF if absent. The shared integration workflow resolves Items only by exact `koha.uid`; the standalone legacy Nightwalker remains unchanged. Only explicit 404 permits recovery; transport, auth and 5xx failures remain failures. Multiple UID matches fail closed. Runtime acceptance requires redeploy.
 - Protect Integrator-managed `957$c`, `957$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
 
 ## Architecture Snapshot
@@ -240,8 +240,9 @@ requires deployment and a user-run smoke test. The environment was not identifie
 
 Task 7.1 adds DSpace Item lookup and identity by MARC `001` UUIDv7 in
 `koha.uid`. Retries preserve the Item/Handle and can upload the first PDF
-when a prior attempt created the Item but stopped before bitstream upload. The
-legacy `koha.biblionumber` lookup remains as a fallback. For changed Drive PDFs,
+when a prior attempt created the Item but stopped before bitstream upload.
+Resolution uses only `koha.uid`; when there is no UID match, the workflow creates
+a new Item. For changed Drive PDFs,
 upload and verify the new bitstream by size and checksum, set/read back the
 ORIGINAL bundle primary bitstream, then persist the result in
 `pending_cover_work` before Koha write-back. Keep the old bitstream until both

@@ -85,27 +85,20 @@ class DSpaceClient:
         return None
 
     def find_item_by_biblionumber(self, biblionumber):
+        """Legacy lookup retained for the standalone Nightwalker script."""
         endpoint = "/discover/search/objects"
-        query = f"koha.biblionumber:{biblionumber}"
-        params = {"query": query, "dsoType": "item"}
-
+        params = {"query": f"koha.biblionumber:{biblionumber}", "dsoType": "item"}
         resp = self._request("GET", endpoint, params=params)
         if resp is not None and resp.status_code == 200:
             try:
-                data = resp.json()
                 results = (
-                    data.get("_embedded", {})
-                    .get("searchResult", {})
-                    .get("_embedded", {})
-                    .get("objects", [])
+                    resp.json().get("_embedded", {}).get("searchResult", {})
+                    .get("_embedded", {}).get("objects", [])
                 )
                 if results:
-                    first_hit = results[0]["_embedded"]["indexableObject"]
-                    return {
-                        "uuid": first_hit["uuid"],
-                        "handle": first_hit.get("handle"),
-                    }
-            except Exception:
+                    item = results[0]["_embedded"]["indexableObject"]
+                    return {"uuid": item["uuid"], "handle": item.get("handle")}
+            except (AttributeError, KeyError, TypeError, IndexError):
                 pass
         return None
 
