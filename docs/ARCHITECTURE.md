@@ -300,6 +300,11 @@ Koha write retains the old bitstream and checkpoint; retry reuses the new UUID
 without uploading again. The DSpace metadata registry and discovery
 index must contain `koha.uid`; this repository change does not configure the
 DSpace server.
+
+The bitstream UUID stored in state is only a cleanup candidate when its saved
+Item UUID matches the UID-resolved target and the bitstream appears in that
+Item's ORIGINAL bundle. A stale or absent bitstream identity is ignored; the
+new PDF can still upload, while unverified bitstreams are never deleted.
 User-provided runtime log on 2026-10-01 confirms the field contains MARC `001`,
 the PDF uploaded to the Item, and the task completed successfully. This is
 positive first-cycle evidence. The user also confirmed that a repeated search

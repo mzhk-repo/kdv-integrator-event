@@ -9,6 +9,13 @@
 - **Verification:** `python3 -m py_compile src/core.py src/dspace.py src/clients/dspace.py scripts/nightwalker.py` and `git diff --check` passed. Source search confirms the shared workflow has no biblionumber lookup; the standalone Nightwalker legacy call remains. Tests and runtime acceptance were not run.
 - **Risks:** Existing DSpace Items without indexed `koha.uid` will no longer be reused automatically; they require `koha.uid` metadata before integration can resolve them.
 
+## 2026-10-02 — Continue replacement with stale saved bitstream UUID
+
+- **Context:** A changed Drive PDF reached the UID-resolved Item, but its state DB bitstream UUID belonged to a missing or different Item, so replacement stopped before upload.
+- **Change:** Treat the stored bitstream UUID as a cleanup candidate only when its saved Item UUID matches the target and the UUID appears in the target ORIGINAL bundle. Otherwise log and ignore it, continue verified upload/write-back, and leave the unverified old bitstream untouched. Updated Phase 7 and runbook guidance.
+- **Verification:** `python3 -m py_compile src/core.py src/dspace.py` and `git diff --check` passed. Tests and runtime acceptance were not run.
+- **Risks:** A stale bitstream may remain orphaned in DSpace and needs separate identification; no unverified bitstream is deleted.
+
 ## 2026-10-01 — Recreate missing DSpace Items from unchanged Drive sources
 
 - **Context:** An unchanged Drive PDF could NO-OP while link repair attempted to read a deleted DSpace Item UUID from state and failed with HTTP 404 before UID-based reconciliation.

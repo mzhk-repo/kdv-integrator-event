@@ -326,6 +326,11 @@ the duplicate Items before retrying. Verify this path after
 redeployment with an approved test record whose DSpace Item was deliberately
 removed.
 
+During PDF replacement, an old state DB bitstream UUID that does not belong to
+the UID-resolved Item is logged and ignored. The workflow uploads and confirms
+the new PDF, and leaves that unverified old bitstream untouched for separate
+investigation.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use

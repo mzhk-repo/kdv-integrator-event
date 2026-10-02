@@ -315,12 +315,12 @@ def test_run_dspace_replacement_recovers_old_named_bitstream_without_primary(tmp
         'previous_dspace_bitstream_uuid': stored_uuid,
     }
     if stored_uuid == 'missing-bitstream':
-        with pytest.raises(RuntimeError, match='Stored DSpace bitstream'):
-            run_dspace_workflow(
-                5, str(pdf), meta, koha_client=StubKoha(), dspace_client=dspace,
-                skip_optimization=True, replace_existing=True,
-            )
-        assert dspace.uploaded == []
+        result = run_dspace_workflow(
+            5, str(pdf), meta, koha_client=StubKoha(), dspace_client=dspace,
+            skip_optimization=True, replace_existing=True,
+        )
+        assert result['old_bitstream_uuids'] == []
+        assert dspace.uploaded == [('existing-item', str(pdf), 'replacement.pdf')]
         return
 
     result = run_dspace_workflow(

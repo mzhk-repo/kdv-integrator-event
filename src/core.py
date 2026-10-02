@@ -587,7 +587,12 @@ def run_dspace_workflow(
                 meta.get('previous_dspace_item_uuid') != item_uuid
                 or previous_uuid not in {bitstream.get('uuid') for bitstream in old_bitstreams}
             ):
-                raise RuntimeError('Stored DSpace bitstream is not in the target Item ORIGINAL bundle')
+                logger.warning(
+                    'Ignoring stale DSpace bitstream identity: saved_item_uuid=%s '
+                    'target_item_uuid=%s saved_bitstream_uuid=%s',
+                    meta.get('previous_dspace_item_uuid'), item_uuid, previous_uuid,
+                )
+                previous_uuid = None
             replacement_old_bitstream_uuids = list(dict.fromkeys(
                 [
                     bitstream.get("uuid") for bitstream in old_bitstreams
