@@ -73,6 +73,11 @@ def _primary_download_url(bitstream_data) -> str | None:
     return f"{DSPACE_UI_URL}/bitstreams/{bitstream_uuid}/download"
 
 
+def _ensure_koha_record_uid(koha, biblionumber):
+    ensure_uid = getattr(koha, "ensure_record_uid", None)
+    return ensure_uid(biblionumber) if ensure_uid else None
+
+
 def _is_permanent_integration_error(error: Exception) -> bool:
     if isinstance(error, (InvalidPDFCoverError, ValueError)):
         return True
@@ -705,6 +710,7 @@ def process_integration_logic(
         fcntl.flock(lock, fcntl.LOCK_EX)
         koha = koha_client or KohaClient()
         options['koha_client'] = koha
+        _ensure_koha_record_uid(koha, biblionumber)
         meta = koha.get_biblio_metadata(biblionumber)
         if force_file_refresh and (not meta or not meta.get('file_path')):
             raise ValueError('UI bitstream replacement requires a 956$u Drive PDF source')
@@ -982,7 +988,9 @@ def _run_integration_logic(
 
     try:
         # --- 1. SERIAL PHASE: Checks & Rename ---
-        meta = meta if meta is not None else koha.get_biblio_metadata(biblionumber)
+        if meta is None:
+            _ensure_koha_record_uid(koha, biblionumber)
+            meta = koha.get_biblio_metadata(biblionumber)
         if not meta:
             raise Exception("No 956 field found")
 

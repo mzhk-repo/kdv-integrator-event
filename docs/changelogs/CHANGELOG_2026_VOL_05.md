@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Generate missing Koha MARC 001 UUIDv7 at workflow start
+
+- **Context:** The shared integration workflow requires a UUIDv7 in MARC `001` for durable state and DSpace identity, but older Koha records may have no value.
+- **Change:** Added UUIDv7 generation for missing/blank `001`, persisted it through Koha MARCXML PUT, and required exact read-back before continuing. Existing non-empty values are preserved; duplicate `001` fields fail closed. Updated architecture, source context and Phase 7 plan.
+- **Verification:** Python compilation and `git diff --check` passed. Automated tests and Koha runtime acceptance were not run.
+- **Risks:** Runtime Koha REST must permit MARCXML updates to control field `001`; failures stop the workflow before DSpace. Bulk import matchpoint configuration remains an external prerequisite.
+- **Rollback:** Revert UUID generation/write-back and documentation changes. Existing generated `001` values remain stable and must not be removed as part of rollback.
+
 ## 2026-10-02 — Run Intranet Robot Batch through forced DSpace refresh
 
 - **Context:** Intranet Robot Batch used `POST /integrate`, which can NO-OP for an unchanged Drive PDF without checking whether its saved DSpace Item was deleted.

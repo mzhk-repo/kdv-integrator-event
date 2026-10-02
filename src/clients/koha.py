@@ -22,6 +22,9 @@ class KohaClientWrapper:
     def get_biblio_metadata(self, biblio_id):
         return self._client.get_biblio_metadata(biblio_id)
 
+    def ensure_record_uid(self, biblio_id):
+        return self._client.ensure_record_uid(biblio_id)
+
     def _get_biblio_xml(self, biblio_id):
         return self._client._get_biblio_xml(biblio_id)
 

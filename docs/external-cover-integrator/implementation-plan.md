@@ -624,6 +624,9 @@ Runtime smoke 2026-10-01 підтвердив створення Item, запи�
 логом. Користувач також підтвердив успішний повторний пошук того самого Item і
 незмінність Handle.
 
+На початку workflow відсутній або порожній Koha `001` заповнюється UUIDv7 через
+MARCXML PUT із read-back перевіркою. Наявний непорожній `001` не змінюється.
+
 Intranet Robot Batch запускає кожен запис через існуючий `PUT /integrate`
 workflow з `force_file_refresh=True`, щоб перевірити DSpace навіть за незмінного
 Drive PDF та відтворити відсутній Item після UID search. Acceptance після

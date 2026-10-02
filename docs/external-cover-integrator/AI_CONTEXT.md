@@ -14,6 +14,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 ## Key Decisions
 
 - Canonical record ID: MARC `001 = UUIDv7`; Koha `biblionumber` is local only.
+- At workflow start, if MARC `001` is absent or blank, generate a UUIDv7, write it through Koha MARCXML PUT, and require exact read-back before continuing. Preserve any existing non-empty `001` unchanged.
 - MARC integration fields:
   - `956$p` cover source; `956$u` PDF source;
   - `957$c` final WebP SHA-256;

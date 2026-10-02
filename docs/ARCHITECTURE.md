@@ -303,6 +303,9 @@ Drive-backed records carry canonical MARC `001` UUIDv7 to DSpace as
 reuses the same Item and Handle. When state or Koha metadata supplies an Item
 UUID, the workflow reads that Item directly and verifies its `koha.uid` against
 MARC `001`. A matching live Item is reused independently of discovery indexing.
+At workflow start, an absent or blank MARC `001` is populated with a generated
+UUIDv7 through Koha MARCXML PUT and must pass exact read-back before processing;
+an existing non-empty control number is preserved.
 Only HTTP 404 permits a saved UUID to fall through to UID discovery; other errors
 or mismatched identity stop processing. Discovery must return an explicit zero
 count before creation; malformed responses, ambiguous results and UID mismatches

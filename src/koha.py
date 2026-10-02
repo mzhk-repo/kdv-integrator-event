@@ -3,7 +3,9 @@ import logging
 import pymarc
 import os
 import re
+import secrets
 import time
+import uuid
 from io import BytesIO
 from urllib.parse import urljoin
 from pymarc import parse_xml_to_array, Field, Subfield
@@ -13,6 +15,19 @@ from requests.auth import HTTPBasicAuth
 from .config import KOHA_API_URL, KOHA_OPAC_URL, KOHA_USER, KOHA_PASS, TIMEOUT
 
 logger = logging.getLogger("KohaClient")
+
+
+def generate_uuid7() -> str:
+    timestamp_ms = time.time_ns() // 1_000_000
+    random_bits = secrets.randbits(74)
+    value = (
+        (timestamp_ms << 80)
+        | (7 << 76)
+        | ((random_bits >> 62) << 64)
+        | (0b10 << 62)
+        | (random_bits & ((1 << 62) - 1))
+    )
+    return str(uuid.UUID(int=value))
 
 
 class KohaRestError(RuntimeError):
@@ -116,6 +131,46 @@ class KohaClient:
             "dspace_links": [link for field in record.get_fields("856")
                              for link in field.get_subfields("u")],
         }
+
+    def ensure_record_uid(self, biblio_id: int) -> str:
+        """Create a UUIDv7 MARC 001 only when the record has no value."""
+        xml_data = self._get_biblio_xml(biblio_id)
+        record = self._parse_marc(xml_data) if xml_data else None
+        if not record:
+            raise KohaRestError(f"Cannot read MARC record #{biblio_id} to ensure 001")
+
+        fields = record.get_fields("001")
+        if len(fields) > 1:
+            raise KohaRestError(f"MARC record #{biblio_id} has multiple 001 fields")
+        if fields and (fields[0].data or "").strip():
+            return fields[0].data.strip()
+
+        record_uid = generate_uuid7()
+        if fields:
+            fields[0].data = record_uid
+        else:
+            record.add_ordered_field(Field(tag="001", data=record_uid))
+        payload = pymarc.record_to_xml(record).decode("utf-8")
+        try:
+            response = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=payload.encode("utf-8"),
+                headers={"Content-Type": "application/marcxml+xml"},
+                timeout=TIMEOUT,
+            )
+        except Exception as error:
+            raise KohaRestError(f"Failed to write MARC 001 for #{biblio_id}") from error
+        if response.status_code != 200:
+            raise KohaRestError(
+                f"Failed to write MARC 001 for #{biblio_id}: HTTP {response.status_code}"
+            )
+
+        readback_xml = self._get_biblio_xml(biblio_id)
+        readback = self._parse_marc(readback_xml) if readback_xml else None
+        readback_fields = readback.get_fields("001") if readback else []
+        if len(readback_fields) != 1 or (readback_fields[0].data or "").strip() != record_uid:
+            raise KohaRestError(f"MARC 001 write was not confirmed for #{biblio_id}")
+        return record_uid
 
     def get_biblio_timestamp(self, biblio_id: int):
         url = f"{self.base_url}/api/v1/biblios/{biblio_id}"
