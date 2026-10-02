@@ -331,6 +331,17 @@ the UID-resolved Item is logged and ignored. The workflow uploads and confirms
 the new PDF, and leaves that unverified old bitstream untouched for separate
 investigation.
 
+Before accepting repeated PDF refreshes, verify the Item UUID and Handle remain
+stable even when discovery search returns zero results. The workflow directly
+GETs the saved state/Koha Item UUID and requires exact `koha.uid` matching MARC
+`001`. Only a saved-Item HTTP 404 permits UID discovery and eventual creation;
+401/403/5xx, transport errors and UID mismatch must not create another Item.
+Discovery responses require a valid count and result structure: unknown JSON
+is an error, not evidence of absence. The [DSpace REST discovery contract](https://github.com/DSpace/RestContract/blob/main/search-endpoint.md)
+documents the standard `searchResults` envelope. The client also recognizes
+`searchResult` with the same validated structure. Existing accidental duplicates
+are left untouched; inspect them separately before any cleanup.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use

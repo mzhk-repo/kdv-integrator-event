@@ -112,11 +112,19 @@ class DSpaceClient:
         if resp is None or resp.status_code != 200:
             self._raise_rest_error("DSpace find item by record UID", "/discover/search/objects", resp)
         try:
-            search_results = resp.json().get("_embedded", {}).get("searchResults", {})
-            page = search_results.get("page", {})
-            if page.get("totalElements", 0) > 1:
-                raise DSpaceRestError("Multiple DSpace items match record UID")
+            embedded = resp.json()["_embedded"]
+            search_results = embedded.get("searchResults", embedded.get("searchResult"))
+            page = search_results["page"]
+            total = page["totalElements"]
+            if type(total) is not int or total < 0:
+                raise DSpaceRestError("Invalid DSpace record UID search count")
             hits = search_results.get("_embedded", {}).get("objects", [])
+            if not isinstance(hits, list):
+                raise DSpaceRestError("Invalid DSpace record UID search objects")
+            if total > 1 or len(hits) > 1:
+                raise DSpaceRestError("Multiple DSpace items match record UID")
+            if total != len(hits):
+                raise DSpaceRestError("Inconsistent DSpace record UID search count")
             if not hits:
                 return None
             item = hits[0].get("_embedded", {}).get("indexableObject", {})
@@ -130,7 +138,7 @@ class DSpaceClient:
                 )
             values = item_resp.json().get("metadata", {}).get("koha.uid", [])
             if not any(value.get("value") == record_uid for value in values):
-                return None
+                raise DSpaceRestError("DSpace search Item does not match record UID")
             return {"uuid": item_uuid, "handle": item.get("handle")}
         except DSpaceRestError:
             raise

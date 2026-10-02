@@ -289,7 +289,13 @@ is Task 7.2. The runtime environment was not identified.
 
 Drive-backed records carry canonical MARC `001` UUIDv7 to DSpace as
 `koha.uid`. The shared workflow resolves Items only by that UID, so a retry
-reuses the same Item and Handle. If an earlier attempt created the Item but
+reuses the same Item and Handle. When state or Koha metadata supplies an Item
+UUID, the workflow reads that Item directly and verifies its `koha.uid` against
+MARC `001`. A matching live Item is reused independently of discovery indexing.
+Only HTTP 404 permits a saved UUID to fall through to UID discovery; other errors
+or mismatched identity stop processing. Discovery must return an explicit zero
+count before creation; malformed responses, ambiguous results and UID mismatches
+fail closed. If an earlier attempt created the Item but
 failed before its first ORIGINAL bitstream, a retry uploads the missing PDF to
 that same Item. For a changed
 Drive PDF, the workflow uploads and checksum/size verifies a new bitstream,

@@ -50,7 +50,8 @@ def test_dspace_pid_find_contract_uses_expected_endpoint_and_params(monkeypatch)
     assert captured["kwargs"]["params"] == {"id": "123/456"}
 
 
-def test_dspace_find_item_by_record_uid_uses_exact_metadata_match(monkeypatch):
+@pytest.mark.parametrize('search_key', ['searchResults', 'searchResult'])
+def test_dspace_find_item_by_record_uid_uses_exact_metadata_match(monkeypatch, search_key):
     client = DSpaceClient()
     captured = {}
     uid = "018f0f00-0000-7000-8000-000000000001"
@@ -58,7 +59,7 @@ def test_dspace_find_item_by_record_uid_uses_exact_metadata_match(monkeypatch):
     def fake_request(method, endpoint, **kwargs):
         captured.setdefault("calls", []).append((method, endpoint, kwargs))
         if endpoint == "/discover/search/objects":
-            return _Resp(payload={"_embedded": {"searchResults": {
+            return _Resp(payload={"_embedded": {search_key: {
                 "page": {"totalElements": 1},
                 "_embedded": {"objects": [{"_embedded": {"indexableObject": {
                     "uuid": "item-uuid", "handle": "123/456",
@@ -74,6 +75,42 @@ def test_dspace_find_item_by_record_uid_uses_exact_metadata_match(monkeypatch):
         "query": f"koha.uid:{uid}", "dsoType": "item", "size": 2
     }
     assert captured["calls"][1][0:2] == ("GET", "/core/items/item-uuid")
+
+
+@pytest.mark.parametrize('payload', [
+    {}, {'_embedded': {}},
+    {'_embedded': {'searchResults': {'page': {}}}},
+    {'_embedded': {'searchResults': {'page': {'totalElements': 1}}}},
+    {'_embedded': {'searchResults': {'page': {'totalElements': 2}}}},
+])
+def test_dspace_uid_search_never_treats_invalid_or_ambiguous_response_as_absent(monkeypatch, payload):
+    client = DSpaceClient()
+    monkeypatch.setattr(client, '_request', lambda *args, **kwargs: _Resp(payload=payload))
+    with pytest.raises(DSpaceRestError):
+        client.find_item_by_record_uid('018f0f00-0000-7000-8000-000000000001')
+
+
+def test_dspace_uid_search_accepts_only_explicit_zero_matches(monkeypatch):
+    client = DSpaceClient()
+    monkeypatch.setattr(client, '_request', lambda *args, **kwargs: _Resp(payload={
+        '_embedded': {'searchResults': {'page': {'totalElements': 0}}},
+    }))
+    assert client.find_item_by_record_uid('018f0f00-0000-7000-8000-000000000001') is None
+
+
+def test_dspace_uid_search_rejects_mismatched_metadata(monkeypatch):
+    client = DSpaceClient()
+    def request(method, endpoint, **kwargs):
+        if endpoint == '/discover/search/objects':
+            return _Resp(payload={'_embedded': {'searchResults': {
+                'page': {'totalElements': 1}, '_embedded': {'objects': [
+                    {'_embedded': {'indexableObject': {'uuid': 'item'}}},
+                ]},
+            }}})
+        return _Resp(payload={'metadata': {'koha.uid': [{'value': 'another-record'}]}})
+    monkeypatch.setattr(client, '_request', request)
+    with pytest.raises(DSpaceRestError, match='does not match'):
+        client.find_item_by_record_uid('018f0f00-0000-7000-8000-000000000001')
 
 
 def test_dspace_update_metadata_contract_builds_json_patch(monkeypatch):

@@ -2,6 +2,13 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Reuse verified saved DSpace Items before discovery
+
+- **Context:** Repeated refreshes created new Items because a zero discovery result bypassed the live Item UUID already saved in state. The previous stale-bitstream fix allowed upload but did not resolve this identity problem.
+- **Change:** Directly GET the saved state/Koha Item UUID and require its `koha.uid` to match MARC `001`. Reuse it even with an empty discovery index. Only HTTP 404 allows UID discovery; auth/transport/server errors and identity mismatches stop the workflow. Validate discovery count/envelope, accepting `searchResults` or `searchResult`; malformed or ambiguous responses cannot authorize creation. Biblionumber fallback remains disabled in the shared workflow. Updated Phase 7, architecture/context and runbook.
+- **Verification:** Targeted core, DSpace/Koha contract and API/Drive gate tests: 103 passed. Python compilation and `git diff --check` passed. A lifecycle regression verifies one creation across repeated refreshes with an empty index and recreation only after saved-Item 404. 401/403/500, timeout and UID mismatch produce no creation/upload. Parser checks cover envelope variants, explicit zero results, malformed/ambiguous counts and mismatched Item metadata. Tests use temporary files and stub services; runtime acceptance remains pending.
+- **Risks:** The reason for empty discovery results on the deployed server is unverified; index configuration/lag still needs separate diagnosis. Existing duplicates are not deleted. A crash before durable DSpace checkpointing remains a recovery boundary.
+
 ## 2026-10-02 — Resolve DSpace Items only by Koha UID
 
 - **Context:** A stale Item could cause the legacy `koha.biblionumber` search to select an unrelated DSpace Item.

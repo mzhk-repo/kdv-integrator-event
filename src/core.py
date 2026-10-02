@@ -520,8 +520,24 @@ def run_dspace_workflow(
     if not collection_uuid:
         raise Exception("Collection UUID missing")
 
-    find_by_uid = getattr(local_dspace, "find_item_by_record_uid", None)
-    existing_item = find_by_uid(record_uid) if record_uid and find_by_uid else None
+    existing_item = None
+    saved_item_uuid = meta.get('previous_dspace_item_uuid') or meta.get('dspace_uuid')
+    if record_uid and saved_item_uuid:
+        try:
+            saved_item = local_dspace.get_item(saved_item_uuid)
+        except DSpaceRestError as error:
+            if error.status_code != 404:
+                raise
+            logger.info('Saved DSpace Item is absent: item_uuid=%s', saved_item_uuid)
+        else:
+            if (saved_item.get('uuid') != saved_item_uuid or not any(
+                value.get('value') == record_uid
+                for value in saved_item.get('metadata', {}).get('koha.uid', [])
+            )):
+                raise DSpaceRestError('Saved DSpace Item does not match MARC 001 / koha.uid')
+            existing_item = saved_item
+    if existing_item is None and record_uid:
+        existing_item = local_dspace.find_item_by_record_uid(record_uid)
     replacement_old_bitstream_uuids = []
     primary_bitstream = None
     if existing_item:
