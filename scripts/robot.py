@@ -201,11 +201,12 @@ def parse_candidates(filename):
 
 
 def process_single_biblio(
-    biblionumber, skip_optimization=False, max_wait=MAX_WAIT, dpi=None
+    biblionumber, skip_optimization=False, max_wait=MAX_WAIT, dpi=None,
+    force_file_refresh=False,
 ):
     """
     Виконує повний цикл архівації для однієї книги:
-    POST (Start) -> Polling (Wait) -> Result
+    POST/PUT (Start) -> Polling (Wait) -> Result
     """
     logger.info(f"▶️ Processing Biblio #{biblionumber}...")
 
@@ -215,10 +216,10 @@ def process_single_biblio(
         if dpi is not None:
             payload["dpi"] = dpi
         headers = build_headers()
-        resp = requests.post(
+        request = requests.put if force_file_refresh else requests.post
+        resp = request(
             f"{API_BASE}/integrate/{biblionumber}",
-            headers=headers,
-            json=payload,
+            headers=headers, json=payload,
         )
 
         # Обробка статусів HTTP
@@ -309,6 +310,7 @@ def run_batch_ids(
     parallelism=None,
     max_wait=None,
     dpi=None,
+    force_file_refresh=False,
 ):
     parallelism = _normalize_positive_int(
         ROBOT_PARALLELISM if parallelism is None else parallelism,
@@ -353,6 +355,8 @@ def run_batch_ids(
             options = {"skip_optimization": skip_optimization, "max_wait": max_wait}
             if dpi is not None:
                 options["dpi"] = dpi
+            if force_file_refresh:
+                options["force_file_refresh"] = True
             result = process_single_biblio(bib_id, **options)
 
             key = result if result in stats else "FAILED"
@@ -368,6 +372,8 @@ def run_batch_ids(
                 options = {"skip_optimization": skip_optimization, "max_wait": max_wait}
                 if dpi is not None:
                     options["dpi"] = dpi
+                if force_file_refresh:
+                    options["force_file_refresh"] = True
                 fut = executor.submit(process_single_biblio, bib_id, **options)
                 futures[fut] = bib_id
                 if i < len(ids) - 1:
@@ -415,6 +421,7 @@ def run_batch_from_text(
     parallelism=None,
     max_wait=None,
     dpi=None,
+    force_file_refresh=False,
 ):
     ids = parse_candidates_text(candidates_text)
     stats = run_batch_ids(
@@ -423,6 +430,7 @@ def run_batch_from_text(
         parallelism=parallelism,
         max_wait=max_wait,
         dpi=dpi,
+        force_file_refresh=force_file_refresh,
     )
     failures = [
         f"{status}={stats[status]}"

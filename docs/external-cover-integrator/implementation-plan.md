@@ -624,6 +624,11 @@ Runtime smoke 2026-10-01 підтвердив створення Item, запи�
 логом. Користувач також підтвердив успішний повторний пошук того самого Item і
 незмінність Handle.
 
+Intranet Robot Batch запускає кожен запис через існуючий `PUT /integrate`
+workflow з `force_file_refresh=True`, щоб перевірити DSpace навіть за незмінного
+Drive PDF та відтворити відсутній Item після UID search. Acceptance після
+redeploy має включати batch запис із видаленим DSpace Item.
+
 **Acceptance criteria:**
 - Новий item у DSpace створюється з коректними метаданими, пов'язаними з `record_uid` (UUIDv7).
 - Handle стабільний і не змінюється при повторних запусках без реальної зміни джерела.

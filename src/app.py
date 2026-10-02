@@ -416,6 +416,8 @@ def robot_batch_async():
     payload, error_response = _parse_robot_batch_payload()
     if error_response:
         return error_response
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "error", "message": "Bitstream refresh requires COVER_STATE_DB_PATH"}), 503
 
     task_id = task_manager.start_task(
         robot.run_batch_from_text,
@@ -424,6 +426,7 @@ def robot_batch_async():
         dpi=payload["dpi"],
         parallelism=payload["parallelism"],
         max_wait=payload["max_wait"],
+        force_file_refresh=True,
     )
     return (
         jsonify(
@@ -483,6 +486,7 @@ def update_record(biblionumber):
             503,
         )
     try:
+        payload = _parse_integrate_payload()
         koha, dspace = _make_clients()
         task_id = task_manager.start_task(
             process_integration_logic,
@@ -490,6 +494,8 @@ def update_record(biblionumber):
             koha_client=koha,
             dspace_client=dspace,
             force_file_refresh=True,
+            skip_optimization=payload["skip_optimization"],
+            dpi=payload["dpi"],
         )
         return jsonify({"status": "accepted", "task_id": task_id}), 202
 

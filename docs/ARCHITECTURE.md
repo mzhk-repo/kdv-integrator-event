@@ -390,6 +390,7 @@ def _make_clients():
 ```
 
 - Викликається у кожному HTTP обробнику (`POST /integrate`, `PUT /integrate`). `PUT` запускає примусове оновлення Drive PDF bitstream разом із метаданими та працює через task polling.
+- UI Robot Batch запускає ті самі PUT tasks для кожного запису через batch runner; так незмінний Drive source усе одно перевіряється в DSpace, а відсутній Item може бути відновлений через UID workflow.
 - У тестах можна monkeypatch для підміни моків.
 
 ### 5. TaskManager з DI (M2 — kwargs support)

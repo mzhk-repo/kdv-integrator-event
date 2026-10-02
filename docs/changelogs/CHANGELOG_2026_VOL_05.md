@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Run Intranet Robot Batch through forced DSpace refresh
+
+- **Context:** Intranet Robot Batch used `POST /integrate`, which can NO-OP for an unchanged Drive PDF without checking whether its saved DSpace Item was deleted.
+- **Change:** UI batch candidates now use the existing `PUT /integrate` workflow with forced file refresh, preserving per-record task polling and optimization/DPI options. The API rejects the batch early when durable cover state is unavailable; PUT now accepts the batch processing options.
+- **Verification:** Python compilation, JavaScript syntax check and `git diff --check` passed. Automated tests and deployed runtime acceptance were not run.
+- **Risks:** Forced refresh checks Drive metadata for every batch record and requires `COVER_STATE_DB_PATH`. The standalone CLI batch remains on its existing POST workflow.
+- **Rollback:** Revert the UI batch force-refresh flag and related API/Robot/documentation changes.
+
 ## 2026-10-02 — Cut off deterministic integration failures immediately
 
 - **Context:** Permanent integration errors, including duplicate DSpace UID matches, were recorded as ordinary failures and retried until `MAX_RETRY_COUNT`.
