@@ -692,12 +692,15 @@ curl -s "${KOHA_OPAC_URL}/cgi-bin/koha/opac-search.pl?q=control-number:<uuid>" \
 
 ## Фаза 8 — Shared covers, ручний override, rollback
 
-**Мета:** підтвердити dedup-поведінку та впровадити задокументований "костиль" ручної заміни shared cover разом з rollback-процедурою.
+**Мета:** підтвердити dedup-поведінку та надати вузький інструмент для адресного оновлення одного CDN asset.
 
 **Deliverables:**
 - Підтверджена dedup-поведінка (розділ 27).
-- Робочий і протестований runbook аварійного override (backup → заміна → purge → лог) — розділ 28.
-- Протестована rollback-процедура (розділ 29).
+- Скрипт заміни одного SHA-іменованого CDN asset із backup, atomic replace та точковим Cloudflare purge.
+
+За рішенням користувача 2026-10-02, попередні задачі 8.2 (повний runbook shared
+override) і 8.3 (окрема rollback-процедура) пропущені; замість них зроблено
+описаний нижче вузький asset update script. Він не оновлює Koha/state DB.
 
 ### Задача 8.1 — Dedup shared covers
 
@@ -724,37 +727,14 @@ sqlite3 state.db "SELECT cover_asset_sha256, COUNT(*) FROM records GROUP BY cove
 ls /data/koha-covers/assets/<shared_sha>.webp
 ```
 
-### Задача 8.2 — Runbook ручного override shared cover
+### Задачі 8.2 і 8.3 — Пропущено
 
-**Опис:** Реалізувати та задокументувати покрокову процедуру: backup старого файла → заміна вмісту за тим самим іменем → обов'язковий cache purge конкретного URL → журналювання (`asset_sha, overridden_at, operator, reason`) (розділ 28).
-
-**Acceptance criteria:**
-- Скрипт/процедура відмовляється виконувати заміну без попереднього backup.
-- Після заміни: CDN обов'язково повертає новий вміст (а не закешовану стару версію).
-- Подія override записана окремо від автоматичного pipeline-логу.
-
-**Validation:**
-```bash
-./scripts/manual_cover_override.sh <sha> new_cover.webp --operator "ivan" --reason "wrong scan uploaded"
-ls /data/koha-covers/assets/<sha>.webp.bak.*        # backup створено
-curl -s "${COVERS_CDN_BASE_URL}/<sha>.webp" | sha256sum                # має збігатись з новим файлом
-grep "<sha>" overrides.log | tail -1                                          # запис у лозі override
-```
-
-### Задача 8.3 — Rollback
-
-**Опис:** Rollback запису до попереднього asset SHA через журнал (`record_uid, old_asset_sha, new_asset_sha, changed_at, run_id`) (розділ 29).
-
-**Acceptance criteria:**
-- Rollback повертає `957$c` до попереднього значення.
-- Старий asset фізично доступний у сховищі (не видалений GC на момент rollback-тесту).
-
-**Validation:**
-```bash
-python -m integrator.rollback --record test-uid-1 --to-run <run_id>
-sqlite3 state.db "SELECT cover_asset_sha256 FROM records WHERE record_uid='test-uid-1';"
-curl -sI "${COVERS_CDN_BASE_URL}/$(sqlite3 state.db "SELECT cover_asset_sha256 FROM records WHERE record_uid='test-uid-1';").webp" | head -1
-```
+Замість повної процедури shared override та окремого state rollback користувач
+обрав `scripts/update_cover_asset.py` для ручної заміни одного asset за його
+ім'ям. Скрипт зберігає backup і відновлює його, якщо Cloudflare purge не
+підтвердився або CDN read-back не повернув нові байти; окремий rollback `957$c`
+та аудит operator/reason поза scope.
+Див. [runbook](runbook.md#replace-one-named-cdn-asset).
 
 ---
 

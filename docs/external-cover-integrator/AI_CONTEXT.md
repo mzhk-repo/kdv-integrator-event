@@ -29,7 +29,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - Empty source fields never mean delete; deletion is an explicit admin operation.
 - Covers are content-addressed: `SHA256(final_webp)` is the asset ID/filename. Identical covers deduplicate automatically.
 - Normal assets are immutable and atomically published from `.incoming` using same-filesystem `os.replace()`.
-- Emergency overwrite of a shared asset is a documented exception requiring backup, targeted CDN purge, and audit log.
+- Emergency overwrite of one shared asset is an explicit operator exception via `scripts/update_cover_asset.py`; it backs up the old bytes, atomically replaces one SHA-named file, and purges its Cloudflare URL. It does not update Koha/state or write an operator/reason audit log. Browser caches may retain old bytes.
 - DSpace replacement: list ORIGINAL bitstreams -> upload and verify -> set/read back primary (POST if absent, PUT if present) -> checkpoint -> update/read back both Koha links -> delete matching old filename bitstreams and verify GET returns 404 -> finalize state. A 2026-10-01 smoke showed the existing Item had no primary bitstream while its previous file remained in DSpace; cleanup now discovers same-name files even without a primary. Runtime acceptance is pending.
 - UID -> Koha resolver uses existing Elasticsearch `control-number` search; no separate resolver service.
 - Drive PDF replacement runs on `resume` as well as `resource_changed`. An unchanged canonical cover reuses its asset through the same checkpoint/read-back/cleanup cycle; it must not route file work through legacy finalization. User logs exposed both bypasses on 2026-10-01; local orchestration regressions cover the fixes and cleanup retry without re-upload.

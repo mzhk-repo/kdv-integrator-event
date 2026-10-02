@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Add targeted CDN asset replacement utility
+
+- **Context:** The user skipped Phase 8.2's full shared-override runbook and Phase 8.3 rollback procedure, and requested a script to update one named cover in storage.
+- **Change:** Added `scripts/update_cover_asset.py`. It validates an existing lowercase SHA-named target and replacement WebP, serializes with the publisher lock, stores a private backup, atomically replaces only that asset, purges the exact CDN URL through Cloudflare, and verifies public read-back bytes. If purge or read-back is not confirmed, it restores the previous bytes and attempts to purge again. Added concise operator usage and updated Phase 8/source context; no Koha/state DB values are changed.
+- **Verification:** Python compilation, CLI help and `git diff --check` passed. The script was not run against persistent storage or Cloudflare.
+- **Risks:** The replacement bytes intentionally no longer match the SHA in the filename. Cloudflare edge cache is purged; browser caches can retain old immutable responses until expiry. The utility does not provide operator/reason audit records or Koha/state rollback.
+- **Rollback:** Restore the retained backup under `.incoming/override-backups/` with an atomic replacement and purge the same URL, or revert this utility/documentation. No rollback was executed.
+
 ## 2026-10-02 — Verify shared cover deduplication and record isolation
 
 - **Context:** Phase 8.1 requires proof that records with identical normalized cover content share one immutable file and that changing one source leaves other records' asset references intact.

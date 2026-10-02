@@ -227,6 +227,37 @@ may cache it for a year unless that URL is purged. The environment was not
 identified as dev/prod. This confirms Task 4.2 runtime publishing and CDN delivery
 for the synthetic asset; Koha write-back and record workflow recovery belong to Task 4.3.
 
+### Replace one named CDN asset
+
+`scripts/update_cover_asset.py` performs an explicitly requested override of one
+existing `<sha256>.webp` on the storage node. Run it with the repository virtual
+environment and the host storage path. Set `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ZONE_ID` in the operator shell; never put the token in a command
+argument or repository file.
+
+```bash
+export CLOUDFLARE_API_TOKEN  # populate from the operator's secret source
+COVERS_CDN_BASE_URL="https://<cdn-host>" \
+CLOUDFLARE_ZONE_ID="<32-hex-zone-id>" \
+.venv/bin/python scripts/update_cover_asset.py \
+  "$ASSET_NAME" "$REPLACEMENT_WEBP" \
+  --storage-path /path/to/COVERS_STORAGE_HOST_PATH
+```
+
+Set `ASSET_NAME` to the existing lowercase `<sha256>.webp` filename and
+`REPLACEMENT_WEBP` to the prepared local WebP path before running.
+
+The script validates both WebP files and the selected asset name, takes the
+publisher lock, saves the old bytes under `.incoming/override-backups/`, then
+atomically replaces only the named asset and purges its exact public URL using
+Cloudflare's single-file purge API. If the purge fails, it restores the previous
+asset and exits with an error. It verifies the public URL returns the replacement
+bytes before reporting success; failed read-back also restores the previous
+asset and attempts to purge the URL again. The backup is retained for manual recovery.
+Because browsers may cache `immutable` responses independently, an already
+cached browser copy can remain until its cache expires even after the Cloudflare
+edge purge.
+
 ### Task 4.3 deployment and acceptance
 
 The API startup migration creates additive `pending_cover_work` in the existing
