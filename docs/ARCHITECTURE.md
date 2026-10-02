@@ -102,6 +102,9 @@ exceptions report `failed`. The Koha record page shows cutoff rows and offers an
 authenticated operator retry that resets the cutoff and queues the normal flow.
 Successful completion clears retry metadata while retaining durable resources.
 The state module is tested independently and through the API.
+Deterministic validation/identity failures and DSpace 4xx responses enter
+cutoff immediately, except 408, 425 and 429; network failures and DSpace 5xx
+responses retain automatic backoff.
 
 ### External cover fast dirty-check (Task 3.1)
 

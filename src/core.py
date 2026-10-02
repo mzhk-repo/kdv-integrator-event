@@ -73,6 +73,21 @@ def _primary_download_url(bitstream_data) -> str | None:
     return f"{DSPACE_UI_URL}/bitstreams/{bitstream_uuid}/download"
 
 
+def _is_permanent_integration_error(error: Exception) -> bool:
+    if isinstance(error, (InvalidPDFCoverError, ValueError)):
+        return True
+    if not isinstance(error, DSpaceRestError):
+        return False
+    if error.status_code is not None:
+        return 400 <= error.status_code < 500 and error.status_code not in {408, 425, 429}
+    return str(error).startswith((
+        "Multiple DSpace items match",
+        "Invalid DSpace",
+        "DSpace search Item does not match",
+        "Saved DSpace Item does not match",
+    ))
+
+
 def _repair_missing_dspace_handle_link(koha, dspace, biblionumber, meta, record_state):
     if not meta.get("file_path") or not record_state or record_state.get("status") != "ok":
         return False
@@ -832,7 +847,7 @@ def process_integration_logic(
             # Metadata failures already incremented/saturated their own retry state.
             if downstream_started:
                 state.record_result(uid, success=False, partial=True,
-                                    permanent=isinstance(error, InvalidPDFCoverError),
+                                    permanent=_is_permanent_integration_error(error),
                                     reason=("invalid_pdf_cover" if isinstance(error, InvalidPDFCoverError)
                                             else type(error).__name__))
             if isinstance(error, DriveMetadataError):

@@ -38,6 +38,7 @@ Goals: keep cover binaries outside Koha MariaDB, avoid reprocessing unchanged re
 - If unchanged-source DSpace link repair gets HTTP 404 for the saved Item UUID, treat that identity as stale: force Drive metadata/SHA refresh, resolve again by `koha.uid`, and recreate the Item/PDF if absent. The shared integration workflow resolves Items only by exact `koha.uid`; the standalone legacy Nightwalker remains unchanged. Only explicit 404 permits recovery; transport, auth and 5xx failures remain failures. Multiple UID matches fail closed. Runtime acceptance requires redeploy.
 - Protect Integrator-managed `957$c`, `957$3`, and `856` from ordinary MARC overlay with `MARCOverlayRules`.
 - Before discovery, reuse a saved state/Koha Item UUID only after GET verifies its `koha.uid` equals MARC `001`. Only a saved-Item HTTP 404 allows UID discovery; other errors or UID mismatch fail closed. Discovery must report an explicit zero count before creation; malformed/ambiguous responses cannot be treated as absent. This avoids duplicates when discovery indexing lags.
+- Deterministic integration failures (including duplicate/malformed DSpace UID search results, identity/validation errors, and DSpace 4xx except 408/425/429) enter retry cutoff immediately. Network errors, DSpace 5xx, and 408/425/429 retain automatic backoff.
 
 ## Architecture Snapshot
 

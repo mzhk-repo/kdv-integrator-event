@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Cut off deterministic integration failures immediately
+
+- **Context:** Permanent integration errors, including duplicate DSpace UID matches, were recorded as ordinary failures and retried until `MAX_RETRY_COUNT`.
+- **Change:** Deterministic validation/identity failures and DSpace 4xx responses now enter operator cutoff immediately. HTTP 408/425/429, network failures and DSpace 5xx retain automatic backoff. Updated retry guidance in architecture, AI context, plan and runbook.
+- **Verification:** Python compilation and `git diff --check` passed. Tests and runtime/deployment acceptance were not run.
+- **Risks:** A DSpace 4xx may require configuration/data correction followed by the authenticated operator retry. No live records or services were changed.
+- **Rollback:** Revert the error classification and documentation changes; existing cutoff records require the normal operator retry action after restoring the previous behavior.
+
 ## 2026-10-02 — Persist, report, and automatically retry deferred integrations
 
 - **Context:** Integration tasks treated every returned value as success, while retry backoff/cutoff existed only implicitly in state and due records had no automatic dispatcher.

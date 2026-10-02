@@ -305,6 +305,11 @@ the cause, use **Повторити після втручання** on that page
 action clears the retry cutoff, preserves resource/checkpoint data, and queues
 the normal integration workflow. Do not edit the SQLite retry fields directly.
 
+Deterministic validation/identity failures and DSpace 4xx responses enter
+cutoff immediately, except 408, 425 and 429. Network failures and DSpace 5xx
+responses use automatic backoff. After resolving the cause, use the same
+operator retry action.
+
 If `get_primary_bitstream()` returns no primary for an existing Item, inspect
 the `ORIGINAL` bundle list. Replacement uses the confirmed previous bitstream
 UUID from state even when its filename changes, and verifies its Item/bundle
