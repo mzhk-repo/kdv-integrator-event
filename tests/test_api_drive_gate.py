@@ -254,6 +254,58 @@ def test_changed_cover_skips_unchanged_pdf_and_dspace(workflow):
     assert state.get(UID)["status"] == "ok"
 
 
+def test_shared_cover_dedup_and_source_change_is_record_local(workflow):
+    state, koha, first_meta, drive, _, dspace = workflow
+    second_uid = "019d4312-1234-7abc-8123-0123456789ac"
+    second_meta = {"record_uid": second_uid, "file_path": None,
+                   "cover_path": "https://drive.google.com/file/d/cover-2/view",
+                   "collection_uuid": "collection"}
+    first_meta.update(file_path=None,
+                      cover_path="https://drive.google.com/file/d/cover-1/view")
+    metadata_by_biblio = {42: first_meta, 43: second_meta}
+    koha.get_biblio_metadata.side_effect = metadata_by_biblio.get
+    koha.set_cover_url.side_effect = lambda bib, sha: metadata_by_biblio[bib].update(
+        cover_asset_sha256=sha
+    ) or True
+
+    changed_cover = BytesIO()
+    Image.new("RGB", (900, 1200), "green").save(changed_cover, "PNG")
+    source_bytes = {
+        "cover-1": COVER_CONTENT,
+        "cover-2": COVER_CONTENT,
+        "cover-1-new": changed_cover.getvalue(),
+    }
+    drive.get_metadata.side_effect = lambda file_id, resource_key: {
+        "name": "cover.png", "mimeType": "image/png",
+        "sha256Checksum": hashlib.sha256(source_bytes[file_id]).hexdigest(),
+        "size": str(len(source_bytes[file_id])),
+    }
+    drive.download_to_file.side_effect = lambda **kw: Path(kw["destination_path"]).write_bytes(
+        source_bytes[kw["file_id"]]
+    )
+
+    assert run(workflow)["status"] == "cover_updated"
+    assert process_integration_logic(
+        "second", 43, koha_client=koha, state_machine=state, skip_optimization=True,
+    )["status"] == "cover_updated"
+    first_sha = state.get(UID)["cover_asset_sha256"]
+    assert state.get(second_uid)["cover_asset_sha256"] == first_sha
+    shared_asset = Path(os.environ["COVERS_STORAGE_PATH"]) / "assets" / f"{first_sha}.webp"
+    assert shared_asset.is_file()
+    assert len(list(shared_asset.parent.glob("*.webp"))) == 1
+
+    first_meta["cover_path"] = "https://drive.google.com/file/d/cover-1-new/view"
+    assert run(workflow)["status"] == "cover_updated"
+    changed_sha = state.get(UID)["cover_asset_sha256"]
+    assert changed_sha != first_sha
+    assert state.get(second_uid)["cover_asset_sha256"] == first_sha
+    assert second_meta["cover_asset_sha256"] == first_sha
+    assert shared_asset.is_file()
+    assert (shared_asset.parent / f"{changed_sha}.webp").is_file()
+    assert len(list(shared_asset.parent.glob("*.webp"))) == 2
+    dspace.assert_not_called()
+
+
 def test_local_cover_with_drive_pdf_keeps_legacy_writer(workflow):
     state, koha, meta, _, legacy_cover, _ = workflow
     meta['cover_path'] = 'covers/local.jpg'

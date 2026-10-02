@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-02 — Verify shared cover deduplication and record isolation
+
+- **Context:** Phase 8.1 requires proof that records with identical normalized cover content share one immutable file and that changing one source leaves other records' asset references intact.
+- **Change:** Added an integration regression covering two records that publish the same content, then change one record's source while retaining the other record's SHA reference and old shared asset. Recorded the existing concurrent publisher dedup result and verification boundary in the implementation plan.
+- **Verification:** `PYTHONPATH=. .venv/bin/pytest -q tests/test_api_drive_gate.py::test_shared_cover_dedup_and_source_change_is_record_local tests/test_cover_publish.py::test_dedup_concurrent_publications_preserve_asset` — 2 passed. Checks use temporary SQLite/storage; no live Koha, state DB or CDN was inspected.
+- **Risks:** Live storage references and assets still need validation in the selected environment. The old asset remains until a later GC policy safely confirms no references and retention has elapsed.
+- **Rollback:** Revert the regression test and documentation evidence; the production dedup behavior is unchanged.
+
 ## 2026-10-02 — Generate missing Koha MARC 001 UUIDv7 at workflow start
 
 - **Context:** The shared integration workflow requires a UUIDv7 in MARC `001` for durable state and DSpace identity, but older Koha records may have no value.
