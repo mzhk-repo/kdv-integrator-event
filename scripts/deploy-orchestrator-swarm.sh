@@ -164,6 +164,40 @@ run_deploy_adjacent_scripts() {
     bash "${SCRIPT_DIR}/init-volume.sh"
 }
 
+install_cover_gc_timer() {
+  local server_env covers_path state_path retention env_dir env_file unit_tmp
+  server_env="${SERVER_ENV:-${ENVIRONMENT_NAME:-$(read_env_value SERVER_ENV)}}"
+  case "${server_env,,}" in
+    dev|development) server_env=dev ;;
+    prod|production) server_env=prod ;;
+    *) log "ERROR: SERVER_ENV must identify dev or prod to install cover GC"; return 1 ;;
+  esac
+  covers_path="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
+  state_path="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
+  retention="$(read_env_value COVER_ASSET_RETENTION_DAYS)"
+  retention="${retention:-90}"
+  if [[ ! "${covers_path}" =~ ^/[A-Za-z0-9._/-]+$ || ! "${state_path}" =~ ^/[A-Za-z0-9._/-]+$ || ! "${retention}" =~ ^[0-9]+$ || "${retention}" -lt 1 ]]; then
+    log "ERROR: invalid GC storage paths or retention in deployment environment"
+    return 1
+  fi
+  env_dir=/etc/kdv-integrator
+  env_file="${env_dir}/cover-gc.env"
+  unit_tmp="$(mktemp)"
+  sed -e "s|@COVERS_STORAGE_HOST_PATH@|${covers_path}|g" \
+      -e "s|@COVER_STATE_HOST_PATH@|${state_path}|g" \
+      "${SCRIPT_DIR}/../deploy/systemd/kdv-cover-gc.service" > "${unit_tmp}"
+  install -d -m 0750 "${env_dir}"
+  install -m 0600 /dev/null "${env_file}"
+  printf 'SERVER_ENV=%s\nCOVER_STATE_DB_PATH=%s/state.db\nCOVERS_STORAGE_PATH=%s\nCOVER_ASSET_RETENTION_DAYS=%s\n' \
+    "${server_env}" "${state_path}" "${covers_path}" "${retention}" > "${env_file}"
+  install -m 0644 "${unit_tmp}" /etc/systemd/system/kdv-cover-gc.service
+  install -m 0644 "${SCRIPT_DIR}/../deploy/systemd/kdv-cover-gc.timer" /etc/systemd/system/kdv-cover-gc.timer
+  rm -f "${unit_tmp}"
+  systemctl daemon-reload
+  systemctl enable --now kdv-cover-gc.timer
+  log "Cover GC systemd timer installed and enabled (${server_env}, retention=${retention}d)"
+}
+
 configure_covers_cdn() {
   local base_url
   base_url="${COVERS_CDN_BASE_URL:-$(read_env_value COVERS_CDN_BASE_URL)}"
@@ -470,6 +504,7 @@ deploy_swarm() {
   verify_swarm_service "${SWARM_SERVICE_NAME}"
   verify_swarm_service "${STACK_NAME}_kdv-optimizer"
   verify_swarm_service "${STACK_NAME}_covers-cdn"
+  install_cover_gc_timer
 
   log "Swarm deploy completed"
 }

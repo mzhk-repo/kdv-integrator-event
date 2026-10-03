@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-03 — Add scheduled garbage collection for cover assets
+
+- **Context:** Phase 9.1 requires deleting old assets only after confirming that no cover-state record references them.
+- **Change:** Added `src.cover_state.gc` with dry-run as the default, explicit `--apply`, one-day minimum and configurable retention (default 90 days). It checks `records.cover_asset_sha256`, ignores non-SHA names/symlinks/non-files, and shares the publisher lock. Added a daily systemd service/timer payload and storage-node runbook; units are not installed or enabled automatically.
+- **Verification:** Python compilation and `git diff --check` passed. Automated tests, persistent storage and timer installation were not run.
+- **Risks:** GC must run on the node with the authoritative shared state DB and asset storage. Retention is measured from filesystem modification time; shared override assets remain protected while any state record references them.
+- **Rollback:** Disable the `kdv-cover-gc.timer` and revert the GC module, unit files and documentation. Deleted orphan assets are not restored automatically; restore them from backup if needed.
+
+## 2026-10-03 — Load GC configuration from SOPS env and install timer on deploy
+
+- **Context:** The first GC unit expected a manually created environment file and timer installation, while the deploy workflow provides the selected encrypted environment.
+- **Change:** GC now loads the explicit orchestrator env file or selects/decrypts `env.dev.enc`/`env.prod.enc` by `SERVER_ENV` without importing API configuration. Every successful Swarm deploy writes a root-only EnvironmentFile with only environment and storage settings, installs the systemd units, reloads systemd, and idempotently enables the daily timer.
+- **Verification:** Shell syntax, Python compilation and `git diff --check` passed. The deploy orchestrator and systemd timer were not run on a host.
+- **Risks:** Deployment now requires permission to install systemd units and enable the timer; the selected host must have SOPS and its age key available to root for unattended GC.
+- **Rollback:** Revert the deploy hook and GC environment loading, then disable the timer. No runtime service changes were made in this workspace.
+
 ## 2026-10-02 — Add targeted CDN asset replacement utility
 
 - **Context:** The user skipped Phase 8.2's full shared-override runbook and Phase 8.3 rollback procedure, and requested a script to update one named cover in storage.

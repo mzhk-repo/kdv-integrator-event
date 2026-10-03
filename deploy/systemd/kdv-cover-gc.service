@@ -1,0 +1,16 @@
+[Unit]
+Description=Garbage collect unreferenced KDV cover assets
+After=local-fs.target
+RequiresMountsFor=@COVERS_STORAGE_HOST_PATH@ @COVER_STATE_HOST_PATH@
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/kdv-integrator/kdv-integrator-event
+EnvironmentFile=/etc/kdv-integrator/cover-gc.env
+ExecStart=/opt/kdv-integrator/kdv-integrator-event/scripts/run-cover-gc.sh --apply
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=@COVERS_STORAGE_HOST_PATH@/assets @COVERS_STORAGE_HOST_PATH@/.incoming @COVER_STATE_HOST_PATH@

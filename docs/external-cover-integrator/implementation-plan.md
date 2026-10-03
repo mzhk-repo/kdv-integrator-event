@@ -750,6 +750,15 @@ ls /data/koha-covers/assets/<shared_sha>.webp
 
 **Опис:** Періодична задача: файл — кандидат на видалення, якщо жоден запис на нього не посилається (`SELECT`, без окремого reference-лічильника) і він старший за `retention period` (розділ 30).
 
+**Реалізація (2026-10-03):** `python -m src.cover_state.gc` запускає dry-run,
+а `--apply` видаляє лише lowercase SHA-256 `.webp` файли без посилань у
+`records.cover_asset_sha256`, старші за `COVER_ASSET_RETENTION_DAYS` (default
+90, мінімум один день). Job працює на storage node і бере той самий
+`.incoming/.publish.lock`, що й publisher. На кожному Swarm deploy orchestrator
+ідемпотентно встановлює та вмикає щоденний systemd timer. Самостійний GC
+вибирає `env.dev.enc`/`env.prod.enc` через `SERVER_ENV` і розшифровує SOPS у
+пам'яті; persistent EnvironmentFile містить лише середовище та шляхи.
+
 **Acceptance criteria:**
 - Файли без жодного посилання та старші retention period видаляються.
 - Файли, на які є хоч одне посилання (навіть недавнє), не видаляються, незалежно від віку.

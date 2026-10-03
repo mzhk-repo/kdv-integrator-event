@@ -265,6 +265,7 @@ and ORIGINAL bitstream by stored UUIDs, rewrites the two DSpace `856` links
 - `implementation-plan.md` — implementation source of truth: phase dependencies, deliverables, acceptance criteria, validation, Definition of Done.
 - `environment.md` — repository-specific environment contract and existing secret delivery; distinguishes configuration preparation from external acceptance.
 - `runbook.md` — CDN deployment prerequisites, Cloudflare routing and external acceptance; records preparation evidence without claiming deployment.
+- Phase 9.1 GC is `src.cover_state.gc`: dry-run by default, explicit `--apply`, state DB reference check, configurable retention and shared publisher lock. It loads a selected SOPS env from `SERVER_ENV`; each Swarm deploy idempotently installs/enables its daily systemd timer on the storage node.
 - `SPEC.md`, `ROADMAP.md`, ADRs — when present, detailed source documents; they override this summary.
 
 Do not reread all documents by default. Open the relevant source section when changing an invariant, external contract, failure behavior, deployment behavior, or acceptance criterion.
