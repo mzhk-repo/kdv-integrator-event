@@ -18,6 +18,14 @@
 - **Risks:** Deployment now requires permission to install systemd units and enable the timer; the selected host must have SOPS and its age key available to root for unattended GC.
 - **Rollback:** Revert the deploy hook and GC environment loading, then disable the timer. No runtime service changes were made in this workspace.
 
+## 2026-10-03 — Install GC systemd units through passwordless sudo
+
+- **Context:** The deploy user could update Swarm services but could not write `/etc`, so GC unit installation failed after the stack had already updated.
+- **Change:** The orchestrator now requires `sudo -n` before any Swarm mutations and uses it only for installing the root-owned GC environment/unit files and enabling the timer. It creates protected temporary config files and renders repository paths into the unit. GC unit installation now precedes `docker stack deploy` so privilege errors fail before service changes.
+- **Verification:** Shell syntax, Python compilation, CLI bootstrap and `git diff --check` passed. No sudo/systemd/Swarm host operation was run.
+- **Risks:** The deployment account's sudoers policy must allow the non-interactive install and systemctl commands used here.
+- **Rollback:** Revert the sudo-based unit installer and deploy preflight; disable the timer if it was installed.
+
 ## 2026-10-02 — Add targeted CDN asset replacement utility
 
 - **Context:** The user skipped Phase 8.2's full shared-override runbook and Phase 8.3 rollback procedure, and requested a script to update one named cover in storage.

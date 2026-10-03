@@ -230,8 +230,8 @@ for the synthetic asset; Koha write-back and record workflow recovery belong to 
 ### Cover asset garbage collection
 
 GC must run on the node that owns both the cover storage bind and state DB.
-Every successful Swarm deployment installs and enables its daily systemd timer
-idempotently. The service selects `env.dev.enc` or `env.prod.enc` from
+Every Swarm deployment installs and enables its daily systemd timer
+idempotently using the deploy user's passwordless `sudo -n`. The service selects `env.dev.enc` or `env.prod.enc` from
 `SERVER_ENV`, decrypts it with SOPS, and reads only the GC configuration. Keep
 the host's age key accessible to root. It uses the publisher's
 `.incoming/.publish.lock`; do not run separate GC jobs against different state
