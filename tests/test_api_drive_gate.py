@@ -263,13 +263,58 @@ def test_invalid_pdf_source_does_not_skip_independent_cover(workflow):
         'sha256Checksum': COVER_SHA, 'size': str(len(COVER_CONTENT)),
     }
 
-    with pytest.raises(ValueError, match=r'Unsupported URL in 956\$u'):
-        run(workflow)
+    assert run(workflow)['status'] == 'cover_updated'
 
     koha.set_cover_url.assert_called_once()
     assert state.get(UID)['cover_source_id'] == 'cover'
     assert state.get(UID)['cover_asset_sha256']
+    assert state.get(UID)['status'] == 'ok'
+    assert state.get(UID)['retry_count'] == 0
     dspace.assert_not_called()
+
+
+def test_cover_retries_after_invalid_pdf_cutoff(workflow):
+    state, koha, meta, drive, _, dspace = workflow
+    meta['file_path'] = 'https://example.test/not-a-drive-file'
+    meta['cover_path'] = 'https://drive.google.com/file/d/cover/view'
+    state.mark_pending(UID)
+    state.record_result(UID, success=False, permanent=True, reason='SourceResolutionError')
+    drive.get_metadata.return_value = {
+        'mimeType': 'image/png', 'name': 'cover.png',
+        'sha256Checksum': COVER_SHA, 'size': str(len(COVER_CONTENT)),
+    }
+
+    assert run(workflow)['status'] == 'cover_updated'
+
+    assert state.get(UID)['status'] == 'ok'
+    assert state.get(UID)['retry_count'] == 0
+    dspace.assert_not_called()
+
+
+def test_recovers_completed_cover_without_reprocessing_it(workflow):
+    state, _, meta, drive, cover, dspace = workflow
+    meta['file_path'] = 'https://example.test/not-a-drive-file'
+    meta['cover_path'] = 'https://drive.google.com/file/d/cover/view'
+    with BytesIO() as image_bytes:
+        Image.new('RGB', (1, 1), 'blue').save(image_bytes, 'WEBP')
+        content = image_bytes.getvalue()
+    asset_sha = hashlib.sha256(content).hexdigest()
+    asset = Path(os.environ['COVERS_STORAGE_PATH']) / 'assets' / f'{asset_sha}.webp'
+    asset.write_bytes(content)
+    state.mark_pending(UID)
+    state.complete_cycle(UID, {'cover': ('cover', COVER_SHA)}, {
+        'cover_asset_sha256': asset_sha,
+    })
+    state.mark_pending(UID)
+    state.record_result(UID, success=False, permanent=True, reason='SourceResolutionError')
+
+    assert run(workflow)['status'] == 'cover_updated'
+
+    drive.get_metadata.assert_not_called()
+    drive.download_to_file.assert_not_called()
+    cover.assert_not_called()
+    dspace.assert_not_called()
+    assert state.get(UID)['status'] == 'ok'
 
 
 def test_shared_cover_dedup_and_source_change_is_record_local(workflow):
