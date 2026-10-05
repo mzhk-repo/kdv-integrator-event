@@ -96,7 +96,7 @@ the selected snapshot
 into a temporary DB and runs `quick_check` plus the `records` table check; it
 does not modify the source DB. The operator schedules `backup` with a daily
 systemd timer and uses the journal for its output. `scripts/backup_cover_assets.sh`
-incrementally copies immutable assets to local `COVER_ASSETS_BACKUP_HOST_PATH`
+loads the selected SOPS env and incrementally copies immutable assets to local `COVER_ASSETS_BACKUP_HOST_PATH`
 with rsync, without cloud copy or retention; schedule it less frequently.
 
 ### External cover state machine (Task 2.2)

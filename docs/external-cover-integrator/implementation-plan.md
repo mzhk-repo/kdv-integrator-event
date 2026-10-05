@@ -836,7 +836,7 @@ journal залишаються після налаштування timer опе�
 
 **Validation:**
 ```bash
-scripts/backup_cover_assets.sh
+sudo scripts/backup_cover_assets.sh --age-key-file /path/to/age/keys.txt
 rsync -avn "${COVERS_STORAGE_HOST_PATH}/assets/" "${COVER_ASSETS_BACKUP_HOST_PATH}/" | tail -20  # dry-run diff
 ```
 

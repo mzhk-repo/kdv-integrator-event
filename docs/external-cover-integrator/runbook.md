@@ -481,14 +481,17 @@ removes the temporary DB on exit. The script does not install or enable a timer.
 
 ### Assets backup (Phase 10.2)
 
-Set `COVERS_STORAGE_HOST_PATH` and local `COVER_ASSETS_BACKUP_HOST_PATH`, then run
-the incremental rsync copy less frequently than the state DB backup:
+The script reads `COVERS_STORAGE_HOST_PATH` and local
+`COVER_ASSETS_BACKUP_HOST_PATH` from the selected encrypted environment, then
+runs the incremental rsync copy. Schedule it less frequently than state DB backup:
 
 ```bash
-sudo COVERS_STORAGE_HOST_PATH=/srv/example/koha-covers \
-  COVER_ASSETS_BACKUP_HOST_PATH=/backups/cover-assets \
-  scripts/backup_cover_assets.sh
+sudo scripts/backup_cover_assets.sh --age-key-file /path/to/age/keys.txt
 ```
+
+The script selects `SERVER_ENV` from its process or `/etc/environment`, like the
+state DB backup. `--source-path` and `--backup-dir` are available for explicit
+path overrides.
 
 The script does not delete destination files and has no retention or cloud-copy
 behavior.

@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Load the selected SOPS env for assets backup
+
+- **Context:** `backup_cover_assets.sh` required paths exported in the invoking shell, unlike the state DB backup command that loads the selected encrypted environment.
+- **Change:** The shell entrypoint now delegates to `backup_cover_assets.py`, which reuses the SOPS environment loader for `COVERS_STORAGE_HOST_PATH` and `COVER_ASSETS_BACKUP_HOST_PATH`. Manual runs accept `--age-key-file`; explicit path overrides remain available.
+- **Verification:** Python compilation, CLI help, Bash syntax, and `git diff --check` passed. No asset storage was copied.
+- **Risks:** The selected environment and age key must be available to the invoking account; destination remains local and must have enough free space.
+- **Rollback:** Revert the assets helper and restore the previous requirement to export source and destination paths manually.
+
 ## 2026-10-05 — Select the invoking user's rclone config under sudo
 
 - **Context:** Running state backup with `sudo` made rclone look under `/root`, where the configured `kdv-drive` remote was absent. The Koha backup script runs rclone as its invoking user and uses that user's default config.
