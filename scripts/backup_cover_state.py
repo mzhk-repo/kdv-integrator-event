@@ -7,6 +7,7 @@ import argparse
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -51,7 +52,53 @@ def verify_backup(backup_path: Path) -> int:
     return records
 
 
-def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> Path:
+def prune_backups(backup_dir: Path, retention_days: int) -> None:
+    cutoff = datetime.now(timezone.utc).timestamp() - retention_days * 86400
+    for candidate in backup_dir.iterdir():
+        match = BACKUP_NAME.fullmatch(candidate.name)
+        if match and not candidate.is_symlink() and candidate.is_file() and candidate.stat().st_mtime < cutoff:
+            candidate.unlink()
+
+
+def copy_cloud_backup(local_path: Path, cloud_dir: Path, retention_days: int) -> Path:
+    """Copy a validated snapshot to an already-mounted rclone directory."""
+    if not cloud_dir.is_absolute() or cloud_dir == Path("/") or cloud_dir.is_symlink():
+        raise ValueError("Cloud backup path must be an absolute non-root directory without symlinks")
+    mount = cloud_dir if cloud_dir.exists() else cloud_dir.parent
+    while mount != mount.parent and not os.path.ismount(mount):
+        mount = mount.parent
+    rclone_mounts = set()
+    try:
+        for line in Path("/proc/mounts").read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) >= 3 and fields[2] in {"fuse.rclone", "rclone"}:
+                rclone_mounts.add(fields[1].replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\"))
+    except OSError:
+        pass
+    if str(mount) not in rclone_mounts:
+        raise ValueError("Cloud backup path must be inside an existing rclone mount")
+    cloud_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if cloud_dir.is_symlink() or not cloud_dir.is_dir():
+        raise ValueError("Cloud backup path must be a real directory")
+    name = local_path.name
+    destination = cloud_dir / name
+    temporary = cloud_dir / f".{name}.{os.getpid()}.tmp"
+    try:
+        shutil.copyfile(local_path, temporary)
+        verify_backup(temporary)
+        os.replace(temporary, destination)
+        latest_tmp = cloud_dir / f".latest-{os.getpid()}-{name}"
+        shutil.copyfile(destination, latest_tmp)
+        os.replace(latest_tmp, cloud_dir / "latest.sqlite3")
+    finally:
+        temporary.unlink(missing_ok=True)
+    prune_backups(cloud_dir, retention_days)
+    logger.info("Cloud backup complete: %s", destination)
+    return destination
+
+
+def create_backup(db_path: Path, backup_dir: Path, retention_days: int,
+                  cloud_dir: Path | None = None, cloud_retention_days: int = 90) -> Path:
     """Take a consistent SQLite snapshot, publish it atomically, then prune old snapshots."""
     if not db_path.is_absolute() or not db_path.is_file() or db_path.is_symlink():
         raise ValueError("State DB path must be an absolute regular file")
@@ -90,17 +137,15 @@ def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> Path:
         latest_tmp = backup_dir / f".latest-{os.getpid()}-{stamp}"
         latest_tmp.symlink_to(final_path.name)
         os.replace(latest_tmp, latest_path)
-        cutoff = datetime.now(timezone.utc).timestamp() - retention_days * 86400
-        for candidate in backup_dir.iterdir():
-            match = BACKUP_NAME.fullmatch(candidate.name)
-            if match and not candidate.is_symlink() and candidate.is_file() and candidate.stat().st_mtime < cutoff:
-                candidate.unlink()
+        prune_backups(backup_dir, retention_days)
         directory_fd = os.open(backup_dir, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
         logger.info("Backup complete: %s records=%s", final_path, records)
+        if cloud_dir is not None:
+            copy_cloud_backup(final_path, cloud_dir, cloud_retention_days)
         return final_path
     finally:
         temp_path.unlink(missing_ok=True)
@@ -157,6 +202,16 @@ def resolve_backup_dir() -> Path:
     return path
 
 
+def resolve_cloud_backup_dir() -> Path | None:
+    raw = os.environ.get("COVER_STATE_CLOUD_BACKUP_HOST_PATH", "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute() or path == Path("/"):
+        raise ValueError("COVER_STATE_CLOUD_BACKUP_HOST_PATH must be an absolute non-root path")
+    return path
+
+
 def configure_age_key_file(age_key_file: Path | None) -> None:
     """Set an explicit local SOPS key file without exposing key contents."""
     if age_key_file is None:
@@ -176,7 +231,7 @@ def main() -> int:
     backup_parser.add_argument("--db-path", type=Path, help="Override the host state DB path")
     backup_parser.add_argument("--backup-dir", type=Path, help="Override the environment backup directory")
     backup_parser.add_argument("--age-key-file", type=Path, help="SOPS age key file for manual runs")
-    backup_parser.add_argument("--retention-days", type=int, default=30)
+    backup_parser.add_argument("--retention-days", type=int)
     verify_parser = subparsers.add_parser("verify", help="Restore and check a backup")
     verify_parser.add_argument("backup", type=Path, nargs="?", help="Override the latest backup path")
     verify_parser.add_argument("--age-key-file", type=Path, help="SOPS age key file for manual runs")
@@ -184,13 +239,16 @@ def main() -> int:
     try:
         configure_age_key_file(args.age_key_file)
         if args.command == "backup":
-            if args.retention_days < 1:
-                parser.error("--retention-days must be at least 1")
-            if args.db_path is None or args.backup_dir is None:
+            if args.db_path is None or args.backup_dir is None or args.retention_days is None:
                 load_cover_state_environment()
+            retention_days = args.retention_days if args.retention_days is not None else int(os.environ.get("COVER_STATE_LOCAL_RETENTION_DAYS", "30"))
+            cloud_retention_days = int(os.environ.get("COVER_STATE_CLOUD_RETENTION_DAYS", "90"))
+            if retention_days < 1 or cloud_retention_days < 1:
+                parser.error("--retention-days must be at least 1")
             db_path = args.db_path or resolve_state_db_path()
             backup_dir = args.backup_dir or resolve_backup_dir()
-            create_backup(db_path, backup_dir, args.retention_days)
+            cloud_dir = resolve_cloud_backup_dir()
+            create_backup(db_path, backup_dir, retention_days, cloud_dir, cloud_retention_days)
         else:
             if args.backup is None:
                 load_cover_state_environment()

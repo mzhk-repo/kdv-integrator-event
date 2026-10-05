@@ -451,8 +451,14 @@ file must be readable by the user running the command (root in the example).
 
 The command uses SQLite's online backup API, so an active WAL database can be
 copied consistently. It creates a timestamped snapshot, validates it, updates
-`latest.sqlite3` atomically, and prunes snapshots older than 30 days. Files are
-mode `0600`; `init-volume.sh` prepares the configured host backup directory at
+`latest.sqlite3` atomically, and prunes local snapshots using
+`COVER_STATE_LOCAL_RETENTION_DAYS` (default 30). Set
+`COVER_STATE_CLOUD_BACKUP_HOST_PATH` to a directory on the host's rclone Google
+Drive mount to enable a second copy. The command checks `/proc/mounts` for an
+active `fuse.rclone` mount, verifies the copied DB, updates its `latest.sqlite3`,
+and applies independent `COVER_STATE_CLOUD_RETENTION_DAYS` (default 90). Ensure
+the mount is ready before the daily timer runs. Local files are mode `0600`;
+`init-volume.sh` prepares the configured host backup directory at
 mode `0700`. The orchestrator creates the default directory as root, so run the
 timer as root unless you configure a different owner and permissions. Standard
 output and errors are available in the systemd journal. Give the timer write access to the
@@ -468,6 +474,20 @@ sudo .venv/bin/python scripts/backup_cover_state.py verify
 This restores to a temporary DB, runs `PRAGMA quick_check`, and confirms the
 cover-state `records` table can be read. It prints the restored row count and
 removes the temporary DB on exit. The script does not install or enable a timer.
+
+### Assets backup (Phase 10.2)
+
+Set `COVERS_STORAGE_HOST_PATH` and local `COVER_ASSETS_BACKUP_HOST_PATH`, then run
+the incremental rsync copy less frequently than the state DB backup:
+
+```bash
+sudo COVERS_STORAGE_HOST_PATH=/srv/example/koha-covers \
+  COVER_ASSETS_BACKUP_HOST_PATH=/backups/cover-assets \
+  scripts/backup_cover_assets.sh
+```
+
+The script does not delete destination files and has no retention or cloud-copy
+behavior.
 
 ## Rollback
 

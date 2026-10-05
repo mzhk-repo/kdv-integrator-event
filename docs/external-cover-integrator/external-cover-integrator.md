@@ -1189,12 +1189,19 @@ Covers
 Для state DB `scripts/backup_cover_state.py` бере `SERVER_ENV` із процесу або,
 якщо змінну не передано, із `/etc/environment`. Так обирається зашифрований
 env-файл для наявного SOPS loader, з якого читається `COVER_STATE_HOST_PATH`.
-З нього також читається `COVER_STATE_BACKUP_HOST_PATH` (default
-`/backups/state-db`), окремий від live state та cover storage;
+З нього також читаються `COVER_STATE_BACKUP_HOST_PATH` (default
+`/backups/state-db`), optional `COVER_STATE_CLOUD_BACKUP_HOST_PATH` усередині
+вже змонтованого rclone Google Drive, та окремі
+`COVER_STATE_LOCAL_RETENTION_DAYS` і `COVER_STATE_CLOUD_RETENTION_DAYS`;
+локальний backup відокремлений від live state та cover storage;
 `scripts/init-volume.sh` створює цей каталог із mode `0700`.
 Скрипт створює узгоджений snapshot через
 SQLite online backup API, перевіряє його та оновлює `latest.sqlite3` атомарно.
-Тimestamped копії зберігаються 30 днів. Оператор налаштовує щоденний systemd
+Retention налаштовується в env (за замовчуванням 30 днів локально та 90 днів у
+cloud). Якщо cloud path заданий, скрипт вимагає активний rclone mount.
+`scripts/backup_cover_assets.sh` інкрементально копіює assets лише до локальної
+`COVER_ASSETS_BACKUP_HOST_PATH`; для нього немає retention чи cloud копії.
+Оператор налаштовує щоденний systemd
 timer і запускає restore-перевірку на цьому ж середовищі; вона відновлює копію
 у тимчасову DB, запускає `quick_check` та читає таблицю `records`.
 

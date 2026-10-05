@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Add cloud state and local assets backups
+
+- **Context:** Phase 10 requires a second state DB copy on the host's rclone Google Drive mount and a separate incremental local assets backup.
+- **Change:** State backup now reads independent local/cloud retention values from env, verifies the cloud destination is on an active rclone mount, and validates the copied SQLite snapshot. Added `scripts/backup_cover_assets.sh` for local incremental rsync without deletion, retention, or cloud copy. Updated the environment contract and backup runbooks.
+- **Verification:** Python compilation, Bash syntax, and `git diff --check` passed. No live rclone mount, asset storage, or scheduled job was accessed.
+- **Risks:** Cloud copies require an active writable rclone mount and use its rename/write semantics. Assets backup accumulates destination files because it does not delete or prune.
+- **Rollback:** Stop invoking the assets script and unset `COVER_STATE_CLOUD_BACKUP_HOST_PATH`; revert the backup script and documentation changes. Existing backups remain untouched.
+
 ## 2026-10-05 — Pass manual age key through SOPS environment
 
 - **Context:** The manual backup option supplied an age key path, but the installed SOPS rejected the unsupported `--age-key-file` CLI flag.

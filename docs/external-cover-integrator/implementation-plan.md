@@ -811,7 +811,8 @@ sqlite3 state.db "SELECT cover_source_id, cover_asset_sha256 FROM records WHERE 
 **Acceptance criteria:**
 - Щоденний backup виконується автоматично й логується.
 - Restore-тест у тимчасову SQLite DB на цьому середовищі успішний; робоча DB не змінюється.
-- Backup атомарний, проходить `quick_check`, має обмеження доступу та зберігає останні 30 днів.
+- Локальний backup атомарний, проходить `quick_check`, має обмеження доступу та retention із `COVER_STATE_LOCAL_RETENTION_DAYS`.
+- Якщо задано `COVER_STATE_CLOUD_BACKUP_HOST_PATH`, копія записується на змонтований rclone Google Drive з незалежним `COVER_STATE_CLOUD_RETENTION_DAYS`.
 - Timer встановлюється оператором; його розклад і логування перевіряються після встановлення.
 
 **Validation:**
@@ -831,10 +832,12 @@ journal залишаються після налаштування timer опе�
 
 **Acceptance criteria:**
 - Incremental backup виконується за розкладом (рідше за state DB).
+- Копія зберігається лише локально у `COVER_ASSETS_BACKUP_HOST_PATH`; без retention і cloud copy.
 
 **Validation:**
 ```bash
-rsync -avn /data/koha-covers/assets/ /backups/assets/ | tail -20   # dry-run diff
+scripts/backup_cover_assets.sh
+rsync -avn "${COVERS_STORAGE_HOST_PATH}/assets/" "${COVER_ASSETS_BACKUP_HOST_PATH}/" | tail -20  # dry-run diff
 ```
 
 ---
