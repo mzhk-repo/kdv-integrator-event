@@ -454,7 +454,10 @@ copied consistently. It creates a timestamped snapshot, validates it, updates
 `latest.sqlite3` atomically, and prunes local snapshots using
 `COVER_STATE_LOCAL_RETENTION_DAYS` (default 30). Set
 `BACKUP_RCLONE_REMOTE` and `BACKUP_RCLONE_FOLDER` together to enable a second
-copy through the host's rclone CLI/config. The command uploads the timestamped
+copy through the host's rclone CLI/config. By default it uses
+`/var/lib/docker-plugins/rclone/config/rclone.conf`, the config path used by the
+Docker rclone volume plugin; override with `BACKUP_RCLONE_CONFIG` if needed. The
+sudo user must be able to read that file. The command uploads the timestamped
 snapshot, downloads it to a temporary DB for verification, updates remote
 `latest.sqlite3`, and applies independent `COVER_STATE_CLOUD_RETENTION_DAYS`
 (default 90). The host backup user must have a working rclone config and access

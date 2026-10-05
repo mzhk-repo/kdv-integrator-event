@@ -62,16 +62,22 @@ def prune_backups(backup_dir: Path, retention_days: int) -> None:
 
 def copy_cloud_backup(local_path: Path, remote_path: str, retention_days: int) -> None:
     """Copy and read-back verify the snapshot with the rclone CLI."""
+    config = Path(os.environ.get(
+        "BACKUP_RCLONE_CONFIG", "/var/lib/docker-plugins/rclone/config/rclone.conf"
+    ))
+    if not config.is_file() or not os.access(config, os.R_OK):
+        raise ValueError(f"rclone config is missing or unreadable: {config}")
+    rclone = ["rclone", "--config", str(config)]
     name = local_path.name
     snapshot_remote = f"{remote_path}/{name}"
-    subprocess.run(["rclone", "copyto", str(local_path), snapshot_remote], check=True)
+    subprocess.run([*rclone, "copyto", str(local_path), snapshot_remote], check=True)
     with tempfile.TemporaryDirectory(prefix="kdv-rclone-verify-") as temp_dir:
         downloaded = Path(temp_dir) / name
-        subprocess.run(["rclone", "copyto", snapshot_remote, str(downloaded)], check=True)
+        subprocess.run([*rclone, "copyto", snapshot_remote, str(downloaded)], check=True)
         verify_backup(downloaded)
-    subprocess.run(["rclone", "copyto", str(local_path), f"{remote_path}/latest.sqlite3"], check=True)
+    subprocess.run([*rclone, "copyto", str(local_path), f"{remote_path}/latest.sqlite3"], check=True)
     subprocess.run([
-        "rclone", "delete", remote_path, "--min-age", f"{retention_days}d",
+        *rclone, "delete", remote_path, "--min-age", f"{retention_days}d",
         "--include", "state-*.sqlite3",
     ], check=True)
     logger.info("Cloud backup complete: %s/%s", remote_path, name)

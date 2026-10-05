@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Use the Docker rclone plugin config for state backups
+
+- **Context:** The backup ran under `sudo`, so rclone looked for `/root/.config/rclone/rclone.conf` and could not find the configured `kdv-drive` remote.
+- **Change:** State backup now passes `--config` using `BACKUP_RCLONE_CONFIG`, defaulting to the documented Docker volume plugin config at `/var/lib/docker-plugins/rclone/config/rclone.conf`. Updated the host env contract and runbook.
+- **Verification:** Python compilation and `git diff --check` passed. The plugin config path is not available in this workspace, so remote access was not retried.
+- **Risks:** The backup process must be able to read the plugin config; it may contain OAuth tokens and must not be displayed or committed.
+- **Rollback:** Revert `BACKUP_RCLONE_CONFIG` handling and use a root-owned rclone config with the required remote instead.
+
 ## 2026-10-05 — Add cloud state and local assets backups
 
 - **Context:** Phase 10 requires a second state DB copy on Google Drive and a separate incremental local assets backup.
