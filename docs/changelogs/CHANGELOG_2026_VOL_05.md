@@ -4,11 +4,11 @@
 
 ## 2026-10-05 — Add cloud state and local assets backups
 
-- **Context:** Phase 10 requires a second state DB copy on the host's rclone Google Drive mount and a separate incremental local assets backup.
-- **Change:** State backup now reads independent local/cloud retention values from env, verifies the cloud destination is on an active rclone mount, and validates the copied SQLite snapshot. Added `scripts/backup_cover_assets.sh` for local incremental rsync without deletion, retention, or cloud copy. Updated the environment contract and backup runbooks.
+- **Context:** Phase 10 requires a second state DB copy on Google Drive and a separate incremental local assets backup.
+- **Change:** State backup now reads independent local/cloud retention values from env, uses `BACKUP_RCLONE_REMOTE` and `BACKUP_RCLONE_FOLDER` with the rclone CLI, and verifies the uploaded SQLite snapshot by reading it back. Added `scripts/backup_cover_assets.sh` for local incremental rsync without deletion, retention, or cloud copy. Updated the environment contract and backup runbooks.
 - **Verification:** Python compilation, Bash syntax, and `git diff --check` passed. No live rclone mount, asset storage, or scheduled job was accessed.
-- **Risks:** Cloud copies require an active writable rclone mount and use its rename/write semantics. Assets backup accumulates destination files because it does not delete or prune.
-- **Rollback:** Stop invoking the assets script and unset `COVER_STATE_CLOUD_BACKUP_HOST_PATH`; revert the backup script and documentation changes. Existing backups remain untouched.
+- **Risks:** Cloud copies require an installed rclone CLI, valid host config, and write access to the selected remote/folder. Assets backup accumulates destination files because it does not delete or prune.
+- **Rollback:** Stop invoking the assets script and unset both `BACKUP_RCLONE_REMOTE` and `BACKUP_RCLONE_FOLDER`; revert the backup script and documentation changes. Existing backups remain untouched.
 
 ## 2026-10-05 — Pass manual age key through SOPS environment
 

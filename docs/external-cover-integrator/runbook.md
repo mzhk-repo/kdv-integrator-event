@@ -453,11 +453,12 @@ The command uses SQLite's online backup API, so an active WAL database can be
 copied consistently. It creates a timestamped snapshot, validates it, updates
 `latest.sqlite3` atomically, and prunes local snapshots using
 `COVER_STATE_LOCAL_RETENTION_DAYS` (default 30). Set
-`COVER_STATE_CLOUD_BACKUP_HOST_PATH` to a directory on the host's rclone Google
-Drive mount to enable a second copy. The command checks `/proc/mounts` for an
-active `fuse.rclone` mount, verifies the copied DB, updates its `latest.sqlite3`,
-and applies independent `COVER_STATE_CLOUD_RETENTION_DAYS` (default 90). Ensure
-the mount is ready before the daily timer runs. Local files are mode `0600`;
+`BACKUP_RCLONE_REMOTE` and `BACKUP_RCLONE_FOLDER` together to enable a second
+copy through the host's rclone CLI/config. The command uploads the timestamped
+snapshot, downloads it to a temporary DB for verification, updates remote
+`latest.sqlite3`, and applies independent `COVER_STATE_CLOUD_RETENTION_DAYS`
+(default 90). The host backup user must have a working rclone config and access
+to the selected remote. Local files are mode `0600`;
 `init-volume.sh` prepares the configured host backup directory at
 mode `0700`. The orchestrator creates the default directory as root, so run the
 timer as root unless you configure a different owner and permissions. Standard

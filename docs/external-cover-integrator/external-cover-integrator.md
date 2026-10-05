@@ -1190,15 +1190,16 @@ Covers
 якщо змінну не передано, із `/etc/environment`. Так обирається зашифрований
 env-файл для наявного SOPS loader, з якого читається `COVER_STATE_HOST_PATH`.
 З нього також читаються `COVER_STATE_BACKUP_HOST_PATH` (default
-`/backups/state-db`), optional `COVER_STATE_CLOUD_BACKUP_HOST_PATH` усередині
-вже змонтованого rclone Google Drive, та окремі
+`/backups/state-db`), optional `BACKUP_RCLONE_REMOTE` і
+`BACKUP_RCLONE_FOLDER` для передачі копії через rclone CLI, та окремі
 `COVER_STATE_LOCAL_RETENTION_DAYS` і `COVER_STATE_CLOUD_RETENTION_DAYS`;
 локальний backup відокремлений від live state та cover storage;
 `scripts/init-volume.sh` створює цей каталог із mode `0700`.
 Скрипт створює узгоджений snapshot через
 SQLite online backup API, перевіряє його та оновлює `latest.sqlite3` атомарно.
 Retention налаштовується в env (за замовчуванням 30 днів локально та 90 днів у
-cloud). Якщо cloud path заданий, скрипт вимагає активний rclone mount.
+cloud). Коли задані обидві rclone змінні, скрипт передає snapshot через rclone
+CLI та перевіряє його зворотним читанням.
 `scripts/backup_cover_assets.sh` інкрементально копіює assets лише до локальної
 `COVER_ASSETS_BACKUP_HOST_PATH`; для нього немає retention чи cloud копії.
 Оператор налаштовує щоденний systemd

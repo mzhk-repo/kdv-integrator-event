@@ -7,8 +7,8 @@ import argparse
 import logging
 import os
 import re
-import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from contextlib import closing
@@ -60,45 +60,24 @@ def prune_backups(backup_dir: Path, retention_days: int) -> None:
             candidate.unlink()
 
 
-def copy_cloud_backup(local_path: Path, cloud_dir: Path, retention_days: int) -> Path:
-    """Copy a validated snapshot to an already-mounted rclone directory."""
-    if not cloud_dir.is_absolute() or cloud_dir == Path("/") or cloud_dir.is_symlink():
-        raise ValueError("Cloud backup path must be an absolute non-root directory without symlinks")
-    mount = cloud_dir if cloud_dir.exists() else cloud_dir.parent
-    while mount != mount.parent and not os.path.ismount(mount):
-        mount = mount.parent
-    rclone_mounts = set()
-    try:
-        for line in Path("/proc/mounts").read_text(encoding="utf-8").splitlines():
-            fields = line.split()
-            if len(fields) >= 3 and fields[2] in {"fuse.rclone", "rclone"}:
-                rclone_mounts.add(fields[1].replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\"))
-    except OSError:
-        pass
-    if str(mount) not in rclone_mounts:
-        raise ValueError("Cloud backup path must be inside an existing rclone mount")
-    cloud_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if cloud_dir.is_symlink() or not cloud_dir.is_dir():
-        raise ValueError("Cloud backup path must be a real directory")
+def copy_cloud_backup(local_path: Path, remote_path: str, retention_days: int) -> None:
+    """Copy and read-back verify the snapshot with the rclone CLI."""
     name = local_path.name
-    destination = cloud_dir / name
-    temporary = cloud_dir / f".{name}.{os.getpid()}.tmp"
-    try:
-        shutil.copyfile(local_path, temporary)
-        verify_backup(temporary)
-        os.replace(temporary, destination)
-        latest_tmp = cloud_dir / f".latest-{os.getpid()}-{name}"
-        shutil.copyfile(destination, latest_tmp)
-        os.replace(latest_tmp, cloud_dir / "latest.sqlite3")
-    finally:
-        temporary.unlink(missing_ok=True)
-    prune_backups(cloud_dir, retention_days)
-    logger.info("Cloud backup complete: %s", destination)
-    return destination
+    snapshot_remote = f"{remote_path}/{name}"
+    subprocess.run(["rclone", "copyto", str(local_path), snapshot_remote], check=True)
+    with tempfile.TemporaryDirectory(prefix="kdv-rclone-verify-") as temp_dir:
+        downloaded = Path(temp_dir) / name
+        subprocess.run(["rclone", "copyto", snapshot_remote, str(downloaded)], check=True)
+        verify_backup(downloaded)
+    subprocess.run(["rclone", "copyto", str(local_path), f"{remote_path}/latest.sqlite3"], check=True)
+    subprocess.run([
+        "rclone", "delete", remote_path, "--min-age", f"{retention_days}d",
+        "--include", "state-*.sqlite3",
+    ], check=True)
+    logger.info("Cloud backup complete: %s/%s", remote_path, name)
 
 
-def create_backup(db_path: Path, backup_dir: Path, retention_days: int,
-                  cloud_dir: Path | None = None, cloud_retention_days: int = 90) -> Path:
+def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> Path:
     """Take a consistent SQLite snapshot, publish it atomically, then prune old snapshots."""
     if not db_path.is_absolute() or not db_path.is_file() or db_path.is_symlink():
         raise ValueError("State DB path must be an absolute regular file")
@@ -144,8 +123,6 @@ def create_backup(db_path: Path, backup_dir: Path, retention_days: int,
         finally:
             os.close(directory_fd)
         logger.info("Backup complete: %s records=%s", final_path, records)
-        if cloud_dir is not None:
-            copy_cloud_backup(final_path, cloud_dir, cloud_retention_days)
         return final_path
     finally:
         temp_path.unlink(missing_ok=True)
@@ -202,14 +179,16 @@ def resolve_backup_dir() -> Path:
     return path
 
 
-def resolve_cloud_backup_dir() -> Path | None:
-    raw = os.environ.get("COVER_STATE_CLOUD_BACKUP_HOST_PATH", "").strip()
-    if not raw:
+def resolve_cloud_backup_dir() -> str | None:
+    remote = os.environ.get("BACKUP_RCLONE_REMOTE", "").strip()
+    raw_folder = os.environ.get("BACKUP_RCLONE_FOLDER", "").strip()
+    folder = raw_folder.strip("/")
+    if not remote and not folder:
         return None
-    path = Path(raw)
-    if not path.is_absolute() or path == Path("/"):
-        raise ValueError("COVER_STATE_CLOUD_BACKUP_HOST_PATH must be an absolute non-root path")
-    return path
+    if (not remote or not folder or ":" in remote or raw_folder.startswith("/")
+            or any(part in {"", ".", ".."} for part in folder.split("/"))):
+        raise ValueError("BACKUP_RCLONE_REMOTE and BACKUP_RCLONE_FOLDER must identify a remote folder")
+    return f"{remote}:{folder}"
 
 
 def configure_age_key_file(age_key_file: Path | None) -> None:
@@ -247,8 +226,10 @@ def main() -> int:
                 parser.error("--retention-days must be at least 1")
             db_path = args.db_path or resolve_state_db_path()
             backup_dir = args.backup_dir or resolve_backup_dir()
-            cloud_dir = resolve_cloud_backup_dir()
-            create_backup(db_path, backup_dir, retention_days, cloud_dir, cloud_retention_days)
+            cloud_remote = resolve_cloud_backup_dir()
+            created = create_backup(db_path, backup_dir, retention_days)
+            if cloud_remote:
+                copy_cloud_backup(created, cloud_remote, cloud_retention_days)
         else:
             if args.backup is None:
                 load_cover_state_environment()
@@ -256,6 +237,9 @@ def main() -> int:
             verify_backup(args.backup)
     except (OSError, sqlite3.Error, ValueError) as error:
         logger.error("Operation failed: %s", error)
+        return 1
+    except subprocess.CalledProcessError as error:
+        logger.error("rclone operation failed with exit code %s", error.returncode)
         return 1
     return 0
 

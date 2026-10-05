@@ -80,7 +80,7 @@ data on each eligible node.
 `scripts/backup_cover_state.py backup` selects the environment from process
 `SERVER_ENV`, falling back to the same key in `/etc/environment`, and resolves
 `COVER_STATE_HOST_PATH`, `COVER_STATE_BACKUP_HOST_PATH`, and optional
-`COVER_STATE_CLOUD_BACKUP_HOST_PATH` from its encrypted env
+`BACKUP_RCLONE_REMOTE` / `BACKUP_RCLONE_FOLDER` from its encrypted env
 file through the existing SOPS loader. The deploy orchestrator passes the
 configured backup path (default `/backups/state-db`) to `scripts/init-volume.sh`,
 which prepares it separately from the live state and cover directories. The
@@ -88,9 +88,9 @@ backup command uses SQLite's online backup API to create a consistent snapshot
 including WAL state. It validates
 the snapshot, publishes a timestamped mode-0600 file atomically, updates
 `latest.sqlite3`, and retains `COVER_STATE_LOCAL_RETENTION_DAYS` (default 30).
-When the cloud path is configured, it must be an active rclone mount; the verified
-snapshot is copied there and independently pruned by `COVER_STATE_CLOUD_RETENTION_DAYS`
-(default 90). `verify` restores the selected snapshot
+When both rclone settings are configured, `rclone copyto` uploads the snapshot
+and reads it back for SQLite verification; old timestamped copies are removed
+according to `COVER_STATE_CLOUD_RETENTION_DAYS` (default 90). `verify` restores the selected snapshot
 into a temporary DB and runs `quick_check` plus the `records` table check; it
 does not modify the source DB. The operator schedules `backup` with a daily
 systemd timer and uses the journal for its output. `scripts/backup_cover_assets.sh`

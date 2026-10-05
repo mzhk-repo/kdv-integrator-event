@@ -812,7 +812,7 @@ sqlite3 state.db "SELECT cover_source_id, cover_asset_sha256 FROM records WHERE 
 - Щоденний backup виконується автоматично й логується.
 - Restore-тест у тимчасову SQLite DB на цьому середовищі успішний; робоча DB не змінюється.
 - Локальний backup атомарний, проходить `quick_check`, має обмеження доступу та retention із `COVER_STATE_LOCAL_RETENTION_DAYS`.
-- Якщо задано `COVER_STATE_CLOUD_BACKUP_HOST_PATH`, копія записується на змонтований rclone Google Drive з незалежним `COVER_STATE_CLOUD_RETENTION_DAYS`.
+- Якщо задано `BACKUP_RCLONE_REMOTE` і `BACKUP_RCLONE_FOLDER`, копія передається через rclone CLI та перевіряється зворотним читанням; cloud retention задається `COVER_STATE_CLOUD_RETENTION_DAYS`.
 - Timer встановлюється оператором; його розклад і логування перевіряються після встановлення.
 
 **Validation:**
