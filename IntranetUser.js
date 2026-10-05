@@ -14,10 +14,11 @@ $(document).ready(function() {
         MAX_POLLING_ATTEMPTS: 180, // До 6 хвилин для важких PDF
         ROBOT_MAX_POLLING_ATTEMPTS: 1800, // До 1 години для batch-канарейки
         I18N: {
-            updateBtn: "Оновити метадані DSpace",
+            updateBtn: "Оновити дані в DSpace",
+            retryCutoff: "Повторити після втручання",
             archiveBtn: "Архівувати в DSpace",
             confirmArchive: "Архівувати книгу в DSpace? (Фоновий процес)",
-            confirmUpdate: "Оновити метадані (Назву, Автора) в DSpace?",
+            confirmUpdate: "Оновити дані в DSpace?",
             confirmRobotBatch: "Запустити Robot Batch для вказаного списку?",
             robotBatchBtn: "Запустити Robot Batch",
             confirmExport: "Запустити експорт Koha? Буде створено XLSX на Google Drive.",
@@ -233,10 +234,6 @@ $(document).ready(function() {
                 <textarea id="kdv-robot-candidates" class="form-control" rows="3" placeholder="100-110&#10;200, 210"></textarea>
                 <div class="text-muted" style="margin-top: 4px;">${KDV_CONFIG.I18N.selectedHint}</div>
                 <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
-                    <label for="kdv-robot-parallelism" style="margin-bottom: 0;">
-                        Паралелізм
-                        <input type="number" id="kdv-robot-parallelism" class="form-control input-sm" min="1" value="1" style="width: 96px;">
-                    </label>
                     <label for="kdv-robot-max-wait" style="margin-bottom: 0;">
                         Очікування, сек
                         <input type="number" id="kdv-robot-max-wait" class="form-control input-sm" min="30" value="900" style="width: 112px;">
@@ -370,8 +367,8 @@ $(document).ready(function() {
                         skip_optimization: document.getElementById("kdv-skip-optimization")?.checked ?? false
                     }, selectedDpiPayload("kdv-integrate-dpi"))) : undefined,
                     success: (res) => {
-                        if (btnConfig.method === "POST" && res.task_id) {
-                            startPolling(res.task_id, btn, originalHtml);
+                        if (res.task_id) {
+                            startPolling(res.task_id, btn, originalHtml, loadCutoffNotice);
                         } else {
                             alert(KDV_CONFIG.I18N.success);
                             location.reload();
@@ -386,6 +383,33 @@ $(document).ready(function() {
                 btn.prop("disabled", false).html(originalHtml);
             });
         });
+
+        function loadCutoffNotice() {
+            $.ajax({
+                url: `${KDV_CONFIG.API_URL}/integrate/${biblionumber}/retry-state`,
+                type: "GET", xhrFields: { withCredentials: true }, headers: buildHeaders(),
+                success: (retry) => {
+                    if (retry.reason !== "cutoff") return;
+                    if (toolbar.find("#kdv-retry-cutoff").length) return;
+                    const notice = $('<div class="alert alert-warning" id="kdv-retry-cutoff"></div>');
+                    notice.text(`Інтеграцію зупинено після ${retry.retry_count} спроб. Причина: ${retry.failure_reason || "потрібна перевірка"}.`);
+                    const retryBtn = $('<button class="btn btn-warning btn-sm" type="button"></button>').text(KDV_CONFIG.I18N.retryCutoff);
+                    notice.append(" ").append(retryBtn);
+                    toolbar.append(notice);
+                    retryBtn.on("click", () => {
+                        if (!confirm("Після усунення причини скинути cutoff і повторити інтеграцію?")) return;
+                        retryBtn.prop("disabled", true);
+                        $.ajax({
+                            url: `${KDV_CONFIG.API_URL}/integrate/${biblionumber}/retry`,
+                            type: "POST", xhrFields: { withCredentials: true }, headers: buildHeaders(),
+                            success: (response) => startPolling(response.task_id, retryBtn, KDV_CONFIG.I18N.retryCutoff, loadCutoffNotice),
+                            error: (xhr) => { retryBtn.prop("disabled", false); showError(retryBtn, xhr.responseJSON?.message || xhr.statusText, KDV_CONFIG.I18N.retryCutoff); }
+                        });
+                    });
+                }
+            });
+        }
+        loadCutoffNotice();
     }
 
     function ensureAccessSession(onReady, onFail) {
@@ -435,10 +459,15 @@ $(document).ready(function() {
 Candidates: ${result.candidates_count || 0}
 Stats: ${stats}`);
                         setTimeout(() => btn.removeClass("btn-success"), 3000);
-                    } else if (data.status === "error") {
+                    } else if (data.status === "error" || data.status === "failed") {
                         clearInterval(pollTimer);
                         statusEl.text("");
                         showError(btn, data.error, originalHtml);
+                    } else if (data.status === "deferred") {
+                        clearInterval(pollTimer);
+                        statusEl.text(data.result?.message || data.progress || "Інтеграцію відкладено");
+                        btn.prop("disabled", false).html(originalHtml);
+                        alert(`⏳ ${data.result?.message || "Інтеграція очікує повторної спроби."}`);
                     }
                 },
                 error: (xhr) => {
@@ -477,10 +506,15 @@ Stats: ${stats}`);
                         const outcome = `Файл: ${result.file_path || "не вказано"}${result.send_email ? "\nEmail надіслано." : ""}`;
                         alert(`${KDV_CONFIG.I18N.success}\n${outcome}`);
                         setTimeout(() => btn.removeClass("btn-success"), 3000);
-                    } else if (data.status === "error") {
+                    } else if (data.status === "error" || data.status === "failed") {
                         clearInterval(pollTimer);
                         statusEl.text("");
                         showError(btn, data.error, originalHtml);
+                    } else if (data.status === "deferred") {
+                        clearInterval(pollTimer);
+                        statusEl.text(data.result?.message || "Є записи, що очікують повтору");
+                        btn.prop("disabled", false).html(originalHtml);
+                        alert(`⏳ Експорт відкладено: ${data.result?.message || "очікує повторної спроби"}`);
                     }
                 },
                 error: (xhr) => {
@@ -494,7 +528,7 @@ Stats: ${stats}`);
         }, KDV_CONFIG.POLLING_INTERVAL);
     }
 
-    function startPolling(taskId, btn, originalHtml) {
+    function startPolling(taskId, btn, originalHtml, onFailure) {
         let attempts = 0;
         const pollTimer = setInterval(() => {
             attempts++;
@@ -515,9 +549,14 @@ Stats: ${stats}`);
                         btn.addClass("btn-success").html('<i class="fa fa-check"></i>');
                         alert(`${KDV_CONFIG.I18N.success}\nHandle: ${data.result?.handle}`);
                         location.reload();
-                    } else if (data.status === 'error') {
+                    } else if (data.status === 'error' || data.status === 'failed') {
                         clearInterval(pollTimer);
                         showError(btn, data.error, originalHtml);
+                        if (onFailure) onFailure();
+                    } else if (data.status === 'deferred') {
+                        clearInterval(pollTimer);
+                        btn.prop("disabled", false).html(originalHtml);
+                        alert(`⏳ ${data.result?.message || "Інтеграцію відкладено; запис буде повторено автоматично."}`);
                     }
                 },
                 error: (xhr) => {

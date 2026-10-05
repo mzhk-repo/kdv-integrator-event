@@ -34,9 +34,6 @@ class StubDSpace:
     def __init__(self):
         self.created = False
 
-    def find_item_by_biblionumber(self, num):
-        return None
-
     def create_item_direct(self, coll, md):
         print("DSpace.create_item_direct", coll, md)
         self.created = True

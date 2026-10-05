@@ -1,4 +1,6 @@
 import os
+import hashlib
+import pytest
 
 # Required config env vars before importing src modules.
 os.environ.setdefault("KDV_API_TOKEN", "test-token")
@@ -46,6 +48,69 @@ def test_dspace_pid_find_contract_uses_expected_endpoint_and_params(monkeypatch)
     assert captured["method"] == "GET"
     assert captured["endpoint"] == "/pid/find"
     assert captured["kwargs"]["params"] == {"id": "123/456"}
+
+
+@pytest.mark.parametrize('search_key', ['searchResults', 'searchResult'])
+def test_dspace_find_item_by_record_uid_uses_exact_metadata_match(monkeypatch, search_key):
+    client = DSpaceClient()
+    captured = {}
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    def fake_request(method, endpoint, **kwargs):
+        captured.setdefault("calls", []).append((method, endpoint, kwargs))
+        if endpoint == "/discover/search/objects":
+            return _Resp(payload={"_embedded": {search_key: {
+                "page": {"totalElements": 1},
+                "_embedded": {"objects": [{"_embedded": {"indexableObject": {
+                    "uuid": "item-uuid", "handle": "123/456",
+                }}}]},
+            }}})
+        return _Resp(payload={"metadata": {"koha.uid": [{"value": uid}]}})
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert client.find_item_by_record_uid(uid) == {"uuid": "item-uuid", "handle": "123/456"}
+    assert captured["calls"][0][0:2] == ("GET", "/discover/search/objects")
+    assert captured["calls"][0][2]["params"] == {
+        "query": f"koha.uid:{uid}", "dsoType": "item", "size": 2
+    }
+    assert captured["calls"][1][0:2] == ("GET", "/core/items/item-uuid")
+
+
+@pytest.mark.parametrize('payload', [
+    {}, {'_embedded': {}},
+    {'_embedded': {'searchResults': {'page': {}}}},
+    {'_embedded': {'searchResults': {'page': {'totalElements': 1}}}},
+    {'_embedded': {'searchResults': {'page': {'totalElements': 2}}}},
+])
+def test_dspace_uid_search_never_treats_invalid_or_ambiguous_response_as_absent(monkeypatch, payload):
+    client = DSpaceClient()
+    monkeypatch.setattr(client, '_request', lambda *args, **kwargs: _Resp(payload=payload))
+    with pytest.raises(DSpaceRestError):
+        client.find_item_by_record_uid('018f0f00-0000-7000-8000-000000000001')
+
+
+def test_dspace_uid_search_accepts_only_explicit_zero_matches(monkeypatch):
+    client = DSpaceClient()
+    monkeypatch.setattr(client, '_request', lambda *args, **kwargs: _Resp(payload={
+        '_embedded': {'searchResults': {'page': {'totalElements': 0}}},
+    }))
+    assert client.find_item_by_record_uid('018f0f00-0000-7000-8000-000000000001') is None
+
+
+def test_dspace_uid_search_rejects_mismatched_metadata(monkeypatch):
+    client = DSpaceClient()
+    def request(method, endpoint, **kwargs):
+        if endpoint == '/discover/search/objects':
+            return _Resp(payload={'_embedded': {'searchResults': {
+                'page': {'totalElements': 1}, '_embedded': {'objects': [
+                    {'_embedded': {'indexableObject': {'uuid': 'item'}}},
+                ]},
+            }}})
+        return _Resp(payload={'metadata': {'koha.uid': [{'value': 'another-record'}]}})
+    monkeypatch.setattr(client, '_request', request)
+    with pytest.raises(DSpaceRestError, match='does not match'):
+        client.find_item_by_record_uid('018f0f00-0000-7000-8000-000000000001')
 
 
 def test_dspace_update_metadata_contract_builds_json_patch(monkeypatch):
@@ -100,7 +165,7 @@ def test_dspace_metadata_format_strips_edge_punctuation():
     ]
 
 
-def test_dspace_get_primary_bitstream_reads_first_original_bitstream(monkeypatch):
+def test_dspace_get_primary_bitstream_uses_original_primary_relation(monkeypatch):
     client = DSpaceClient()
     calls = []
 
@@ -115,21 +180,111 @@ def test_dspace_get_primary_bitstream_reads_first_original_bitstream(monkeypatch
                     }
                 },
             )
-        if endpoint == "/core/bundles/bundle-uuid/bitstreams":
-            return _Resp(
-                status_code=200,
-                payload={"_embedded": {"bitstreams": [{"uuid": "bitstream-uuid"}]}},
-            )
+        if endpoint == "/core/bundles/bundle-uuid/primaryBitstream":
+            return _Resp(status_code=200, payload={"uuid": "primary-bitstream-uuid"})
         return _Resp(status_code=404)
 
     monkeypatch.setattr(client, "_request", fake_request)
 
     bitstream = client.get_primary_bitstream("item-uuid")
 
-    assert bitstream == {"uuid": "bitstream-uuid"}
+    assert bitstream == {"uuid": "primary-bitstream-uuid"}
     assert calls == [
         ("GET", "/core/items/item-uuid/bundles"),
-        ("GET", "/core/bundles/bundle-uuid/bitstreams"),
+        ("GET", "/core/bundles/bundle-uuid/primaryBitstream"),
+    ]
+
+
+def test_dspace_verifies_uploaded_bitstream_checksum(tmp_path, monkeypatch):
+    client = DSpaceClient()
+    content = b"replacement PDF content"
+    path = tmp_path / "replacement.pdf"
+    path.write_bytes(content)
+    checksum = hashlib.md5(content).hexdigest()
+    monkeypatch.setattr(client, "_request", lambda *_args, **_kwargs: _Resp(
+        payload={"uuid": "new-bitstream", "sizeBytes": len(content),
+                 "checkSum": {"checkSumAlgorithm": "MD5", "value": checksum}}
+    ))
+
+    assert client.verify_bitstream_upload("new-bitstream", str(path)) is True
+
+
+def test_dspace_creates_primary_bitstream_when_bundle_has_none(monkeypatch):
+    client = DSpaceClient()
+    calls = []
+
+    def fake_request(method, endpoint, **kwargs):
+        calls.append((method, endpoint, kwargs))
+        if endpoint == "/core/items/item/bundles":
+            return _Resp(payload={"_embedded": {"bundles": [
+                {"name": "ORIGINAL", "uuid": "original-bundle"}
+            ]}})
+        if endpoint.endswith("/primaryBitstream") and method == "GET":
+            return _Resp(status_code=204)
+        return _Resp(status_code=201)
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert client.set_primary_bitstream("item", "new-bitstream") is True
+    assert calls[-1][0:2] == ("POST", "/core/bundles/original-bundle/primaryBitstream")
+    assert calls[-1][2]["headers"] == {"Content-Type": "text/uri-list"}
+    assert calls[-1][2]["data"].endswith("/core/bitstreams/new-bitstream")
+
+
+def test_dspace_updates_existing_primary_bitstream(monkeypatch):
+    client = DSpaceClient()
+
+    def fake_request(method, endpoint, **kwargs):
+        if endpoint == "/core/items/item/bundles":
+            return _Resp(payload={"_embedded": {"bundles": [
+                {"name": "ORIGINAL", "uuid": "original-bundle"}
+            ]}})
+        if endpoint.endswith("/primaryBitstream") and method == "GET":
+            return _Resp(payload={"uuid": "old-bitstream"})
+        if endpoint.endswith("/primaryBitstream") and method == "PUT":
+            return _Resp(status_code=200)
+        return _Resp(status_code=404)
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert client.set_primary_bitstream("item", "new-bitstream") is True
+
+
+def test_dspace_delete_bitstream_treats_missing_as_already_deleted(monkeypatch):
+    client = DSpaceClient()
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: _Resp(status_code=404))
+
+    assert client.delete_bitstream("old-bitstream") is True
+
+
+def test_dspace_delete_bitstream_verifies_resource_is_gone(monkeypatch):
+    client = DSpaceClient()
+    responses = iter((_Resp(status_code=204), _Resp(status_code=200)))
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: next(responses))
+
+    with pytest.raises(DSpaceRestError, match="verify old bitstream deletion"):
+        client.delete_bitstream("old-bitstream")
+
+
+def test_dspace_lists_all_original_bundle_bitstreams(monkeypatch):
+    client = DSpaceClient()
+    responses = iter((
+        _Resp(status_code=200, payload={
+            "_embedded": {"bundles": [{"name": "ORIGINAL", "uuid": "bundle"}]}
+        }),
+        _Resp(status_code=200, payload={
+            "_embedded": {"bitstreams": [{"uuid": "old-1"}]},
+            "page": {"totalPages": 2},
+        }),
+        _Resp(status_code=200, payload={
+            "_embedded": {"bitstreams": [{"uuid": "old-2"}]},
+            "page": {"totalPages": 2},
+        }),
+    ))
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: next(responses))
+
+    assert client.get_original_bitstreams("item") == [
+        {"uuid": "old-1"}, {"uuid": "old-2"}
     ]
 
 
@@ -207,7 +362,107 @@ def test_koha_success_writes_file_856_before_handle_856(monkeypatch):
     assert fields_856[1]["y"] == "Запис в репозиторії"
 
 
-def test_koha_set_cover_url_updates_only_956c(monkeypatch):
+def test_koha_restores_only_missing_957_values_and_reads_back(monkeypatch):
+    client = KohaClient()
+    uid = "019f8414-3e71-70f1-9432-e235b989ef2c"
+    original = (
+        f'<record><controlfield tag="001">{uid}</controlfield>'
+        '<datafield tag="957" ind1=" " ind2=" ">'
+        '<subfield code="3">item-from-db</subfield>'
+        '<subfield code="9">preserve</subfield></datafield></record>'
+    )
+    captured = {}
+    responses = iter([original])
+
+    def get_xml(_biblio_id):
+        return next(responses) if len(captured) == 0 else captured['data']
+
+    monkeypatch.setattr(client, "_get_biblio_xml", get_xml)
+
+    def fake_put(_url, data=None, headers=None):
+        captured['data'] = data.decode('utf-8')
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    assert client.restore_missing_957_metadata(
+        42, record_uid=uid, item_uuid="item-from-db", cover_asset_sha256="a" * 64,
+    ) is True
+    restored = client._parse_marc(captured['data']).get_fields('957')[0]
+    assert restored.get_subfields('3') == ['item-from-db']
+    assert restored.get_subfields('c') == ['a' * 64]
+    assert restored.get_subfields('9') == ['preserve']
+
+
+def test_koha_remove_cover_clears_only_cover_fields_and_confirms_readback(monkeypatch):
+    client = KohaClient()
+    uid = "019f8414-3e71-70f1-9432-e235b989ef2c"
+    original = (
+        f'<record><controlfield tag="001">{uid}</controlfield>'
+        '<datafield tag="956" ind1=" " ind2=" "><subfield code="p">drive-cover</subfield>'
+        '<subfield code="u">drive-pdf</subfield></datafield>'
+        '<datafield tag="957" ind1=" " ind2=" "><subfield code="3">item</subfield>'
+        '<subfield code="c">' + 'a' * 64 + '</subfield><subfield code="9">keep</subfield></datafield>'
+        '<datafield tag="856" ind1="4" ind2="0"><subfield code="u">keep-link</subfield></datafield>'
+        '</record>'
+    )
+    captured = {}
+
+    def get_xml(_biblio_id):
+        return captured.get("data", original)
+
+    monkeypatch.setattr(client, "_get_biblio_xml", get_xml)
+
+    def fake_put(_url, data=None, headers=None, timeout=None):
+        captured["data"] = data.decode("utf-8")
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    assert client.remove_cover(42, record_uid=uid) is True
+    updated = client._parse_marc(captured["data"])
+    assert updated.get_fields("956")[0].get_subfields("p") == []
+    assert updated.get_fields("956")[0].get_subfields("u") == ["drive-pdf"]
+    assert updated.get_fields("957")[0].get_subfields("c") == []
+    assert updated.get_fields("957")[0].get_subfields("3") == ["item"]
+    assert updated.get_fields("957")[0].get_subfields("9") == ["keep"]
+    assert updated.get_fields("856")[0].get_subfields("u") == ["keep-link"]
+
+
+def test_koha_dspace_link_repair_replaces_856_with_both_links(monkeypatch):
+    client = KohaClient()
+    captured = {}
+    xml = (
+        '<record><datafield tag="856" ind1="4" ind2="0">'
+        '<subfield code="u">https://catalog.test/resource</subfield>'
+        '<subfield code="y">Каталог</subfield>'
+        '</datafield>'
+        '<datafield tag="856" ind1="4" ind2="0">'
+        '<subfield code="u">https://repo.test/bitstreams/old/download</subfield>'
+        '<subfield code="y">Файл</subfield>'
+        '</datafield></record>'
+    )
+    monkeypatch.setattr(client, "_get_biblio_xml", lambda _biblio_id: xml)
+
+    def fake_put(url, data=None, headers=None):
+        captured["data"] = data.decode("utf-8")
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    assert client.repair_dspace_links(
+        42,
+        "https://repo.test/bitstreams/new/download",
+        "https://repo.test/handle/1/2",
+    ) is True
+    fields = client._parse_marc(captured["data"]).get_fields("856")
+    assert [(field["u"], field["y"]) for field in fields] == [
+        ("https://repo.test/bitstreams/new/download", "Файл"),
+        ("https://repo.test/handle/1/2", "Запис в репозиторії"),
+    ]
+
+
+def test_koha_set_cover_url_writes_957c(monkeypatch):
     client = KohaClient()
     captured = {}
     xml = (
@@ -235,12 +490,29 @@ def test_koha_set_cover_url_updates_only_956c(monkeypatch):
     assert ok is True
     updated = client._parse_marc(captured["data"])
     field_956 = updated.get_fields("956")[0]
+    field_957 = updated.get_fields("957")[0]
     fields_856 = updated.get_fields("856")
-    assert field_956["c"] == "http://koha.local/cover.jpg"
+    assert field_957["c"] == "http://koha.local/cover.jpg"
+    assert field_956.get("c") is None
     assert field_956["y"] == "error"
     assert field_956["z"] == "File missing"
     assert len(fields_856) == 1
     assert fields_856[0]["u"] == "old"
+
+
+def test_koha_metadata_reads_managed_hash_uuid_and_links(monkeypatch):
+    client = KohaClient()
+    xml = ('<record><controlfield tag="001">019d4312-1234-7abc-8123-0123456789ab</controlfield>'
+           '<datafield tag="956" ind1=" " ind2=" "><subfield code="p">source</subfield></datafield>'
+           '<datafield tag="957" ind1=" " ind2=" "><subfield code="c">' + 'a' * 64 + '</subfield>'
+           '<subfield code="3">item</subfield></datafield>'
+           '<datafield tag="856" ind1="4" ind2="0"><subfield code="u">https://repo.test/handle/1/2</subfield>'
+           '</datafield></record>')
+    monkeypatch.setattr(client, '_get_biblio_xml', lambda _: xml)
+    metadata = client.get_biblio_metadata(42)
+    assert metadata['cover_asset_sha256'] == 'a' * 64
+    assert metadata['dspace_uuid'] == 'item'
+    assert metadata['dspace_links'] == ['https://repo.test/handle/1/2']
 
 
 def test_dspace_create_item_error_is_diagnostic(monkeypatch):

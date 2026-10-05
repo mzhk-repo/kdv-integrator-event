@@ -1,4 +1,7 @@
 import contextlib
+import fcntl
+import hashlib
+import json
 import os
 import logging
 import re
@@ -7,12 +10,18 @@ import time
 import uuid
 import concurrent.futures
 from io import BytesIO
+from pathlib import Path
+import tempfile
 from pymarc import parse_xml_to_array
 
 from .config import INTEGRATOR_MOUNT_PATH, DSPACE_UI_URL
 from .koha import KohaClient
-from .dspace import DSpaceClient
+from .dspace import DSpaceClient, DSpaceRestError
 from .services.covers import CoverService
+from .services.cover_pipeline import verify_drive_download as _verify_drive_download
+from .services.cover_pipeline import (
+    InvalidPDFCoverError, download_and_normalize, publish_cover, render_pdf_cover,
+)
 from .services.files import FileService
 from .services.sources import (
     SourceResolutionError,
@@ -24,6 +33,8 @@ from .services.pdf import (
     needs_optimization,
 )
 from .mapping import METADATA_RULES, TYPE_CONVERSION, strip_metadata_edges
+from .cover_state.drive import DriveCheckResult, DriveMetadataError, check_drive_metadata
+from .cover_state.state_machine import StateMachine
 
 logger = logging.getLogger("KDV-Core")
 
@@ -62,11 +73,93 @@ def _primary_download_url(bitstream_data) -> str | None:
     return f"{DSPACE_UI_URL}/bitstreams/{bitstream_uuid}/download"
 
 
+def _ensure_koha_record_uid(koha, biblionumber):
+    ensure_uid = getattr(koha, "ensure_record_uid", None)
+    return ensure_uid(biblionumber) if ensure_uid else None
+
+
+def _is_permanent_integration_error(error: Exception) -> bool:
+    if isinstance(error, (InvalidPDFCoverError, ValueError)):
+        return True
+    if not isinstance(error, DSpaceRestError):
+        return False
+    if error.status_code is not None:
+        return 400 <= error.status_code < 500 and error.status_code not in {408, 425, 429}
+    return str(error).startswith((
+        "Multiple DSpace items match",
+        "Invalid DSpace",
+        "DSpace search Item does not match",
+        "Saved DSpace Item does not match",
+    ))
+
+
+def _repair_missing_dspace_handle_link(koha, dspace, biblionumber, meta, record_state):
+    if not meta.get("file_path") or not record_state or record_state.get("status") != "ok":
+        return False
+    item_uuid = record_state.get("dspace_item_uuid") or meta.get("dspace_uuid")
+    if not item_uuid:
+        return False
+    links = meta.get("dspace_links") or []
+    has_record_link = any(
+        "/handle/" in link or f"/items/{item_uuid}" in link for link in links
+    )
+    has_file_link = any("/bitstreams/" in link for link in links)
+    if has_record_link and has_file_link:
+        return False
+
+    dspace = dspace or DSpaceClient()
+    try:
+        item = dspace.get_item(item_uuid)
+    except DSpaceRestError as error:
+        if error.status_code == 404:
+            logger.info("Stored DSpace Item is missing; record_uid=%r item_uuid=%s", meta.get("record_uid"), item_uuid)
+            return "missing"
+        raise
+    handle = item.get("handle")
+    handle_url = f"{DSPACE_UI_URL}/handle/{handle}" if handle else f"{DSPACE_UI_URL}/items/{item_uuid}"
+    bitstream = dspace.get_primary_bitstream(item_uuid)
+    primary_download_url = _primary_download_url(bitstream)
+    if not primary_download_url:
+        raise RuntimeError("DSpace primary bitstream is unavailable for link repair")
+    if koha.repair_dspace_links(biblionumber, primary_download_url, handle_url) is not True:
+        raise RuntimeError("Koha DSpace links repair was not confirmed")
+    readback = koha.get_biblio_metadata(biblionumber)
+    if not readback or any(
+        link not in readback.get("dspace_links", [])
+        for link in (primary_download_url, handle_url)
+    ):
+        raise RuntimeError("Koha DSpace links read-back was not confirmed")
+    logger.info("Restored DSpace links for record_uid=%r item_uuid=%s", meta.get("record_uid"), item_uuid)
+    return True
+
+
 def _disk_free_mb(path: str) -> float | None:
     try:
         return round(shutil.disk_usage(path).free / 1024 / 1024, 2)
     except OSError:
         return None
+
+
+def restore_missing_957_from_state(koha, biblionumber, meta, record_state):
+    if not meta or not record_state:
+        return meta
+    values = {
+        "item_uuid": record_state.get("dspace_item_uuid"),
+        "cover_asset_sha256": record_state.get("cover_asset_sha256"),
+    }
+    missing = {
+        key: value for key, value in values.items()
+        if value and not meta.get("dspace_uuid" if key == "item_uuid" else key)
+    }
+    if missing and koha.restore_missing_957_metadata(
+        biblionumber, record_uid=meta.get("record_uid"), **missing
+    ) is not True:
+        raise RuntimeError(f"Koha 957 state restoration failed for #{biblionumber}")
+    if "item_uuid" in missing:
+        meta["dspace_uuid"] = missing["item_uuid"]
+    if "cover_asset_sha256" in missing:
+        meta["cover_asset_sha256"] = missing["cover_asset_sha256"]
+    return meta
 
 
 def _resolve_cover_url(koha, biblionumber, cover_res, update_koha: bool = False):
@@ -417,6 +510,8 @@ def run_dspace_workflow(
     optimizer_client: PDFOptimizerClient | None = None,
     upload_name: str | None = None,
     dpi: int | None = None,
+    replace_existing: bool = False,
+    result_callback=None,
 ):
     """Execute metadata extraction and file upload to DSpace.
 
@@ -430,16 +525,43 @@ def run_dspace_workflow(
     raw_xml = local_koha._get_biblio_xml(biblionumber)
     md = parse_marc_details(raw_xml)
     md["koha.biblionumber"] = str(biblionumber)
+    record_uid = meta.get("record_uid")
+    if record_uid:
+        try:
+            parsed_uid = uuid.UUID(record_uid)
+            if parsed_uid.version != 7:
+                raise ValueError
+            record_uid = str(parsed_uid)
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError("DSpace workflow requires MARC 001 UUIDv7") from None
+        md["koha.uid"] = record_uid
 
     collection_uuid = meta.get("collection_uuid")
     if not collection_uuid:
         raise Exception("Collection UUID missing")
 
-    existing_item = local_dspace.find_item_by_biblionumber(biblionumber)
+    existing_item = None
+    saved_item_uuid = meta.get('previous_dspace_item_uuid') or meta.get('dspace_uuid')
+    if record_uid and saved_item_uuid:
+        try:
+            saved_item = local_dspace.get_item(saved_item_uuid)
+        except DSpaceRestError as error:
+            if error.status_code != 404:
+                raise
+            logger.info('Saved DSpace Item is absent: item_uuid=%s', saved_item_uuid)
+        else:
+            if (saved_item.get('uuid') != saved_item_uuid or not any(
+                value.get('value') == record_uid
+                for value in saved_item.get('metadata', {}).get('koha.uid', [])
+            )):
+                raise DSpaceRestError('Saved DSpace Item does not match MARC 001 / koha.uid')
+            existing_item = saved_item
+    if existing_item is None and record_uid:
+        existing_item = local_dspace.find_item_by_record_uid(record_uid)
+    replacement_old_bitstream_uuids = []
+    primary_bitstream = None
     if existing_item:
-        logger.warning(
-            f"🔄 Item already exists (UUID: {existing_item['uuid']}). Linking only."
-        )
+        logger.info("DSpace item found for biblionumber=%s uuid=%s", biblionumber, existing_item["uuid"])
         item_uuid = existing_item["uuid"]
         handle = existing_item.get("handle")
         final_link = (
@@ -448,28 +570,40 @@ def run_dspace_workflow(
             else f"{DSPACE_UI_URL}/items/{item_uuid}"
         )
         primary_bitstream = local_dspace.get_primary_bitstream(item_uuid)
-        result = {
-            "handle": final_link,
-            "uuid": item_uuid,
-            "status": "linked_existing",
-            "primary_download_url": _primary_download_url(primary_bitstream),
-        }
-        result.update(
-            _upload_additional_files(local_dspace, item_uuid, meta.get("additional_files"))
+        logger.info(
+            "DSpace replacement check item_uuid=%s enabled=%s primary_bitstream_uuid=%s",
+            item_uuid, replace_existing,
+            primary_bitstream.get("uuid") if primary_bitstream else None,
         )
-        return result
-
-    item_data = local_dspace.create_item_direct(collection_uuid, md)
-    if not item_data:
-        raise Exception("Failed to create item in DSpace")
-
-    item_uuid = item_data["uuid"]
-    handle = item_data.get("handle")
-    final_link = (
-        f"{DSPACE_UI_URL}/handle/{handle}"
-        if handle
-        else f"{DSPACE_UI_URL}/items/{item_uuid}"
-    )
+        if primary_bitstream and replace_existing:
+            if not primary_bitstream.get("uuid"):
+                raise RuntimeError("Existing DSpace primary bitstream has no UUID")
+        elif primary_bitstream:
+            result = {
+                "handle": final_link,
+                "uuid": item_uuid,
+                "status": "linked_existing",
+                "bitstream_uuid": primary_bitstream.get("uuid"),
+                "primary_download_url": _primary_download_url(primary_bitstream),
+            }
+            result.update(
+                _upload_additional_files(local_dspace, item_uuid, meta.get("additional_files"))
+            )
+            return result
+        # A previous attempt may have created the Item and failed before its first upload.
+        if record_uid:
+            local_dspace.update_metadata(item_uuid, md)
+    else:
+        item_data = local_dspace.create_item_direct(collection_uuid, md)
+        if not item_data:
+            raise Exception("Failed to create item in DSpace")
+        item_uuid = item_data["uuid"]
+        handle = item_data.get("handle")
+        final_link = (
+            f"{DSPACE_UI_URL}/handle/{handle}"
+            if handle
+            else f"{DSPACE_UI_URL}/items/{item_uuid}"
+        )
 
     final_pdf_path = file_path
     pdf_telemetry = _build_pdf_telemetry(file_path, requested_dpi=dpi)
@@ -482,6 +616,34 @@ def run_dspace_workflow(
             dpi=dpi,
         )
         primary_upload_name = upload_name or os.path.basename(file_path)
+        if replace_existing:
+            old_bitstreams = local_dspace.get_original_bitstreams(item_uuid)
+            previous_uuid = meta.get('previous_dspace_bitstream_uuid')
+            if previous_uuid and (
+                meta.get('previous_dspace_item_uuid') != item_uuid
+                or previous_uuid not in {bitstream.get('uuid') for bitstream in old_bitstreams}
+            ):
+                logger.warning(
+                    'Ignoring stale DSpace bitstream identity: saved_item_uuid=%s '
+                    'target_item_uuid=%s saved_bitstream_uuid=%s',
+                    meta.get('previous_dspace_item_uuid'), item_uuid, previous_uuid,
+                )
+                previous_uuid = None
+            replacement_old_bitstream_uuids = list(dict.fromkeys(
+                [
+                    bitstream.get("uuid") for bitstream in old_bitstreams
+                    if bitstream.get("uuid")
+                    and (
+                        (primary_bitstream and bitstream["uuid"] == primary_bitstream.get("uuid"))
+                        or bitstream["uuid"] == previous_uuid
+                        or bitstream.get("name") == primary_upload_name
+                    )
+                ]
+            ))
+            logger.info(
+                "DSpace replacement candidates item_uuid=%s filename=%s old_bitstream_uuids=%s",
+                item_uuid, primary_upload_name, replacement_old_bitstream_uuids,
+            )
         logger.info(
             "📤 [DSpace-Thread] Uploading file to Item %s upload_path=%s upload_name=%s",
             item_uuid,
@@ -493,6 +655,14 @@ def run_dspace_workflow(
         )
         if not primary_bitstream:
             raise Exception("Failed to upload file")
+        if replace_existing:
+            if not primary_bitstream.get("uuid"):
+                raise RuntimeError("DSpace did not return the replacement bitstream UUID")
+            local_dspace.verify_bitstream_upload(primary_bitstream["uuid"], final_pdf_path)
+            local_dspace.set_primary_bitstream(item_uuid, primary_bitstream["uuid"])
+            confirmed_primary = local_dspace.get_primary_bitstream(item_uuid)
+            if not confirmed_primary or confirmed_primary.get("uuid") != primary_bitstream["uuid"]:
+                raise RuntimeError("DSpace primary bitstream replacement was not confirmed")
         primary_download_url = _primary_download_url(primary_bitstream)
         additional_telemetry = _upload_additional_files(
             local_dspace, item_uuid, meta.get("additional_files")
@@ -504,14 +674,295 @@ def run_dspace_workflow(
     result = {
         "handle": final_link,
         "uuid": item_uuid,
+        "bitstream_uuid": primary_bitstream.get("uuid"),
         "primary_download_url": primary_download_url,
     }
+    if replace_existing:
+        result.update({
+            "status": "replaced",
+            "old_bitstream_uuids": replacement_old_bitstream_uuids,
+        })
+        if replacement_old_bitstream_uuids:
+            result["old_bitstream_uuid"] = replacement_old_bitstream_uuids[0]
     result.update(pdf_telemetry)
     result.update(additional_telemetry)
+    if result_callback:
+        result_callback(result)
     return result
 
 
 def process_integration_logic(
+    task_id, biblionumber, koha_client=None, dspace_client=None,
+    skip_optimization: bool = False, optimizer_client: PDFOptimizerClient | None = None,
+    dpi: int | None = None, state_machine: StateMachine | None = None,
+    force_file_refresh: bool = False,
+):
+    """Apply the durable Drive gate before the existing asynchronous workflow."""
+    options = dict(koha_client=koha_client, dspace_client=dspace_client,
+                   skip_optimization=skip_optimization, optimizer_client=optimizer_client, dpi=dpi)
+    if force_file_refresh and not os.environ.get("COVER_STATE_DB_PATH") and state_machine is None:
+        raise RuntimeError("COVER_STATE_DB_PATH is required for UI bitstream replacement")
+    if state_machine is None and not os.environ.get("COVER_STATE_DB_PATH"):
+        return _run_integration_logic(task_id, biblionumber, **options)
+    state = state_machine or StateMachine()
+    # ponytail: one writer across API/Robot processes; use per-record locks if throughput requires it.
+    with open(os.path.join(os.path.dirname(state.db_path), '.workflow.lock'), 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        koha = koha_client or KohaClient()
+        options['koha_client'] = koha
+        _ensure_koha_record_uid(koha, biblionumber)
+        meta = koha.get_biblio_metadata(biblionumber)
+        if force_file_refresh and (not meta or not meta.get('file_path')):
+            raise ValueError('UI bitstream replacement requires a 956$u Drive PDF source')
+        resolver = _source_resolver()
+        refs = {
+            'file': resolver.gdrive_parser.parse(meta.get('file_path'), '956$u') if meta else None,
+            'cover': resolver.gdrive_parser.parse(meta.get('cover_path'), '956$p') if meta else None,
+        }
+        if force_file_refresh and refs['file'] is None:
+            raise ValueError('UI bitstream replacement requires a 956$u Google Drive PDF')
+        if not any(refs.values()):
+            return _run_integration_logic(task_id, biblionumber, meta=meta, resolver=resolver, **options)
+        uid = meta.get('record_uid')
+        try:
+            if not uid or uuid.UUID(uid).version != 7:
+                raise ValueError('Drive workflow requires MARC 001 UUIDv7')
+            uid = str(uuid.UUID(uid))
+        except (ValueError, AttributeError):
+            raise ValueError('Drive workflow requires MARC 001 UUIDv7') from None
+        checks = {}
+        downstream_started = False
+        try:
+            existing = state.get(uid)
+            if existing is None:
+                state.mark_pending(uid)
+            state.set_biblionumber(uid, int(biblionumber))
+            existing = state.get(uid)
+            restore_missing_957_from_state(koha, biblionumber, meta, existing)
+            if existing:
+                meta = dict(
+                    meta,
+                    previous_dspace_item_uuid=existing['dspace_item_uuid'],
+                    previous_dspace_bitstream_uuid=existing['dspace_bitstream_uuid'],
+                )
+            if existing is not None and existing['status'] != 'ok' and not state.is_retry_eligible(uid):
+                return _deferred_result(state, uid)
+            inputs_sha = hashlib.sha256(json.dumps({
+                'file': refs['file'].file_id if refs['file'] else meta.get('file_path'),
+                'cover': refs['cover'].file_id if refs['cover'] else meta.get('cover_path'),
+                'additional': meta.get('additional_files'), 'collection': meta.get('collection_uuid'),
+                'dpi': dpi, 'skip_optimization': skip_optimization,
+            }, sort_keys=True).encode()).hexdigest()
+            checkpoint = state.get_cover_work(uid)
+            if checkpoint and checkpoint['inputs_sha256'] != inputs_sha:
+                checkpoint = None
+            for source, ref in refs.items():
+                if ref is not None:
+                    staged = checkpoint['sources'].get(source) if checkpoint else None
+                    if staged and staged[0] == ref.file_id:
+                        checks[source] = DriveCheckResult('resume', staged[1])
+                    elif (existing and existing['status'] == 'ok'
+                          and existing[f'{source}_source_id'] == ref.file_id
+                          and not (force_file_refresh and source == 'file')):
+                        # Another source's gate may already have marked the whole record pending.
+                        checks[source] = DriveCheckResult('noop')
+                    else:
+                        checks[source] = check_drive_metadata(
+                            state, uid, ref.file_id, source=source, resource_key=ref.resource_key,
+                            drive_source=resolver.gdrive_source,
+                            retry_checked=True,
+                            force_refresh=force_file_refresh and source == 'file',
+                        )
+                    logger.info('Drive gate record_uid=%r source=%s action=%s', uid, source, checks[source].action)
+                    if checks[source].action == 'deferred':
+                        return _deferred_result(state, uid)
+            file_work = bool(meta.get('file_path')) and (
+                'file' not in checks or checks['file'].action not in ('noop', 'same_content')
+            )
+            # Additional/local sources are not covered by the Drive identity gate.
+            file_work = file_work or bool(meta.get('additional_files'))
+            cover_work = (
+                checks['cover'].action not in ('noop', 'same_content') if 'cover' in checks
+                else bool(meta.get('cover_path')) or (file_work and (
+                    'file' not in checks or checks['file'].action not in ('noop', 'same_content')
+                ))
+            )
+            if checkpoint:
+                file_work = bool(checkpoint['file_work']) or force_file_refresh
+                cover_work = True
+            elif (refs['cover'] or (not meta.get('cover_path') and refs['file'])) and not (
+                existing and existing['cover_asset_sha256']
+            ):
+                # Upgrade confirmed legacy covers to the canonical WebP asset.
+                cover_work = True
+            if not file_work and not cover_work:
+                link_repair = _repair_missing_dspace_handle_link(
+                    koha, options['dspace_client'], biblionumber, meta, existing
+                )
+                if link_repair is True:
+                    return {'status': 'links_repaired'}
+                if link_repair != 'missing':
+                    return {'status': 'noop', 'reason': 'confirmed_sources_unchanged'}
+                # A 404 proves the saved DSpace identity is stale. Reconcile by
+                # koha.uid and recreate from the unchanged Drive source if absent.
+                if refs['file'] is not None:
+                    checks['file'] = check_drive_metadata(
+                        state, uid, refs['file'].file_id, source='file',
+                        resource_key=refs['file'].resource_key,
+                        drive_source=resolver.gdrive_source, retry_checked=True,
+                        force_refresh=True,
+                    )
+                    if checks['file'].action == 'deferred':
+                        return _deferred_result(state, uid)
+                    if checks['file'].action == 'same_content':
+                        checks['file'] = DriveCheckResult(
+                            'resource_changed', checks['file'].sha256, checks['file'].metadata
+                        )
+                file_work = True
+                # Keep the old Item UUID to reject an unrelated legacy
+                # biblionumber match; its bitstream cannot belong to a new Item.
+                meta = dict(meta, previous_dspace_bitstream_uuid=None)
+            if not state.mark_pending(uid):
+                return _deferred_result(state, uid)
+            downstream_started = True
+            current = state.get(uid)
+            sources = {
+                source: (ref.file_id, checks[source].sha256 or current[f'{source}_source_sha256'])
+                for source, ref in refs.items() if ref is not None
+            }
+            if (cover_work or file_work) and (refs['cover'] or (not meta.get('cover_path') and refs['file'])):
+                if not cover_work and not checkpoint:
+                    state.save_cover_work(
+                        uid, inputs_sha, sources, existing['cover_asset_sha256'],
+                        file_work=file_work,
+                    )
+                    checkpoint = state.get_cover_work(uid)
+                result = _run_external_cover_cycle(
+                    task_id, biblionumber, state, uid, inputs_sha, sources,
+                    meta, resolver, checks, file_work, checkpoint, options,
+                )
+            else:
+                result = _run_integration_logic(
+                    task_id, biblionumber, meta=meta, resolver=resolver, checks=checks,
+                    file_work=file_work, cover_work=cover_work, strict=True,
+                    source_shas={source: value[1] for source, value in sources.items()}, **options,
+                )
+            state.complete_cycle(uid, sources, result)
+            return result
+        except Exception as error:
+            # Metadata failures already incremented/saturated their own retry state.
+            if downstream_started:
+                state.record_result(uid, success=False, partial=True,
+                                    permanent=_is_permanent_integration_error(error),
+                                    reason=("invalid_pdf_cover" if isinstance(error, InvalidPDFCoverError)
+                                            else type(error).__name__))
+            if isinstance(error, DriveMetadataError):
+                koha.set_status(biblionumber, 'error', str(error))
+            raise
+
+
+def _deferred_result(state, uid):
+    detail = state.get_deferred(uid) or {
+        "record_uid": uid, "reason": "cutoff", "retry_count": None,
+        "next_retry_at": None, "failure_reason": None,
+    }
+    detail["status"] = "deferred"
+    detail["message"] = (
+        "Потрібне втручання оператора: досягнуто ліміт повторів"
+        if detail["reason"] == "cutoff"
+        else f"Очікує автоматичного повтору після {detail['next_retry_at']}"
+    )
+    logger.warning(
+        "Integration deferred record_uid=%r reason=%s retry_count=%s next_retry_at=%s",
+        uid, detail["reason"], detail["retry_count"], detail["next_retry_at"] or "operator_intervention",
+    )
+    return detail
+
+
+def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
+                              sources, meta, resolver, checks, file_work, checkpoint, options):
+    configured = os.environ.get('COVERS_STORAGE_PATH')
+    if not configured:
+        raise ValueError('COVERS_STORAGE_PATH is required for external cover write-back')
+    if checkpoint:
+        asset_sha = checkpoint['cover_asset_sha256']
+        if re.fullmatch(r'[0-9a-f]{64}', asset_sha) is None:
+            raise ValueError('Invalid checkpoint asset SHA')
+        asset = Path(configured) / 'assets' / f'{asset_sha}.webp'
+        # Validate the durable asset; publish_cover reuses it without rewriting.
+        publish_cover(asset, expected_sha256=asset_sha)
+    else:
+        with tempfile.TemporaryDirectory(prefix='kdv-cover-normalize-') as temporary:
+            output = Path(temporary) / 'cover.webp'
+            if meta.get('cover_path'):
+                normalized = download_and_normalize(
+                    meta['cover_path'], output, resolver=resolver, metadata=checks['cover'].metadata,
+                )
+                if normalized['source_sha256'] != sources['cover'][1]:
+                    raise RuntimeError('Cover source SHA changed after the Drive gate')
+                asset_sha = normalized['cover_asset_sha256']
+            else:
+                primary = resolver.resolve_primary(meta['file_path'])
+                primary = resolver.materialize(primary, metadata=checks['file'].metadata)
+                _verify_drive_download(primary.local_path, sources['file'][1])
+                asset_sha = render_pdf_cover(primary.local_path, output)
+            publish_cover(output, expected_sha256=asset_sha)
+        state.save_cover_work(uid, inputs_sha, sources, asset_sha, file_work=file_work)
+    result = checkpoint['result'] if checkpoint else None
+    if file_work and result is None:
+        # Explicit Drive covers use WebP; the legacy PDF cover fallback is Phase 5.
+        def checkpoint_dspace_result(dspace_result):
+            state.save_cover_work(
+                uid, inputs_sha, sources, asset_sha, file_work=True,
+                result=dspace_result,
+            )
+
+        result = _run_integration_logic(
+            task_id, biblionumber, meta=meta, resolver=resolver, checks=checks,
+            file_work=True, cover_work=False, strict=True, write_back=False,
+            source_shas={source: value[1] for source, value in sources.items()},
+            result_callback=checkpoint_dspace_result, **options,
+        )
+        state.save_cover_work(uid, inputs_sha, sources, asset_sha, file_work=True, result=result)
+    koha = options['koha_client']
+    if file_work:
+        confirmed = koha.set_success(
+            biblionumber, result['handle'], item_uuid=result['uuid'], cover_url=asset_sha,
+            primary_download_url=result.get('primary_download_url'),
+        )
+    else:
+        confirmed = koha.set_cover_url(biblionumber, asset_sha)
+    if confirmed is not True:
+        raise RuntimeError('Koha cover write-back was not confirmed')
+    readback = koha.get_biblio_metadata(biblionumber)
+    if (not readback or readback.get('cover_asset_sha256') != asset_sha
+            or str(readback.get('record_uid')).lower() != uid):
+        raise RuntimeError('Koha 957$c read-back was not confirmed')
+    if file_work and readback.get('dspace_uuid') != result['uuid']:
+        raise RuntimeError('Koha 957$3 read-back was not confirmed')
+    if file_work and any(link not in readback.get('dspace_links', []) for link in (
+        result['handle'], result.get('primary_download_url'),
+    ) if link):
+        raise RuntimeError('Koha 856 read-back was not confirmed')
+    old_bitstream_uuids = (
+        result.get('old_bitstream_uuids') or
+        ([result['old_bitstream_uuid']] if result.get('old_bitstream_uuid') else [])
+    ) if file_work and result else []
+    logger.info(
+        'DSpace replacement cleanup item_uuid=%s old_bitstream_uuids=%s new_bitstream_uuid=%s',
+        result.get('uuid') if file_work and result else None,
+        old_bitstream_uuids,
+        result.get('bitstream_uuid') if file_work and result else None,
+    )
+    for old_bitstream_uuid in old_bitstream_uuids:
+        if old_bitstream_uuid == result.get('bitstream_uuid'):
+            raise RuntimeError('DSpace replacement returned the existing bitstream UUID')
+        dspace = options['dspace_client'] or DSpaceClient()
+        dspace.delete_bitstream(old_bitstream_uuid)
+    return dict(result or {'status': 'cover_updated'}, cover_asset_sha256=asset_sha)
+
+
+def _run_integration_logic(
     task_id,
     biblionumber,
     koha_client=None,
@@ -519,6 +970,8 @@ def process_integration_logic(
     skip_optimization: bool = False,
     optimizer_client: PDFOptimizerClient | None = None,
     dpi: int | None = None,
+    *, meta=None, resolver=None, checks=None, file_work=True, cover_work=True, strict=False,
+    source_shas=None, write_back=True, result_callback=None,
 ):
     """Main orchestration logic executed inside a background thread.
 
@@ -535,16 +988,43 @@ def process_integration_logic(
 
     try:
         # --- 1. SERIAL PHASE: Checks & Rename ---
-        meta = koha.get_biblio_metadata(biblionumber)
+        if meta is None:
+            _ensure_koha_record_uid(koha, biblionumber)
+            meta = koha.get_biblio_metadata(biblionumber)
         if not meta:
             raise Exception("No 956 field found")
 
         file_rel_path = meta["file_path"]
         cover_rel_path = meta.get("cover_path")
-        source_resolver = _source_resolver()
-        cover_source = source_resolver.resolve_cover(cover_rel_path)
+        source_resolver = resolver or _source_resolver()
+        checks = checks or {}
+        source_shas = source_shas or {}
+        cover_source = source_resolver.resolve_cover(cover_rel_path) if cover_work else None
+        if cover_source and cover_source.source_type == 'gdrive':
+            cover_source = source_resolver.materialize(
+                cover_source, metadata=checks.get('cover').metadata if checks.get('cover') else None,
+                allowed_mime_types={'image/jpeg', 'image/png', 'image/webp'},
+            )
+            if strict:
+                _verify_drive_download(cover_source.local_path, source_shas.get('cover'))
+        if not file_work:
+            if not cover_source:
+                raise ValueError('Cover-only workflow requires an explicit cover source')
+            cover_res = cover_service.process_book(
+                str(biblionumber), None, os.path.dirname(cover_source.local_path),
+                cover_source_path=cover_source.local_path,
+            )
+            cover_url = _resolve_cover_url(koha, biblionumber, cover_res)
+            if not cover_url or koha.set_cover_url(biblionumber, cover_url) is not True:
+                raise RuntimeError('Koha cover write-back was not confirmed')
+            return {'status': 'cover_updated'}
         primary_source = source_resolver.resolve_primary(file_rel_path)
-        primary_source = source_resolver.materialize(primary_source)
+        if 'file' in checks:
+            primary_source = source_resolver.materialize(primary_source, metadata=checks['file'].metadata)
+        else:
+            primary_source = source_resolver.materialize(primary_source)
+        if strict and primary_source and primary_source.source_type == 'gdrive':
+            _verify_drive_download(primary_source.local_path, source_shas.get('file'))
         cover_source_path = cover_source.local_path if cover_source else None
         original_full_path = primary_source.local_path if primary_source else None
 
@@ -592,7 +1072,7 @@ def process_integration_logic(
                 current_active_path,
                 pdf_dir,
                 cover_source_path=cover_source_path,
-            )
+            ) if cover_work else None
 
             # Task B: DSpace
             future_dspace = executor.submit(
@@ -606,6 +1086,11 @@ def process_integration_logic(
                 optimizer_client=optimizer_client,
                 dpi=dpi,
                 upload_name=primary_source.original_name,
+                replace_existing=bool(
+                    strict and checks.get('file')
+                    and checks['file'].action in ('resource_changed', 'resume')
+                ),
+                result_callback=result_callback,
             )
 
             logger.info("⚡ [Core] Parallel tasks started: Cover + DSpace")
@@ -621,32 +1106,52 @@ def process_integration_logic(
             # Check Bonus Task (Cover)
             try:
                 # CoverService has its own Poppler/HTTP timeouts and retry guard.
-                cover_res = future_cover.result()
+                cover_res = future_cover.result() if future_cover else {'status': 'skipped'}
                 logger.info(f"🖼️ [Core] Cover result: {cover_res}")
                 cover_url = _resolve_cover_url(
                     koha,
                     biblionumber,
                     cover_res,
                     update_koha=dspace_error is not None,
-                )
+                ) if future_cover else None
+                if strict and future_cover and (
+                    not (cover_res.get('status') == 'success' or (
+                        cover_res.get('status') == 'skipped' and cover_res.get('reason') == 'exists_in_koha'
+                    )) or not cover_url
+                ):
+                    raise RuntimeError('Cover processing was not confirmed')
 
             except concurrent.futures.TimeoutError:
                 logger.warning("⚠️ [Core] Cover generation timeout.")
+                if strict:
+                    raise
             except Exception as e:
                 logger.warning(f"⚠️ [Core] Cover Thread warning: {e}")
+                if strict:
+                    raise
 
             if dspace_error is not None:
                 raise dspace_error
 
         # --- 3. FINALIZE ---
+        if strict and not dspace_result:
+            raise RuntimeError('DSpace processing was not confirmed')
         if dspace_result:
-            koha.set_success(
+            if strict and dspace_result.get('additional_files_failed'):
+                raise RuntimeError('Additional file processing was not confirmed')
+            if strict and dspace_result.get('status') == 'linked_existing' and (
+                checks.get('file') and checks['file'].action in ('resource_changed', 'resume')
+            ):
+                raise RuntimeError('Changed Drive PDF requires DSpace bitstream replacement; existing link is insufficient')
+            confirmed = koha.set_success(
                 biblionumber,
                 dspace_result["handle"],
                 item_uuid=dspace_result["uuid"],
                 cover_url=cover_url,
                 primary_download_url=dspace_result.get("primary_download_url"),
-            )
+            ) if write_back else True
+            if strict and confirmed is not True:
+                raise RuntimeError('Koha write-back was not confirmed')
 
         return dspace_result
 

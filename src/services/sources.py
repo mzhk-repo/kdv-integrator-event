@@ -129,7 +129,10 @@ class GoogleDriveSource:
         )
         self.drive_client = drive_client
 
-    def materialize(self, source: ResolvedSource) -> ResolvedSource:
+    def materialize(
+        self, source: ResolvedSource, *, metadata: dict | None = None,
+        allowed_mime_types: set[str] | None = None,
+    ) -> ResolvedSource:
         if source.source_type != "gdrive":
             return source
 
@@ -149,8 +152,8 @@ class GoogleDriveSource:
                 raise GoogleDriveDownloadError("Google Drive file_id is missing")
 
             client = self.drive_client or self._build_google_drive_client()
-            metadata = self._get_metadata(client, file_id, resource_key)
-            self._validate_metadata(metadata)
+            metadata = metadata if metadata is not None else self._get_metadata(client, file_id, resource_key)
+            self._validate_metadata(metadata, allowed_mime_types=allowed_mime_types)
 
             original_name = self._safe_original_name(metadata.get("name") or file_id)
             deleted = self.cleanup_stale_files()
@@ -315,7 +318,16 @@ class GoogleDriveSource:
             cache_discovery=False,
         )
 
-    def _get_metadata(self, client, file_id: str, resource_key: str | None) -> dict:
+    def get_metadata(self, file_id: str, resource_key: str | None = None) -> dict:
+        """Fetch binary source metadata/checksum without downloading content."""
+        if not self.enabled:
+            raise GoogleDriveDownloadError("Google Drive source is disabled")
+        client = self.drive_client or self._build_google_drive_client()
+        return self._get_metadata(client, file_id, resource_key, include_checksum=True)
+
+    def _get_metadata(
+        self, client, file_id: str, resource_key: str | None, *, include_checksum: bool = False
+    ) -> dict:
         if hasattr(client, "get_metadata"):
             return client.get_metadata(file_id=file_id, resource_key=resource_key)
 
@@ -324,9 +336,12 @@ class GoogleDriveSource:
             "fields": "id,name,mimeType,size,capabilities/canDownload",
             "supportsAllDrives": True,
         }
+        if include_checksum:
+            params["fields"] += ",sha256Checksum"
+        request = client.files().get(**params)
         if resource_key:
-            params["resourceKey"] = resource_key
-        return client.files().get(**params).execute()
+            request.headers["X-Goog-Drive-Resource-Keys"] = f"{file_id}/{resource_key}"
+        return request.execute()
 
     def _download_to_file(
         self, client, file_id: str, resource_key: str | None, part_path: str
@@ -348,18 +363,18 @@ class GoogleDriveSource:
             ) from exc
 
         params = {"fileId": file_id, "supportsAllDrives": True}
-        if resource_key:
-            params["resourceKey"] = resource_key
         request = client.files().get_media(**params)
+        if resource_key:
+            request.headers["X-Goog-Drive-Resource-Keys"] = f"{file_id}/{resource_key}"
         with open(part_path, "wb") as stream:
             downloader = MediaIoBaseDownload(stream, request)
             done = False
             while not done:
                 _status, done = downloader.next_chunk()
 
-    def _validate_metadata(self, metadata: dict) -> None:
+    def _validate_metadata(self, metadata: dict, *, allowed_mime_types: set[str] | None = None) -> None:
         mime_type = metadata.get("mimeType")
-        if mime_type not in self.allowed_mime_types:
+        if mime_type not in (allowed_mime_types or self.allowed_mime_types):
             raise GoogleDriveDownloadError("Google Drive file mime type is not allowed")
 
         can_download = metadata.get("capabilities", {}).get("canDownload", True)
@@ -472,6 +487,9 @@ class SourceResolver:
         )
 
     def resolve_cover(self, raw_path: str | None) -> ResolvedSource | None:
+        gdrive_ref = self.gdrive_parser.parse(raw_path, "956$p")
+        if gdrive_ref:
+            return self._resolve_gdrive(gdrive_ref, "956$p")
         return self.local_source.resolve(
             raw_path,
             "956$p",
@@ -493,11 +511,11 @@ class SourceResolver:
         resolved = self.local_source.resolve(raw_path, field_name)
         return resolved.local_path if resolved else None
 
-    def materialize(self, source: ResolvedSource | None) -> ResolvedSource | None:
+    def materialize(self, source: ResolvedSource | None, **kwargs) -> ResolvedSource | None:
         if source is None:
             return None
         if source.source_type == "gdrive":
-            return self.gdrive_source.materialize(source)
+            return self.gdrive_source.materialize(source, **kwargs)
         return source
 
     def _resolve_gdrive(

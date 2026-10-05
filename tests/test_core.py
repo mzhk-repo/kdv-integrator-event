@@ -10,6 +10,7 @@ from src.tasks import task_manager
 from src.services.pdf import OptimizeResult
 from src.services.sources import GoogleDriveSource, SourceResolver
 from src.koha import KohaClient, KohaRestError
+from src.dspace import DSpaceRestError
 
 
 class DummyKohaResponse:
@@ -73,7 +74,7 @@ class StubDSpace:
     def __init__(self):
         self.uploaded = []
 
-    def find_item_by_biblionumber(self, num):
+    def find_item_by_record_uid(self, uid):
         return None
 
     def create_item_direct(self, uuid, md):
@@ -166,6 +167,182 @@ def test_run_dspace_with_stubs(tmp_path):
     assert dspace.uploaded[0][0] == "u1"
 
 
+def test_run_dspace_associates_new_item_with_record_uid(tmp_path):
+    pdf = tmp_path / "record.pdf"
+    pdf.write_bytes(b"pdf")
+    dspace = StubDSpace()
+    created = {}
+    dspace.find_item_by_record_uid = lambda uid: None
+    original_create = dspace.create_item_direct
+
+    def create_item(collection_uuid, metadata):
+        created.update(metadata)
+        return original_create(collection_uuid, metadata)
+
+    dspace.create_item_direct = create_item
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+    )
+
+    assert created["koha.uid"] == uid
+    assert result["handle"].endswith("/handle/1/2")
+
+
+def test_run_dspace_retry_uploads_missing_first_bitstream_to_same_item(tmp_path):
+    pdf = tmp_path / "record.pdf"
+    pdf.write_bytes(b"pdf")
+    dspace = StubDSpace()
+    dspace.find_item_by_record_uid = lambda uid: {"uuid": "existing-item", "handle": "1/2"}
+    dspace.get_primary_bitstream = lambda item_uuid: None
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+    )
+
+    assert dspace.uploaded == [("existing-item", str(pdf), "record.pdf")]
+    assert result["uuid"] == "existing-item"
+    assert result["handle"].endswith("/handle/1/2")
+
+
+def test_run_dspace_reuses_existing_uid_item_and_handle(tmp_path):
+    pdf = tmp_path / "record.pdf"
+    pdf.write_bytes(b"pdf")
+    dspace = StubDSpace()
+    dspace.find_item_by_record_uid = lambda uid: {"uuid": "existing-item", "handle": "1/2"}
+    dspace.get_primary_bitstream = lambda item_uuid: {"uuid": "existing-bitstream"}
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace,
+    )
+
+    assert result["handle"].endswith("/handle/1/2")
+    assert result["uuid"] == "existing-item"
+    assert dspace.uploaded == []
+
+
+def test_run_dspace_replacement_verifies_and_swaps_primary_without_deleting_old(tmp_path):
+    class ReplaceDSpace(StubDSpace):
+        def __init__(self):
+            super().__init__()
+            self.primary_uuid = "old-bitstream"
+            self.operations = []
+
+        def find_item_by_record_uid(self, _uid):
+            return {"uuid": "existing-item", "handle": "1/2"}
+
+        def get_primary_bitstream(self, _item_uuid):
+            return {"uuid": self.primary_uuid} if self.primary_uuid else None
+
+        def get_original_bitstreams(self, _item_uuid):
+            return [{"uuid": "old-bitstream", "name": "replacement.pdf"}]
+
+        def upload_to_item(self, item_uuid, path, upload_name=None):
+            self.uploaded.append((item_uuid, path, upload_name))
+            return {"uuid": "new-bitstream"}
+
+        def verify_bitstream_upload(self, bitstream_uuid, _path):
+            self.operations.append(("verify", bitstream_uuid))
+            return True
+
+        def set_primary_bitstream(self, _item_uuid, bitstream_uuid):
+            self.operations.append(("set_primary", bitstream_uuid))
+            self.primary_uuid = bitstream_uuid
+
+    pdf = tmp_path / "replacement.pdf"
+    pdf.write_bytes(b"new pdf")
+    dspace = ReplaceDSpace()
+    uid = "018f0f00-0000-7000-8000-000000000001"
+
+    result = run_dspace_workflow(
+        5, str(pdf), {"collection_uuid": "coll", "record_uid": uid},
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+        replace_existing=True,
+    )
+
+    assert result["status"] == "replaced"
+    assert result["old_bitstream_uuid"] == "old-bitstream"
+    assert result["bitstream_uuid"] == "new-bitstream"
+    assert dspace.operations == [
+        ("verify", "new-bitstream"), ("set_primary", "new-bitstream")
+    ]
+
+
+@pytest.mark.parametrize('old_name,stored_uuid', [
+    ('replacement.pdf', None),
+    ('renamed-old.pdf', 'legacy-pdf'),
+    ('renamed-old.pdf', 'missing-bitstream'),
+])
+def test_run_dspace_replacement_recovers_old_named_bitstream_without_primary(tmp_path, old_name, stored_uuid):
+    class NoPrimaryDSpace(StubDSpace):
+        def __init__(self):
+            super().__init__()
+            self.primary_uuid = None
+            self.primary_set = None
+
+        def find_item_by_record_uid(self, _uid):
+            return {"uuid": "existing-item", "handle": "1/2"}
+
+        def get_item(self, item_uuid):
+            return {'uuid': item_uuid, 'handle': '1/2', 'metadata': {
+                'koha.uid': [{'value': '018f0f00-0000-7000-8000-000000000001'}],
+            }}
+
+        def get_primary_bitstream(self, _item_uuid):
+            return {"uuid": self.primary_uuid} if self.primary_uuid else None
+
+        def get_original_bitstreams(self, _item_uuid):
+            return [
+                {"uuid": "legacy-pdf", "name": old_name},
+                {"uuid": "other-file", "name": "supplement.pdf"},
+            ]
+
+        def upload_to_item(self, item_uuid, path, upload_name=None):
+            self.uploaded.append((item_uuid, path, upload_name))
+            return {"uuid": "new-bitstream"}
+
+        def verify_bitstream_upload(self, _bitstream_uuid, _path):
+            return True
+
+        def set_primary_bitstream(self, _item_uuid, bitstream_uuid):
+            self.primary_set = bitstream_uuid
+            self.primary_uuid = bitstream_uuid
+
+    pdf = tmp_path / "replacement.pdf"
+    pdf.write_bytes(b"new pdf")
+    dspace = NoPrimaryDSpace()
+    uid = "018f0f00-0000-7000-8000-000000000001"
+    meta = {
+        'collection_uuid': 'coll', 'record_uid': uid,
+        'previous_dspace_item_uuid': 'existing-item',
+        'previous_dspace_bitstream_uuid': stored_uuid,
+    }
+    if stored_uuid == 'missing-bitstream':
+        result = run_dspace_workflow(
+            5, str(pdf), meta, koha_client=StubKoha(), dspace_client=dspace,
+            skip_optimization=True, replace_existing=True,
+        )
+        assert result['old_bitstream_uuids'] == []
+        assert dspace.uploaded == [('existing-item', str(pdf), 'replacement.pdf')]
+        return
+
+    result = run_dspace_workflow(
+        5, str(pdf), meta,
+        koha_client=StubKoha(), dspace_client=dspace, skip_optimization=True,
+        replace_existing=True,
+    )
+
+    assert dspace.primary_set == "new-bitstream"
+    assert result["old_bitstream_uuids"] == ["legacy-pdf"]
+    assert result["bitstream_uuid"] == "new-bitstream"
+
+
 def test_task_manager_integration(tmp_path):
     # ensure task_manager propagates kwargs
     koha = StubKoha()
@@ -181,16 +358,16 @@ def test_task_manager_integration(tmp_path):
     info = None
     while time.time() < deadline:
         info = task_manager.get_status(task_id)
-        if info and info["status"] in ("success", "error"):
+        if info and info["status"] in ("success", "failed"):
             break
         time.sleep(0.05)
     assert info is not None
-    assert info["status"] in ("error", "success")
+    assert info["status"] in ("failed", "success")
     assert koha.status_log
 
 
 class ExistingItemDSpace(StubDSpace):
-    def find_item_by_biblionumber(self, num):
+    def find_item_by_record_uid(self, uid):
         return {"uuid": "existing-u1", "handle": "1/2"}
 
 
@@ -376,7 +553,11 @@ def test_run_dspace_existing_item_uploads_additional_files(tmp_path, monkeypatch
     res = run_dspace_workflow(
         75,
         str(primary),
-        {"collection_uuid": "coll", "additional_files": "extra.pdf"},
+        {
+            "collection_uuid": "coll",
+            "record_uid": "018f0f00-0000-7000-8000-000000000075",
+            "additional_files": "extra.pdf",
+        },
         koha_client=koha,
         dspace_client=dspace,
         skip_optimization=True,
@@ -1100,3 +1281,101 @@ def test_process_integration_local_primary_still_moves_to_error_on_failure(
         )
 
     assert (mount / "Error" / "biblio_5_v01.pdf").exists()
+
+
+class UnindexedDSpace(StubDSpace):
+    """Discovery lags, but Item GET remains authoritative."""
+    def __init__(self):
+        super().__init__()
+        self.items = {}
+        self.primary = {}
+        self.creates = 0
+        self.searches = 0
+        self.get_error = None
+
+    def find_item_by_record_uid(self, uid):
+        self.searches += 1
+        return None
+
+    def create_item_direct(self, collection_uuid, md):
+        self.creates += 1
+        item_uuid = f'item-{self.creates}'
+        self.items[item_uuid] = {
+            'uuid': item_uuid, 'handle': f'1/{self.creates}',
+            'metadata': {'koha.uid': [{'value': md['koha.uid']}]},
+        }
+        return self.items[item_uuid]
+
+    def get_item(self, item_uuid):
+        if self.get_error is not None:
+            raise self.get_error
+        if item_uuid not in self.items:
+            raise DSpaceRestError('Item deleted', status_code=404)
+        return self.items[item_uuid]
+
+    def get_primary_bitstream(self, item_uuid):
+        return self.primary.get(item_uuid)
+
+    def get_original_bitstreams(self, item_uuid):
+        return [self.primary[item_uuid]] if item_uuid in self.primary else []
+
+    def verify_bitstream_upload(self, bitstream_uuid, path):
+        return True
+
+    def set_primary_bitstream(self, item_uuid, bitstream_uuid):
+        self.primary[item_uuid] = {'uuid': bitstream_uuid, 'name': 'record.pdf'}
+
+
+def test_dspace_reuses_saved_uid_item_despite_empty_index_and_recreates_only_after_404(tmp_path):
+    pdf = tmp_path / 'record.pdf'
+    pdf.write_bytes(b'PDF')
+    dspace = UnindexedDSpace()
+    meta = {'collection_uuid': 'coll', 'record_uid': '018f0f00-0000-7000-8000-000000000001'}
+
+    def run():
+        return run_dspace_workflow(
+            74, str(pdf), meta, koha_client=StubKoha(), dspace_client=dspace,
+            skip_optimization=True, replace_existing=True,
+        )
+
+    first = run()
+    meta.update(previous_dspace_item_uuid=first['uuid'], previous_dspace_bitstream_uuid=first['bitstream_uuid'])
+    second = run()
+    assert second['uuid'] == first['uuid']
+    assert dspace.creates == 1
+    assert dspace.searches == 1
+    assert second['old_bitstream_uuids'] == [first['bitstream_uuid']]
+
+    del dspace.items[first['uuid']]
+    third = run()
+    assert third['uuid'] != first['uuid']
+    assert dspace.creates == 2
+    assert dspace.searches == 2
+    assert third['old_bitstream_uuids'] == []
+
+
+@pytest.mark.parametrize('failure', [401, 403, 500, 'timeout', 'uid_mismatch'])
+def test_dspace_saved_item_errors_never_create_duplicates(tmp_path, failure):
+    pdf = tmp_path / 'record.pdf'
+    pdf.write_bytes(b'PDF')
+    dspace = UnindexedDSpace()
+    meta = {
+        'collection_uuid': 'coll', 'record_uid': '018f0f00-0000-7000-8000-000000000001',
+        'previous_dspace_item_uuid': 'saved-item',
+    }
+    dspace.items['saved-item'] = {
+        'uuid': 'saved-item', 'handle': '1/1',
+        'metadata': {'koha.uid': [{'value': meta['record_uid']}]},
+    }
+    if failure == 'uid_mismatch':
+        dspace.items['saved-item']['metadata']['koha.uid'][0]['value'] = 'another-record'
+    else:
+        dspace.get_error = DSpaceRestError('Unavailable', status_code=None if failure == 'timeout' else failure)
+    with pytest.raises(DSpaceRestError):
+        run_dspace_workflow(
+            74, str(pdf), meta, koha_client=StubKoha(), dspace_client=dspace,
+            skip_optimization=True, replace_existing=True,
+        )
+    assert dspace.creates == 0
+    assert dspace.searches == 0
+    assert dspace.uploaded == []

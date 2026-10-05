@@ -24,4 +24,8 @@ if [[ -d "${SECRETS_DIR}" ]]; then
     done
 fi
 
+# The Swarm task's mounts and runtime environment are available here. Apply the
+# idempotent migration before starting the API, and fail startup on migration error.
+python -m src.cover_state.schema
+
 exec "$@"

@@ -31,9 +31,9 @@ RUN chmod +x src/wait_for_drive.sh scripts/entrypoint.sh
 # 2. Вказуємо його як точку входу (ENTRYPOINT)
 # Тепер контейнер спочатку запустить цей скрипт, дочекається файлів,
 # і тільки потім виконає команду CMD.
-ENTRYPOINT ["/app/src/wait_for_drive.sh"]
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 # -------------------------------------------------
 
 # Запускаємо веб-сервер на порту 8000
-# Ця команда передається як аргумент ($@) у wait_for_drive.sh
+# Compose may wrap the server command with wait_for_drive.sh.
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

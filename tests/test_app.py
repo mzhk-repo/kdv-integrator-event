@@ -15,6 +15,7 @@ os.environ.setdefault("DSPACE_API_PASS", "pass")
 os.environ.setdefault("INTEGRATOR_MOUNT_PATH", "/tmp")
 
 from src.app import _EXPORT_RUN_LOCK, _run_export_task, app
+app.testing = True
 
 
 def test_health_endpoint_is_public_and_ok():
@@ -138,7 +139,27 @@ def test_integrate_without_payload_defaults_to_optimization(monkeypatch):
     assert response.get_json()["task_id"] == "task-1"
     assert captured["biblionumber"] == 123
     assert captured["kwargs"]["skip_optimization"] is False
-    assert captured["kwargs"]["dpi"] is None
+
+
+def test_put_integrate_queues_metadata_and_bitstream_refresh(monkeypatch):
+    client = app.test_client()
+    captured = {}
+    monkeypatch.setenv("COVER_STATE_DB_PATH", "/tmp/cover-state-test.db")
+    monkeypatch.setattr("src.app._make_clients", lambda: ("koha", "dspace"))
+
+    def start_task(func, biblionumber, **kwargs):
+        captured.update(func=func, biblionumber=biblionumber, kwargs=kwargs)
+        return "task-123"
+
+    monkeypatch.setattr("src.app.task_manager.start_task", start_task)
+    response = client.put(
+        "/kdv/api/integrate/123", headers={"X-KDV-TOKEN": "test-token"}
+    )
+
+    assert response.status_code == 202
+    assert response.get_json() == {"status": "accepted", "task_id": "task-123"}
+    assert captured["biblionumber"] == 123
+    assert captured["kwargs"]["force_file_refresh"] is True
 
 
 def test_integrate_accepts_skip_optimization_true(monkeypatch):
@@ -406,5 +427,105 @@ def test_export_run_rejects_parallel_run(monkeypatch):
         )
     finally:
         _EXPORT_RUN_LOCK.release()
+
+    assert response.status_code == 409
+
+
+def test_cutoff_retry_endpoint_resets_state_and_queues_task(tmp_path, monkeypatch):
+    from src.cover_state.state_machine import StateMachine
+
+    monkeypatch.setenv("COVER_STATE_DB_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("MAX_RETRY_COUNT", "1")
+    state = StateMachine()
+    state.mark_pending("record-uid")
+    state.set_biblionumber("record-uid", 70)
+    state.record_result("record-uid", success=False, permanent=True, reason="missing_checksum")
+
+    class Koha:
+        def get_biblio_metadata(self, _biblionumber):
+            return {"record_uid": "record-uid"}
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app._make_clients", lambda: (Koha(), object()))
+    queued = {}
+    monkeypatch.setattr(
+        "src.app.task_manager.start_task",
+        lambda func, bib, **kwargs: queued.update(func=func, bib=bib, kwargs=kwargs) or "retry-task",
+    )
+    client = app.test_client()
+    headers = {"X-KDV-TOKEN": "test-token"}
+
+    response = client.get("/kdv/api/integrate/70/retry-state", headers=headers)
+    assert response.get_json()["reason"] == "cutoff"
+    response = client.post("/kdv/api/integrate/70/retry", headers=headers)
+    assert response.status_code == 202
+    assert queued["bib"] == 70
+    assert state.get("record-uid")["retry_count"] == 0
+
+
+def test_delete_cover_detaches_koha_and_state_but_retains_asset(tmp_path, monkeypatch):
+    from src.cover_state.state_machine import StateMachine
+
+    db_path = tmp_path / "state.db"
+    monkeypatch.setenv("COVER_STATE_DB_PATH", str(db_path))
+    monkeypatch.setenv("MAX_RETRY_COUNT", "3")
+    state = StateMachine()
+    state.mark_pending("record-uid")
+    state.complete_cycle(
+        "record-uid", {"cover": ("drive-id", "source-sha")},
+        {"cover_asset_sha256": "a" * 64},
+    )
+    asset = tmp_path / "assets" / f"{'a' * 64}.webp"
+    asset.parent.mkdir()
+    asset.write_bytes(b"webp")
+
+    class Koha:
+        def get_biblio_metadata(self, _biblionumber):
+            return {"record_uid": "record-uid", "cover_asset_sha256": "a" * 64}
+
+        def remove_cover(self, _biblionumber, *, record_uid):
+            assert record_uid == "record-uid"
+            return True
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app._make_clients", lambda: (Koha(), object()))
+    response = app.test_client().delete(
+        "/kdv/api/integrate/42/cover",
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "cover_removed", "asset_deleted": False}
+    row = state.get("record-uid")
+    assert row["cover_source_id"] is None
+    assert row["cover_source_sha256"] is None
+    assert row["cover_asset_sha256"] is None
+    assert asset.read_bytes() == b"webp"
+
+
+def test_delete_cover_rejects_unfinished_cycle(tmp_path, monkeypatch):
+    from src.cover_state.state_machine import StateMachine
+
+    monkeypatch.setenv("COVER_STATE_DB_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("MAX_RETRY_COUNT", "3")
+    state = StateMachine()
+    state.mark_pending("record-uid")
+
+    class Koha:
+        def get_biblio_metadata(self, _biblionumber):
+            return {"record_uid": "record-uid"}
+
+        def remove_cover(self, *_args, **_kwargs):
+            pytest.fail("must not mutate Koha during an unfinished cycle")
+
+    monkeypatch.setattr("src.app.KDV_AUTH_MODE", "legacy")
+    monkeypatch.setattr("src.app.KDV_API_TOKEN", "test-token")
+    monkeypatch.setattr("src.app._make_clients", lambda: (Koha(), object()))
+    response = app.test_client().delete(
+        "/kdv/api/integrate/42/cover",
+        headers={"X-KDV-TOKEN": "test-token"},
+    )
 
     assert response.status_code == 409

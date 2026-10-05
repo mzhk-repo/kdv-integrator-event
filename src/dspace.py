@@ -1,4 +1,5 @@
 import os
+import hashlib
 import requests
 import logging
 import time
@@ -9,7 +10,9 @@ logger = logging.getLogger("DSpaceClient")
 
 
 class DSpaceRestError(RuntimeError):
-    pass
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class DSpaceClient:
@@ -82,28 +85,65 @@ class DSpaceClient:
         return None
 
     def find_item_by_biblionumber(self, biblionumber):
+        """Legacy lookup retained for the standalone Nightwalker script."""
         endpoint = "/discover/search/objects"
-        query = f"koha.biblionumber:{biblionumber}"
-        params = {"query": query, "dsoType": "item"}
-
+        params = {"query": f"koha.biblionumber:{biblionumber}", "dsoType": "item"}
         resp = self._request("GET", endpoint, params=params)
         if resp is not None and resp.status_code == 200:
             try:
-                data = resp.json()
                 results = (
-                    data.get("_embedded", {})
-                    .get("searchResult", {})
-                    .get("_embedded", {})
-                    .get("objects", [])
+                    resp.json().get("_embedded", {}).get("searchResult", {})
+                    .get("_embedded", {}).get("objects", [])
                 )
                 if results:
-                    first_hit = results[0]["_embedded"]["indexableObject"]
-                    return {
-                        "uuid": first_hit["uuid"],
-                        "handle": first_hit.get("handle"),
-                    }
-            except Exception:
+                    item = results[0]["_embedded"]["indexableObject"]
+                    return {"uuid": item["uuid"], "handle": item.get("handle")}
+            except (AttributeError, KeyError, TypeError, IndexError):
                 pass
+        return None
+
+    def find_item_by_record_uid(self, record_uid):
+        """Find the DSpace item linked to a Koha MARC 001 UUID."""
+        resp = self._request(
+            "GET",
+            "/discover/search/objects",
+            params={"query": f"koha.uid:{record_uid}", "dsoType": "item", "size": 2},
+        )
+        if resp is None or resp.status_code != 200:
+            self._raise_rest_error("DSpace find item by record UID", "/discover/search/objects", resp)
+        try:
+            embedded = resp.json()["_embedded"]
+            search_results = embedded.get("searchResults", embedded.get("searchResult"))
+            page = search_results["page"]
+            total = page["totalElements"]
+            if type(total) is not int or total < 0:
+                raise DSpaceRestError("Invalid DSpace record UID search count")
+            hits = search_results.get("_embedded", {}).get("objects", [])
+            if not isinstance(hits, list):
+                raise DSpaceRestError("Invalid DSpace record UID search objects")
+            if total > 1 or len(hits) > 1:
+                raise DSpaceRestError("Multiple DSpace items match record UID")
+            if total != len(hits):
+                raise DSpaceRestError("Inconsistent DSpace record UID search count")
+            if not hits:
+                return None
+            item = hits[0].get("_embedded", {}).get("indexableObject", {})
+            item_uuid = item.get("uuid")
+            if not item_uuid:
+                raise DSpaceRestError("DSpace record UID search result has no Item UUID")
+            item_resp = self._request("GET", f"/core/items/{item_uuid}")
+            if item_resp is None or item_resp.status_code != 200:
+                self._raise_rest_error(
+                    "DSpace verify record UID", f"/core/items/{item_uuid}", item_resp
+                )
+            values = item_resp.json().get("metadata", {}).get("koha.uid", [])
+            if not any(value.get("value") == record_uid for value in values):
+                raise DSpaceRestError("DSpace search Item does not match record UID")
+            return {"uuid": item_uuid, "handle": item.get("handle")}
+        except DSpaceRestError:
+            raise
+        except (AttributeError, KeyError, TypeError, IndexError):
+            raise DSpaceRestError("Invalid DSpace record UID search response") from None
         return None
 
     # 🟢 НОВИЙ МЕТОД
@@ -113,6 +153,13 @@ class DSpaceClient:
         if resp and resp.status_code == 200:
             return resp.json().get("lastModified")
         return None
+
+    def get_item(self, item_uuid):
+        endpoint = f"/core/items/{item_uuid}"
+        resp = self._request("GET", endpoint)
+        if resp is not None and resp.status_code == 200:
+            return resp.json()
+        self._raise_rest_error("DSpace get item", endpoint, resp)
 
     def _format_metadata_value(self, value):
         if isinstance(value, list):
@@ -148,7 +195,7 @@ class DSpaceClient:
                 f"({self._response_reason(resp)}) [{endpoint}]"
             )
         logger.error(msg)
-        raise DSpaceRestError(msg)
+        raise DSpaceRestError(msg, getattr(resp, "status_code", None))
 
     def update_metadata(self, item_uuid, metadata_dict):
         operations = []
@@ -209,23 +256,102 @@ class DSpaceClient:
         self._raise_rest_error("DSpace create item", "/core/items", resp)
 
     def get_primary_bitstream(self, item_uuid):
-        bundle_uuid = None
-        resp = self._request("GET", f"/core/items/{item_uuid}/bundles")
-        if resp is not None and resp.status_code == 200:
-            for bundle in resp.json().get("_embedded", {}).get("bundles", []):
-                if bundle.get("name") == "ORIGINAL":
-                    bundle_uuid = bundle.get("uuid")
-                    break
-
+        bundle_uuid = self._get_original_bundle_uuid(item_uuid)
         if not bundle_uuid:
             return None
-
-        resp = self._request("GET", f"/core/bundles/{bundle_uuid}/bitstreams")
+        endpoint = f"/core/bundles/{bundle_uuid}/primaryBitstream"
+        resp = self._request("GET", endpoint)
+        if resp is not None and resp.status_code == 204:
+            return None
         if resp is not None and resp.status_code == 200:
-            bitstreams = resp.json().get("_embedded", {}).get("bitstreams", [])
-            if bitstreams:
-                return bitstreams[0]
-        return None
+            data = resp.json()
+            return data if data and data.get("uuid") else None
+        self._raise_rest_error("DSpace get primary bitstream", endpoint, resp)
+
+    def _get_original_bundle_uuid(self, item_uuid):
+        endpoint = f"/core/items/{item_uuid}/bundles"
+        resp = self._request("GET", endpoint)
+        if resp is None or resp.status_code != 200:
+            self._raise_rest_error("DSpace list item bundles", endpoint, resp)
+        return next((
+            bundle.get("uuid") for bundle in
+            resp.json().get("_embedded", {}).get("bundles", [])
+            if bundle.get("name") == "ORIGINAL"
+        ), None)
+
+    def get_original_bitstreams(self, item_uuid):
+        bundle_uuid = self._get_original_bundle_uuid(item_uuid)
+        if not bundle_uuid:
+            return []
+        endpoint = f"/core/bundles/{bundle_uuid}/bitstreams"
+        bitstreams = []
+        page = 0
+        while True:
+            resp = self._request(
+                "GET", endpoint, params={"page": page, "size": 100}
+            )
+            if resp is None or resp.status_code != 200:
+                self._raise_rest_error("DSpace list ORIGINAL bitstreams", endpoint, resp)
+            data = resp.json()
+            bitstreams.extend(data.get("_embedded", {}).get("bitstreams", []))
+            page_info = data.get("page", {})
+            if page + 1 >= page_info.get("totalPages", 1):
+                return bitstreams
+            page += 1
+
+    def set_primary_bitstream(self, item_uuid, bitstream_uuid):
+        bundle_uuid = self._get_original_bundle_uuid(item_uuid)
+        if not bundle_uuid:
+            raise DSpaceRestError("DSpace Item has no ORIGINAL bundle")
+        endpoint = f"/core/bundles/{bundle_uuid}/primaryBitstream"
+        bitstream_url = f"{self.base_url}/core/bitstreams/{bitstream_uuid}"
+        method = "PUT" if self.get_primary_bitstream(item_uuid) else "POST"
+        resp = self._request(
+            method, endpoint, data=bitstream_url,
+            headers={"Content-Type": "text/uri-list"},
+        )
+        if resp is not None and resp.status_code in ((200,) if method == "PUT" else (200, 201)):
+            return True
+        self._raise_rest_error("DSpace set primary bitstream", endpoint, resp)
+
+    def get_bitstream(self, bitstream_uuid):
+        endpoint = f"/core/bitstreams/{bitstream_uuid}"
+        resp = self._request("GET", endpoint)
+        if resp is not None and resp.status_code == 200:
+            data = resp.json()
+            if data.get("uuid") != bitstream_uuid:
+                raise DSpaceRestError("DSpace returned a mismatched bitstream UUID")
+            return data
+        self._raise_rest_error("DSpace get bitstream", endpoint, resp)
+
+    def verify_bitstream_upload(self, bitstream_uuid, file_path):
+        bitstream = self.get_bitstream(bitstream_uuid)
+        checksum = bitstream.get("checkSum") or {}
+        algorithm = checksum.get("checkSumAlgorithm", "").lower().replace("-", "")
+        try:
+            digest = hashlib.new(algorithm)
+        except (ValueError, TypeError):
+            raise DSpaceRestError("DSpace returned an unsupported bitstream checksum") from None
+        size = os.path.getsize(file_path)
+        if bitstream.get("sizeBytes") != size:
+            raise DSpaceRestError("Uploaded DSpace bitstream size does not match source")
+        with open(file_path, "rb") as file_handle:
+            for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest().lower() != checksum.get("value", "").lower():
+            raise DSpaceRestError("Uploaded DSpace bitstream checksum does not match source")
+        return True
+
+    def delete_bitstream(self, bitstream_uuid):
+        endpoint = f"/core/bitstreams/{bitstream_uuid}"
+        resp = self._request("DELETE", endpoint)
+        if resp is None or resp.status_code not in (200, 204, 404):
+            self._raise_rest_error("DSpace delete old bitstream", endpoint, resp)
+        check = self._request("GET", endpoint)
+        if check is None or check.status_code != 404:
+            self._raise_rest_error("DSpace verify old bitstream deletion", endpoint, check)
+        logger.info("Confirmed DSpace bitstream deleted uuid=%s", bitstream_uuid)
+        return True
 
     def upload_to_item(self, item_uuid, file_path, upload_name=None):
         if not os.path.exists(file_path):

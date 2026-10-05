@@ -19,7 +19,17 @@ def test_task_manager_marks_robot_batch_error_as_failed():
 
     manager._wrapper(task_id, failed_batch, (), {})
 
-    assert TASKS[task_id]["status"] == "error"
+    assert TASKS[task_id]["status"] == "failed"
     assert TASKS[task_id]["progress"] == "Failed"
     assert TASKS[task_id]["error"] == "Robot batch completed with errors: FAILED=1"
+    del TASKS[task_id]
+
+
+def test_task_manager_preserves_deferred_result_without_success():
+    task_id = "deferred-task"
+    TASKS[task_id] = {"status": "queued", "created_at": 0, "progress": "", "result": None, "error": None}
+    TaskManager()._wrapper(task_id, lambda _tid: {"status": "deferred", "message": "backoff"}, (), {})
+    assert TASKS[task_id]["status"] == "deferred"
+    assert TASKS[task_id]["progress"] == "backoff"
+    assert TASKS[task_id]["result"]["status"] == "deferred"
     del TASKS[task_id]

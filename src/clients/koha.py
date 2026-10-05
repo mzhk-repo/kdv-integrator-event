@@ -22,6 +22,9 @@ class KohaClientWrapper:
     def get_biblio_metadata(self, biblio_id):
         return self._client.get_biblio_metadata(biblio_id)
 
+    def ensure_record_uid(self, biblio_id):
+        return self._client.ensure_record_uid(biblio_id)
+
     def _get_biblio_xml(self, biblio_id):
         return self._client._get_biblio_xml(biblio_id)
 
@@ -46,6 +49,9 @@ class KohaClientWrapper:
 
     def set_cover_url(self, biblio_id, cover_url):
         return self._client.set_cover_url(biblio_id, cover_url)
+
+    def remove_cover(self, biblio_id, *, record_uid):
+        return self._client.remove_cover(biblio_id, record_uid=record_uid)
 
     def get_cover_image_url(self, biblionumber):
         return self._client.get_cover_image_url(biblionumber)

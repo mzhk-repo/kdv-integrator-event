@@ -17,6 +17,7 @@ RUNTIME_ENV_SECRET_BASE="${RUNTIME_ENV_SECRET_BASE:-}"
 RAW_MANIFEST=""
 DEPLOY_MANIFEST=""
 RUNTIME_ENV_FILE=""
+GC_TMP_DIR=""
 
 log() {
   printf '[deploy-orchestrator] %s\n' "$*"
@@ -29,6 +30,9 @@ cleanup() {
     "${RAW_MANIFEST:-}" \
     "${DEPLOY_MANIFEST:-}" \
     "${RUNTIME_ENV_FILE:-}"
+  if [[ -n "${GC_TMP_DIR:-}" ]]; then
+    rm -rf -- "${GC_TMP_DIR}"
+  fi
 
   for manifest in \
     "${PROJECT_ROOT}/.${STACK_NAME}.stack.raw."*.yml \
@@ -155,7 +159,100 @@ run_python_config_validation() {
 }
 
 run_deploy_adjacent_scripts() {
-  log "No deploy-adjacent scripts configured for this repository; skipping Category 1b phase"
+  local covers_path state_path backup_path
+  covers_path="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
+  state_path="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
+  backup_path="${COVER_STATE_BACKUP_HOST_PATH:-$(read_env_value COVER_STATE_BACKUP_HOST_PATH)}"
+  backup_path="${backup_path:-/backups/state-db}"
+
+  log "Initializing cover, state, and state backup directories on the deployment host"
+  if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true; then
+    log "ERROR: passwordless sudo is required to initialize host storage directories"
+    return 1
+  fi
+  sudo -n env \
+    "COVERS_STORAGE_HOST_PATH=${covers_path}" \
+    "COVER_STATE_HOST_PATH=${state_path}" \
+    "COVER_STATE_BACKUP_HOST_PATH=${backup_path}" \
+    bash "${SCRIPT_DIR}/init-volume.sh"
+}
+
+install_cover_gc_timer() {
+  local server_env covers_path state_path retention env_dir env_file env_tmp unit_tmp
+  server_env="${SERVER_ENV:-${ENVIRONMENT_NAME:-$(read_env_value SERVER_ENV)}}"
+  case "${server_env,,}" in
+    dev|development) server_env=dev ;;
+    prod|production) server_env=prod ;;
+    *) log "ERROR: SERVER_ENV must identify dev or prod to install cover GC"; return 1 ;;
+  esac
+  covers_path="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
+  state_path="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
+  retention="$(read_env_value COVER_ASSET_RETENTION_DAYS)"
+  retention="${retention:-90}"
+  if [[ ! "${covers_path}" =~ ^/[A-Za-z0-9._/-]+$ || ! "${state_path}" =~ ^/[A-Za-z0-9._/-]+$ || ! "${PROJECT_ROOT}" =~ ^/[A-Za-z0-9._/-]+$ || ! "${retention}" =~ ^[0-9]+$ || "${retention}" -lt 1 ]]; then
+    log "ERROR: invalid GC storage paths or retention in deployment environment"
+    return 1
+  fi
+  if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true; then
+    log "ERROR: passwordless sudo is required to install the cover GC systemd timer"
+    return 1
+  fi
+  env_dir=/etc/kdv-integrator
+  env_file="${env_dir}/cover-gc.env"
+  GC_TMP_DIR="$(mktemp -d)"
+  chmod 0700 "${GC_TMP_DIR}"
+  env_tmp="${GC_TMP_DIR}/cover-gc.env"
+  unit_tmp="${GC_TMP_DIR}/kdv-cover-gc.service"
+  umask 077
+  printf 'SERVER_ENV=%s\nCOVER_STATE_DB_PATH=%s/state.db\nCOVERS_STORAGE_PATH=%s\nCOVER_ASSET_RETENTION_DAYS=%s\n' \
+    "${server_env}" "${state_path}" "${covers_path}" "${retention}" > "${env_tmp}"
+  sed -e "s|@COVERS_STORAGE_HOST_PATH@|${covers_path}|g" \
+      -e "s|@COVER_STATE_HOST_PATH@|${state_path}|g" \
+      -e "s|@PROJECT_ROOT@|${PROJECT_ROOT}|g" \
+      "${SCRIPT_DIR}/../deploy/systemd/kdv-cover-gc.service" > "${unit_tmp}"
+  sudo -n install -d -m 0750 "${env_dir}"
+  sudo -n install -m 0600 "${env_tmp}" "${env_file}"
+  sudo -n install -m 0644 "${unit_tmp}" /etc/systemd/system/kdv-cover-gc.service
+  sudo -n install -m 0644 "${SCRIPT_DIR}/../deploy/systemd/kdv-cover-gc.timer" /etc/systemd/system/kdv-cover-gc.timer
+  sudo -n systemctl daemon-reload
+  sudo -n systemctl enable --now kdv-cover-gc.timer
+  rm -rf -- "${GC_TMP_DIR}"
+  GC_TMP_DIR=""
+  log "Cover GC systemd timer installed and enabled (${server_env}, retention=${retention}d)"
+}
+
+configure_covers_cdn() {
+  local base_url
+  base_url="${COVERS_CDN_BASE_URL:-$(read_env_value COVERS_CDN_BASE_URL)}"
+  COVERS_CDN_HOST="$(python3 - "${base_url}" <<'PY'
+import re
+import sys
+from urllib.parse import urlsplit
+
+try:
+    assert not any(char.isspace() for char in sys.argv[1])
+    url = urlsplit(sys.argv[1])
+    host = url.hostname or ""
+    assert url.scheme == "https" and url.netloc.lower() == host
+    assert not url.path and not url.query and not url.fragment
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host)
+    assert ".." not in host
+except (ValueError, AssertionError):
+    sys.exit("COVERS_CDN_BASE_URL must be a full HTTPS origin without credentials, port, path, query or fragment")
+print(host)
+PY
+  )"
+  COVERS_SWARM_NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
+  if [[ ! "${COVERS_SWARM_NODE_ID}" =~ ^[a-z0-9]+$ ]]; then
+    log "ERROR: cannot determine the local Swarm node for cover storage"
+    return 1
+  fi
+  # Export the exact same host paths used by init-volume, including overrides.
+  export COVERS_STORAGE_HOST_PATH="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
+  export COVERS_STORAGE_PATH="${COVERS_STORAGE_PATH:-$(read_env_value COVERS_STORAGE_PATH)}"
+  export COVER_STATE_HOST_PATH="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
+  COVERS_NGINX_CONFIG_NAME="${STACK_NAME}_covers_nginx_$(sha256sum "${SCRIPT_DIR}/../config/covers-cdn/nginx.conf" | cut -c1-12)"
+  export COVERS_CDN_HOST COVERS_SWARM_NODE_ID COVERS_NGINX_CONFIG_NAME
 }
 
 run_ansible_secrets_if_configured() {
@@ -367,6 +464,13 @@ repair_optimizer_volume_ownership() {
 # 2. Або відкотити compose + передеплоїти попередній GIT_SHA.
 # 3. DSpace/Koha дані не зачіпаються при будь-якому варіанті.
 
+normalize_swarm_manifest() {
+  awk 'NR==1 && $1=="name:" {next} {print}' \
+    | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
+    | sed -E 's/^([[:space:]]*cpus:[[:space:]]*)([0-9]+(\.[0-9]+)?)$/\1"\2"/' \
+    | sed -E 's/^([[:space:]]*size:[[:space:]]*)"([0-9]+)"$/\1\2/'
+}
+
 deploy_swarm() {
   local compose_file swarm_file deploy_args
 
@@ -395,6 +499,7 @@ deploy_swarm() {
   fi
 
   load_orchestrator_settings
+  configure_covers_cdn
   run_ansible_secrets_if_configured
   run_validation_scripts
   run_deploy_adjacent_scripts
@@ -408,10 +513,7 @@ deploy_swarm() {
     -f "${swarm_file}" \
     config > "${RAW_MANIFEST}"
 
-  awk 'NR==1 && $1=="name:" {next} {print}' "${RAW_MANIFEST}" \
-    | sed -E 's/^([[:space:]]*published:[[:space:]]*)"([0-9]+)"$/\1\2/' \
-    | sed -E 's/^([[:space:]]*cpus:[[:space:]]*)([0-9]+(\.[0-9]+)?)$/\1"\2"/' \
-    > "${DEPLOY_MANIFEST}"
+  normalize_swarm_manifest < "${RAW_MANIFEST}" > "${DEPLOY_MANIFEST}"
 
   log "Deploying stack ${STACK_NAME}"
   deploy_args=(docker stack deploy -c "${DEPLOY_MANIFEST}")
@@ -419,12 +521,17 @@ deploy_swarm() {
     deploy_args+=(--resolve-image never)
   fi
   deploy_args+=("${STACK_NAME}")
+  if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true; then
+    log "ERROR: passwordless sudo is required for the cover GC systemd timer; refusing Swarm changes"
+    exit 1
+  fi
   repair_optimizer_volume_ownership
+  install_cover_gc_timer
   "${deploy_args[@]}"
 
   verify_swarm_service "${SWARM_SERVICE_NAME}"
   verify_swarm_service "${STACK_NAME}_kdv-optimizer"
-
+  verify_swarm_service "${STACK_NAME}_covers-cdn"
   log "Swarm deploy completed"
 }
 

@@ -3,7 +3,9 @@ import logging
 import pymarc
 import os
 import re
+import secrets
 import time
+import uuid
 from io import BytesIO
 from urllib.parse import urljoin
 from pymarc import parse_xml_to_array, Field, Subfield
@@ -13,6 +15,19 @@ from requests.auth import HTTPBasicAuth
 from .config import KOHA_API_URL, KOHA_OPAC_URL, KOHA_USER, KOHA_PASS, TIMEOUT
 
 logger = logging.getLogger("KohaClient")
+
+
+def generate_uuid7() -> str:
+    timestamp_ms = time.time_ns() // 1_000_000
+    random_bits = secrets.randbits(74)
+    value = (
+        (timestamp_ms << 80)
+        | (7 << 76)
+        | ((random_bits >> 62) << 64)
+        | (0b10 << 62)
+        | (random_bits & ((1 << 62) - 1))
+    )
+    return str(uuid.UUID(int=value))
 
 
 class KohaRestError(RuntimeError):
@@ -101,14 +116,61 @@ class KohaClient:
             return None
 
         field = fields_956[0]
+        fields_957 = record.get_fields("957")
+        managed_field = fields_957[0] if fields_957 else None
         return {
+            "record_uid": record["001"].data.strip() if "001" in record else None,
             "file_path": self._get_subfield_safe(field, "u"),
             "cover_path": self._get_subfield_safe(field, "p"),
             "additional_files": self._get_subfield_safe(field, "q"),
             "collection_uuid": self._get_subfield_safe(field, "x"),
             "status": self._get_subfield_safe(field, "y"),
-            "dspace_uuid": self._get_subfield_safe(field, "3"),
+            "dspace_uuid": self._get_subfield_safe(managed_field, "3")
+            or self._get_subfield_safe(field, "3"),
+            "cover_asset_sha256": self._get_subfield_safe(managed_field, "c"),
+            "dspace_links": [link for field in record.get_fields("856")
+                             for link in field.get_subfields("u")],
         }
+
+    def ensure_record_uid(self, biblio_id: int) -> str:
+        """Create a UUIDv7 MARC 001 only when the record has no value."""
+        xml_data = self._get_biblio_xml(biblio_id)
+        record = self._parse_marc(xml_data) if xml_data else None
+        if not record:
+            raise KohaRestError(f"Cannot read MARC record #{biblio_id} to ensure 001")
+
+        fields = record.get_fields("001")
+        if len(fields) > 1:
+            raise KohaRestError(f"MARC record #{biblio_id} has multiple 001 fields")
+        if fields and (fields[0].data or "").strip():
+            return fields[0].data.strip()
+
+        record_uid = generate_uuid7()
+        if fields:
+            fields[0].data = record_uid
+        else:
+            record.add_ordered_field(Field(tag="001", data=record_uid))
+        payload = pymarc.record_to_xml(record).decode("utf-8")
+        try:
+            response = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=payload.encode("utf-8"),
+                headers={"Content-Type": "application/marcxml+xml"},
+                timeout=TIMEOUT,
+            )
+        except Exception as error:
+            raise KohaRestError(f"Failed to write MARC 001 for #{biblio_id}") from error
+        if response.status_code != 200:
+            raise KohaRestError(
+                f"Failed to write MARC 001 for #{biblio_id}: HTTP {response.status_code}"
+            )
+
+        readback_xml = self._get_biblio_xml(biblio_id)
+        readback = self._parse_marc(readback_xml) if readback_xml else None
+        readback_fields = readback.get_fields("001") if readback else []
+        if len(readback_fields) != 1 or (readback_fields[0].data or "").strip() != record_uid:
+            raise KohaRestError(f"MARC 001 write was not confirmed for #{biblio_id}")
+        return record_uid
 
     def get_biblio_timestamp(self, biblio_id: int):
         url = f"{self.base_url}/api/v1/biblios/{biblio_id}"
@@ -333,6 +395,130 @@ class KohaClient:
     def set_cover_url(self, biblio_id, cover_url):
         return self._update_956(biblio_id, cover_url=cover_url)
 
+    def remove_cover(self, biblio_id, *, record_uid):
+        """Clear the cover source and link, preserving unrelated MARC data."""
+        xml_data = self._get_biblio_xml(biblio_id)
+        record = self._parse_marc(xml_data) if xml_data else None
+        uid_fields = record.get_fields("001") if record else []
+        if len(uid_fields) != 1 or (uid_fields[0].data or "").strip() != record_uid:
+            return False
+
+        for field in record.get_fields("956"):
+            field.delete_subfield("p")
+        for field in list(record.get_fields("957")):
+            field.delete_subfield("c")
+            if not field.subfields:
+                record.remove_field(field)
+
+        try:
+            response = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=pymarc.record_to_xml(record),
+                headers={"Content-Type": "application/marcxml+xml"},
+                timeout=TIMEOUT,
+            )
+        except Exception as error:
+            logger.error("Cover removal write failed for #%s (%s)", biblio_id, type(error).__name__)
+            return False
+        if response.status_code != 200:
+            return False
+
+        readback_xml = self._get_biblio_xml(biblio_id)
+        readback = self._parse_marc(readback_xml) if readback_xml else None
+        readback_uids = readback.get_fields("001") if readback else []
+        return bool(
+            len(readback_uids) == 1
+            and (readback_uids[0].data or "").strip() == record_uid
+            and not any(field.get_subfields("p") for field in readback.get_fields("956"))
+            and not any(field.get_subfields("c") for field in readback.get_fields("957"))
+        )
+
+    def restore_missing_957_metadata(
+        self, biblio_id, *, record_uid, item_uuid=None, cover_asset_sha256=None
+    ):
+        xml_data = self._get_biblio_xml(biblio_id)
+        record = self._parse_marc(xml_data) if xml_data else None
+        if not record or not record.get_fields("001") or record["001"].data.strip() != record_uid:
+            return False
+
+        fields = record.get_fields("957")
+        field = fields[0] if fields else Field(tag="957", indicators=[" ", " "], subfields=[])
+        changed = False
+        for code, value in (("3", item_uuid), ("c", cover_asset_sha256)):
+            if value and not self._get_subfield_safe(field, code):
+                field.add_subfield(code, value)
+                changed = True
+        if not changed:
+            return True
+        if not fields:
+            record.add_ordered_field(field)
+
+        new_xml = pymarc.record_to_xml(record).decode("utf-8")
+        try:
+            resp = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=new_xml.encode("utf-8"),
+                headers={"Content-Type": "application/marcxml+xml"},
+            )
+            if resp.status_code != 200:
+                return False
+        except Exception as error:
+            logger.error("Failed to restore MARC 957 for #%s: %s", biblio_id, error)
+            return False
+
+        readback_xml = self._get_biblio_xml(biblio_id)
+        readback = self._parse_marc(readback_xml) if readback_xml else None
+        if not readback or not readback.get_fields("957"):
+            return False
+        restored = readback.get_fields("957")[0]
+        return (
+            (not item_uuid or self._get_subfield_safe(restored, "3") == item_uuid)
+            and (not cover_asset_sha256
+                 or self._get_subfield_safe(restored, "c") == cover_asset_sha256)
+        )
+
+    def repair_dspace_links(self, biblio_id, primary_download_url, handle_url):
+        """Replace the 856 links with the DSpace file and record links."""
+        if not primary_download_url or not handle_url:
+            return False
+        xml_data = self._get_biblio_xml(biblio_id)
+        if not xml_data:
+            return False
+        record = self._parse_marc(xml_data)
+        for field in record.get_fields("856"):
+            record.remove_field(field)
+        record.add_ordered_field(
+            Field(
+                tag="856",
+                indicators=["4", "0"],
+                subfields=[
+                    Subfield(code="u", value=primary_download_url),
+                    Subfield(code="y", value="Файл"),
+                ],
+            )
+        )
+        record.add_ordered_field(
+            Field(
+                tag="856",
+                indicators=["4", "0"],
+                subfields=[
+                    Subfield(code="u", value=handle_url),
+                    Subfield(code="y", value="Запис в репозиторії"),
+                ],
+            )
+        )
+        new_xml = pymarc.record_to_xml(record).decode("utf-8")
+        try:
+            resp = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=new_xml.encode("utf-8"),
+                headers={"Content-Type": "application/marcxml+xml"},
+            )
+            return resp.status_code == 200
+        except Exception as e:
+            logger.error("Failed to repair DSpace handle link for #%s: %s", biblio_id, e)
+            return False
+
     def _update_956(
         self,
         biblio_id,
@@ -363,19 +549,19 @@ class KohaClient:
             if log_msg:
                 f956.add_subfield("z", str(log_msg)[:100])
 
+        if item_uuid or cover_url:
+            fields_957 = record.get_fields("957")
+            f957 = fields_957[0] if fields_957 else Field(
+                tag="957", indicators=[" ", " "], subfields=[]
+            )
+            if not fields_957:
+                record.add_ordered_field(f957)
             if item_uuid:
-                try:
-                    f956.delete_subfield("3")
-                except Exception:
-                    pass
-                f956.add_subfield("3", item_uuid)
-
+                f957.delete_subfield("3")
+                f957.add_subfield("3", item_uuid)
             if cover_url:
-                try:
-                    f956.delete_subfield("c")
-                except Exception:
-                    pass
-                f956.add_subfield("c", cover_url)
+                f957.delete_subfield("c")
+                f957.add_subfield("c", cover_url)
 
         if handle_url or primary_download_url:
             for f in record.get_fields("856"):

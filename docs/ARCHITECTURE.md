@@ -42,6 +42,322 @@ graph TD
     end
 
 
+### External cover CDN skeleton (Task 0.2)
+
+`covers-cdn` joins the existing Swarm proxy network: Cloudflare Tunnel -> Traefik
+`web` entrypoint -> non-root nginx on internal port 8080. It publishes no host
+ports and receives only the read-only `assets/` directory and a versioned Docker
+Config. The orchestrator derives the router hostname from `COVERS_CDN_BASE_URL`
+and pins the service to the node where host storage was initialized. Public TLS,
+hostname routing and HTTPS redirects belong to the existing Cloudflare setup.
+The static service exposes `/healthz` and content-addressed WebP files; migration
+and Integrator writer/state changes remain later phases. Deployment and external
+acceptance are documented in [the CDN runbook](external-cover-integrator/runbook.md).
+
+### External cover state schema (Task 2.1)
+
+`src/cover_state/schema.py` defines the separate `records` SQLite table at
+`COVER_STATE_DB_PATH`. It reuses the export module's `MigrationManager`, with
+transactional DDL, schema version 2, required WAL, a unique `record_uid` primary
+key and a `status` index. `EXPORT_DB_PATH` and `exported_records` remain separate.
+Both Compose files mount `COVER_STATE_HOST_PATH` read-write in `kdv-api` at
+`/data/kdv_cover_state`. `scripts/entrypoint.sh` runs
+`python -m src.cover_state.schema` after loading runtime secrets and before
+starting the API; a migration failure stops API startup and therefore blocks a
+successful deployment. The CLI remains available for explicit maintenance with
+`COVER_STATE_DB_PATH` or `--db-path`.
+Repository schema verification uses temporary databases. Read-only post-redeploy
+checks on 2026-09-30 confirmed the API's read-write state mount and deployed schema
+code; at that time the live state DB did not exist. After the next deployment,
+user-run read-only container checks on 2026-09-30 confirmed the persistent
+read-write state bind, `/data/kdv_cover_state/state.db`, WAL, schema version 1,
+all 11 columns and both required indexes. Task 2.1 runtime acceptance is complete;
+the environment was not identified as dev/prod.
+Because the host path is node-local, API
+placement must use the node with that path or shared storage with the same durable
+data on each eligible node.
+
+`scripts/backup_cover_state.py backup` selects the environment from process
+`SERVER_ENV`, falling back to the same key in `/etc/environment`, and resolves
+`COVER_STATE_HOST_PATH`, `COVER_STATE_BACKUP_HOST_PATH`, and optional
+`BACKUP_RCLONE_REMOTE` / `BACKUP_RCLONE_FOLDER` from its encrypted env
+file through the existing SOPS loader. The deploy orchestrator passes the
+configured backup path (default `/backups/state-db`) to `scripts/init-volume.sh`,
+which prepares it separately from the live state and cover directories. The
+backup command uses SQLite's online backup API to create a consistent snapshot
+including WAL state. It validates
+the snapshot, publishes a timestamped mode-0600 file atomically, updates
+`latest.sqlite3`, and retains `COVER_STATE_LOCAL_RETENTION_DAYS` (default 30).
+When both rclone settings are configured, the backup selects a readable config
+containing the remote (`BACKUP_RCLONE_CONFIG` overrides discovery) and `rclone copyto` uploads the snapshot
+and reads it back for SQLite verification; old timestamped copies are removed
+according to `COVER_STATE_CLOUD_RETENTION_DAYS` (default 90). `verify` restores
+the selected snapshot
+into a temporary DB and runs `quick_check` plus the `records` table check; it
+does not modify the source DB. The operator schedules `backup` with a daily
+systemd timer and uses the journal for its output. `scripts/backup_cover_assets.sh`
+loads the selected SOPS env and incrementally copies immutable assets to local `COVER_ASSETS_BACKUP_HOST_PATH`
+with rsync, without cloud copy or retention; schedule it less frequently.
+
+### External cover state machine (Task 2.2)
+
+`src/cover_state/state_machine.py` provides `StateMachine` for the separate WAL DB.
+It requires `COVER_STATE_DB_PATH` and a positive integer `MAX_RETRY_COUNT` from
+the environment, or explicit constructor arguments; it does not import external
+API configuration. `mark_pending()` starts/resumes a cycle without clearing
+retries or resource columns and rejects exhausted records. `record_result()`
+marks confirmed success `ok` with zero retries, increments failures atomically,
+and can preserve `pending` for partial work until cutoff forces `failed`.
+`get_retry_eligible()` returns only unfinished records below the limit, after
+exponential backoff of 1, 2, 4, ... seconds from UTC `updated_at`. Zero retries
+bypass backoff, including after a deliberate reset. `reset_retry_count()` retains
+status and resource columns; the documented direct SQL reset works too.
+Connections close after each operation, and SQLite transactions serialize writes.
+Due failures persist `retry_reason`, `defer_reason` (`backoff` or `cutoff`),
+`next_retry_at`, and the Koha `biblionumber` routing hint. The API retry scheduler
+atomically claims due rows and dispatches them through `process_integration_logic`;
+the core verifies the current MARC `001` before processing. A five-minute claim
+one-hour claim lease recovers rows after a worker exits before the workflow starts. The API and
+Robot core hold the shared filesystem workflow lock across complete cycles.
+TaskManager reports returned `status=deferred` separately from `success`; raised
+exceptions report `failed`. The Koha record page shows cutoff rows and offers an
+authenticated operator retry that resets the cutoff and queues the normal flow.
+Successful completion clears retry metadata while retaining durable resources.
+The state module is tested independently and through the API.
+Deterministic validation/identity failures and DSpace 4xx responses enter
+cutoff immediately, except 408, 425 and 429; network failures and DSpace 5xx
+responses retain automatic backoff.
+
+### External cover fast dirty-check (Task 3.1)
+
+`StateMachine.check_source(record_uid, incoming_file_id, source="cover"|"file")`
+reads the corresponding `cover_source_id` or `file_source_id` without state writes
+or external calls. Call it with a parsed Drive ID before `mark_pending()` and
+before constructing/calling Drive clients. The existing `GoogleDriveUrlParser`
+in `src/services/sources.py` already parses supported Drive URLs without network
+access. An unchanged ID with confirmed `status=ok` returns `noop`; a new/changed
+ID returns `needs_sha_check`. An unchanged ID with unfinished status returns
+`resume`, preserving reconciliation rather than silently skipping partial work.
+An absent source returns `no_source` and never deletes stored resources.
+Explicit cover removal is a separate DELETE action using the existing API
+authentication. It clears only MARC `956$p`/`957$c` and the cover references in state under `.workflow.lock`;
+it refuses unfinished cycles and retains the immutable asset for GC. PDF/DSpace
+references are unaffected.
+Retry callers still enforce cutoff/backoff through state eligibility; `resume`
+does not authorize an exhausted attempt. Cover and PDF are checked separately;
+a source-level `noop` does not skip work required by another source. Task 3.2
+consumes these decisions for metadata/SHA checks. The shared API/Robot core now
+invokes it before Drive materialization.
+
+### External cover Drive metadata/SHA gate (Task 3.2)
+
+`src/cover_state/drive.py:check_drive_metadata()` calls the fast gate first and
+constructs `GoogleDriveSource` lazily only when metadata is needed. Its public
+`get_metadata()` reuses existing read-only service-account authentication and
+requests `sha256Checksum` explicitly. Drive resource keys use the documented
+`X-Goog-Drive-Resource-Keys` request header for metadata and download requests.
+Confirmed same-content sources update only their corresponding source ID and
+timestamp, preserving `ok` and downstream resources. Changed content returns
+`resource_changed` with metadata/SHA and enters `pending`, without committing
+unconfirmed source IDs/hashes. Matching hashes in unfinished cycles return
+`resume`; matching IDs resume durable work without another metadata call.
+The gate checks retry eligibility first; cutoff/backoff return `deferred`.
+Missing, empty or malformed checksums raise `MissingChecksumError`, log a safe
+reason and persist `failed` with the retry count at least at the configured
+limit, requiring an explicit reset. This encodes permanent failures using the
+existing version-1 schema. API/client failures raise `DriveMetadataError` and
+increment retries once; API exception text is not logged. No downloads, asset
+processing, DSpace writes or Koha write-back are performed by this gate.
+Tests use temporary SQLite DBs, mocks and offline real SDK request construction;
+user-run container smoke output on 2026-09-30 confirmed deployed code hashes,
+live binary metadata/SHA retrieval, same-content source ID update and a subsequent
+NO-OP with zero additional Drive calls. The same smoke used mocks for missing
+checksums in Google Doc/shortcut responses and a network timeout; permanent
+cutoff and a single retry increment passed. The temporary DB was removed.
+This verifies the deployed gate directly, not automatic invocation by the API
+workflow at that time. API/Robot core wiring is now implemented and tested
+locally. User-provided post-redeploy smoke output confirmed deployment of that
+wiring on 2026-09-30; dev/prod was not identified.
+
+### Automatic API/Robot Drive gate
+
+Task 4.2 adds `publish_cover()` and the cover CLI's `--publish` option. The
+publisher requires prepared non-symlink storage with `.incoming` and `assets`
+on one filesystem, validates WebP bytes/SHA and serializes publication with a
+filesystem lock. A unique staging file is synced and moved with `os.replace()`
+to `assets/<sha256>.webp`, mode 0644; both directories are synced before success.
+Existing identical assets retain their inode/mtime; corruption and symlink
+destinations fail closed. Ordinary failures remove staging files; SIGKILL can
+leave only private staging leftovers, removed under lock on the next publish.
+Both Compose files give API the full cover root read-write at
+`COVERS_STORAGE_PATH`; nginx keeps only read-only assets. Swarm API placement
+also requires the orchestrator's storage node, preserving its manager-zone
+constraint. These are deployment configuration changes; no deployment occurred.
+Task 4.3 now implements Koha adoption and durable record-level publish reconciliation
+in the repository; deployed Koha acceptance remains pending.
+
+Post-redeploy checks on 2026-09-30 confirmed all three services at 1/1, API/CDN
+on `pinokew`, matching deployed publisher SHA, the expected read-write API root
+and read-only CDN assets mounts, directory modes 0755/0755/0700 and one device.
+The active Gunicorn environment contains `COVERS_STORAGE_PATH`; a separate
+`docker exec` process does not inherit environment sourced by the entrypoint.
+The corrected diagnostic reads only selected non-secret variables from PID 1.
+The deployed publisher passed normalization, publish/dedup/hash/mode and
+inode/mtime checks in isolated `/tmp` storage; cleanup succeeded. Internal CDN
+health and public HTTPS via curl/requests returned 200; urllib received 403.
+A synthetic WebP was then published to mounted assets. Repeated publication
+preserved inode/mtime; internal and public CDN responses returned the same bytes,
+`image/webp`, and one-year immutable cache headers. This confirms runtime
+publication/CDN delivery for that test asset, not a Koha record workflow. The
+test asset remains in storage and may remain cached for one year. Dev/prod was
+unidentified.
+
+Task 4.1 adds `src/services/cover_pipeline.py`: `download_and_normalize()` reuses
+the Drive resolver/download and optional gate metadata, verifies source SHA before
+decoding, applies EXIF orientation and RGB, strips metadata, downsizes to at most
+600 px wide without upscale and encodes WebP at quality 82. It returns separate
+source/asset hashes. The core reuses its download verifier. This callable/CLI
+stage writes a temporary normalized output; Task 4.2 publishes it on request,
+and Task 4.3 wires it into the explicit Drive cover workflow. Local image/stub-Drive checks do not
+establish live Drive or Koha acceptance.
+
+When `COVER_STATE_DB_PATH` is configured, `process_integration_logic()` reads
+MARC `001` through `KohaClient.get_biblio_metadata()` and requires a UUIDv7 for
+Drive sources. A `.workflow.lock` in the state DB directory serializes complete
+configured cycles across threads/processes sharing that filesystem. The core
+checks record retry eligibility once before checking both sources, so the first
+source's pending timestamp cannot accidentally defer the second source.
+The existing authenticated API/task/polling contract and Robot caller use this
+same core entry point. An all-confirmed unchanged Drive-only cycle returns
+`status=noop`; if either DSpace link is missing from Koha, the
+fast path reads the existing Item and ORIGINAL bitstream by their stored UUIDs
+and rewrites the DSpace `856` pair: the PDF download URL and repository Handle
+URL. It confirms both links by read-back. Exhausted or waiting retries return
+`status=deferred` without
+downstream work or another retry increment. Local paths and additional files
+are not included in the identity gate and retain their processing path.
+Drive `956$p` image sources are resolved/materialized with an image MIME allowlist.
+Gate metadata is reused during materialization; downloaded bytes must match
+source SHA before downstream processing. Unchanged explicit covers are skipped;
+cover-only changes can update Koha without materializing an unchanged PDF or
+calling DSpace. Task 4.3 uses the WebP/CDN pipeline for explicit Drive covers;
+Task 5.1 uses it for Drive PDF first-page fallback when `956$p` is absent.
+Local sources retain the legacy CGI path without Drive state identity tracking.
+`complete_cycle()` atomically commits source IDs/SHA, returned DSpace UUIDs,
+`ok` and zero retries only after confirmed required cover processing and a true
+Koha write-back result. Downstream failures retain unconfirmed identities and
+increment retries once. For changed PDFs on an existing DSpace Item, the
+replacement flow retains the old bitstream until the new primary and both Koha
+links are confirmed. A pending checkpoint lets retry reuse the uploaded
+bitstream. Post-deployment DSpace/Koha runtime acceptance remains open.
+Local API tests cover route-to-core invocation, NO-OP, same-content identity
+changes, cover-only work, checksum mismatch, write-back failure, missing UID,
+missing checksum, two-source retry and concurrent duplicate requests.
+User-run post-redeploy smoke on 2026-09-30 confirmed matching code hashes,
+HTTP 200 health/readiness on the active server, and WAL/version 1 in persistent
+state. In a separate process inside the deployed container, the Flask test client
+invoked the API route, actual background task and polling using temporary state
+and stub Koha/DSpace clients: unchanged source returned NO-OP with zero Drive
+calls; a seeded same-content identity change used live Drive SHA and updated
+only temporary state without downstream work. Cleanup completed. This verifies
+deployed route/core execution in isolation, not an integration POST to the running
+Gunicorn server or live Koha/DSpace writes. Active external authentication modes,
+Robot execution and changed-content write-back were not exercised by this smoke.
+
+### External cover Koha write-back and recovery (Task 4.3)
+
+Explicit Drive `956$p` cycles publish canonical WebP and write only its SHA to
+`957$c` through the existing Koha MARC writer. Before write-back, the separate
+cover DB durably checkpoints work in additive `pending_cover_work`: input
+fingerprint, source IDs/SHA, asset SHA, whether PDF work is required and a completed
+DSpace result. `records.cover_asset_sha256` is saved while pending; confirmed
+source columns remain unchanged. API migration v2 adds retry scheduling fields
+without rebuilding records or changing the existing checkpoint table.
+
+For matching inputs, an eligible retry validates the published asset and reuses
+completed PDF work, repeating only Koha write-back. Input identity/collection/
+additional input/DPI/options changes invalidate the checkpoint. Backoff, cutoff
+and manual reset remain active. A true PUT is followed by MARC read-back of
+`001`/`957$c` and, for a PDF cycle, `957$3` and required `856$u` links. Only then
+are source IDs/SHA, UUIDs and `ok`/zero retries committed and the checkpoint deleted
+in one SQLite transaction. Failed writes/read-back remain pending until cutoff.
+Previously confirmed Drive covers without an asset SHA are rebuilt as WebP.
+
+Local tests prove recovery after reopened SQLite without another cover download,
+normalization or completed DSpace job; corrupt assets and incomplete read-back
+fail closed. DSpace crashes before its completed result is checkpointed still need
+Phase 7 reconciliation; a mere existing Item link does not prove PDF replacement.
+
+If unchanged-source link repair receives an explicit DSpace Item HTTP 404, the
+saved Item UUID is stale. The workflow forces a Drive metadata/SHA refresh,
+searches DSpace again by `koha.uid`, and recreates the Item/PDF if no matching
+Item exists. Item resolution uses only exact `koha.uid` matches; a missing match
+creates a new Item. Only HTTP 404 triggers this recovery; network, authorization
+and server errors remain retryable failures. Ambiguous UID matches fail closed.
+
+On 2026-10-01, the user supplied a test-record run: Drive image download and task
+completion, MARC `957$c` matching the mounted WebP SHA, state `ok` with zero retries
+and no checkpoint, and visible cover in the Koha interface. This confirms the
+positive deployed cover path. Live NO-OP and failure recovery were not exercised;
+their coverage remains local tests. The environment was not identified.
+
+### PDF first-page cover fallback (Task 5.1)
+
+When `956$p` is absent and `956$u` is a Drive PDF, the shared API/Robot cycle
+verifies downloaded bytes against the Drive SHA, renders page one with Poppler's
+CropBox at 150 DPI and a 15-second timeout, then uses the same metadata-free
+600-pixel/quality-82 WebP normalization and immutable publisher. `957$c` write-back,
+MARC read-back, checkpoint reuse and source/asset commit follow Task 4.3. A
+confirmed PDF without an asset SHA is rebuilt; unchanged confirmed PDFs skip
+work. A PDF with no renderable first page causes a permanent failed state for
+that record, while other tasks continue. Transient render errors retain the
+normal retry policy. Changed PDFs for existing DSpace Items use the verified
+replacement flow described below; local PDF paths retain the CGI path.
+Repository tests cover real PDF rendering, corrupt and protected PDF behavior,
+failure isolation, asset/retry reuse and NO-OP. On 2026-10-01 the user supplied
+a successful test run after correcting the DSpace collection: Item creation and
+PDF bitstream upload completed, Koha fields were correct and the cover displayed.
+A separate record successfully restored a deleted `856$u` by linking its existing
+Item. Changing `956$u` for that existing Item produced the intentional
+`Changed Drive PDF requires DSpace bitstream replacement` guard; safe replacement
+is Task 7.2. The runtime environment was not identified.
+
+### DSpace Item identity (Task 7.1)
+
+Drive-backed records carry canonical MARC `001` UUIDv7 to DSpace as
+`koha.uid`. The shared workflow resolves Items only by that UID, so a retry
+reuses the same Item and Handle. When state or Koha metadata supplies an Item
+UUID, the workflow reads that Item directly and verifies its `koha.uid` against
+MARC `001`. A matching live Item is reused independently of discovery indexing.
+At workflow start, an absent or blank MARC `001` is populated with a generated
+UUIDv7 through Koha MARCXML PUT and must pass exact read-back before processing;
+an existing non-empty control number is preserved.
+Only HTTP 404 permits a saved UUID to fall through to UID discovery; other errors
+or mismatched identity stop processing. Discovery must return an explicit zero
+count before creation; malformed responses, ambiguous results and UID mismatches
+fail closed. If an earlier attempt created the Item but
+failed before its first ORIGINAL bitstream, a retry uploads the missing PDF to
+that same Item. For a changed
+Drive PDF, the workflow uploads and checksum/size verifies a new bitstream,
+switches and reads back the ORIGINAL bundle primary bitstream, then checkpoints
+the DSpace result before Koha write-back. Both Koha `856$u` links must pass
+read-back before the old bitstream is deleted and state can complete. A failed
+Koha write retains the old bitstream and checkpoint; retry reuses the new UUID
+without uploading again. The DSpace metadata registry and discovery
+index must contain `koha.uid`; this repository change does not configure the
+DSpace server.
+
+The bitstream UUID stored in state is only a cleanup candidate when its saved
+Item UUID matches the UID-resolved target and the bitstream appears in that
+Item's ORIGINAL bundle. A stale or absent bitstream identity is ignored; the
+new PDF can still upload, while unverified bitstreams are never deleted.
+User-provided runtime log on 2026-10-01 confirms the field contains MARC `001`,
+the PDF uploaded to the Item, and the task completed successfully. This is
+positive first-cycle evidence. The user also confirmed that a repeated search
+finds the same Item and its Handle remains unchanged. Task 7.2 local failure and
+retry checks pass; runtime replacement acceptance requires deployment and a
+user-run smoke test.
+
 ⚡ Деталі Реалізації (M2-M7)
 
 ### 1. Асинхронність (Async Core) + DI
@@ -102,7 +418,8 @@ def _make_clients():
     return KohaClientWrapper(), DSpaceClientWrapper()
 ```
 
-- Викликається у кожному HTTP обробнику (`POST /integrate`, `PUT /integrate`).
+- Викликається у кожному HTTP обробнику (`POST /integrate`, `PUT /integrate`). `PUT` запускає примусове оновлення Drive PDF bitstream разом із метаданими та працює через task polling.
+- UI Robot Batch запускає ті самі PUT tasks для кожного запису через batch runner; так незмінний Drive source усе одно перевіряється в DSpace, а відсутній Item може бути відновлений через UID workflow.
 - У тестах можна monkeypatch для підміни моків.
 
 ### 5. TaskManager з DI (M2 — kwargs support)
@@ -130,16 +447,16 @@ task_manager.start_task(
 
 ### 6. Data Warehouse (Збагачення MARC)
 
-Структура полів залишилась незмінною, але реалізація тепер у `core.py` з чистою DI:
+Інтегратор зберігає керовані ним значення окремо від джерел у `956`:
 
 
 956$y — Статус (imported, error).
 
 956$z — Лог помилки або попередження.
 
-956$3 — UUID елемента в DSpace (для дедуплікації).
+957$c — Значення обкладинки, яке формує Integrator (URL legacy pipeline; hash у зовнішньому cover pipeline).
 
-956$c — Пряме посилання на обкладинку (опак-image.pl?imagenumber=...).
+957$3 — UUID Item у DSpace. Поле `957` відокремлює керовані Integrator-ом підполя від `956`, оскільки `MARCOverlayRules` застосовуються до цілого поля.
 
 956$p — Відносний шлях до готової обкладинки; якщо заданий, cover workflow завантажує цей файл і не генерує JPG з PDF.
 
@@ -341,7 +658,7 @@ src/export_module/           # Koha Export Module (CLI/batch, ізольован
 ├── orchestrator.py          # ExportOrchestrator: staged pipeline
 ├── config.py                # ExportConfig + RuntimeOptions (SOPS bootstrap)
 ├── db/
-│   ├── schema.py            # DDL: exported_records, SCHEMA_V1, MigrationManager
+│   ├── schema.py            # Export DDL and shared SQLite MigrationManager
 │   └── repository.py        # ExportRepository: staged state transitions
 ├── koha/
 │   ├── client.py            # KohaApiClient: keyset pagination, optional range

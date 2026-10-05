@@ -5,6 +5,8 @@
 ### Бізнес-логіка
 - Головний orchestration-скрипт для `ORCHESTRATOR_MODE=swarm`.
 - Виконує pre-deploy перевірки: `healthcheck.sh` і `import src.config`.
+- Runs `scripts/init-volume.sh` with the cover, state and backup host paths through passwordless sudo before secret rendering and image builds; initialization failure stops deployment.
+- Validates `COVERS_CDN_BASE_URL`, derives its Traefik hostname, pins `covers-cdn` to the local storage node and versions its Docker Config by content hash. Verifies CDN replicas after deployment; public TLS/redirect/origin acceptance follows [the CDN runbook](external-cover-integrator/runbook.md).
 - Викликає `scripts/render-versioned-env-secret.sh` перед render manifest, щоб Swarm service отримував versioned runtime env secret з актуального `ORCHESTRATOR_ENV_FILE`.
 - Перед оновленням стека ідемпотентно виправляє owner каталогів shared optimizer volume на `10001:10001` через локальний Swarm task; якщо чинний task відсутній на вузлі запуску, зупиняє deploy.
 - Рендерить swarm manifest через `docker compose config` і виконує `docker stack deploy`.
@@ -18,6 +20,37 @@ ORCHESTRATOR_MODE=swarm ENVIRONMENT_NAME=development ORCHESTRATOR_ENV_FILE="${EN
 echo $?
 rm -f "${ENV_TMP}"
 ```
+
+## `scripts/init-volume.sh` (host storage preparation)
+
+Creates `COVERS_STORAGE_HOST_PATH`, its `assets/` and `.incoming/` directories,
+and `COVER_STATE_HOST_PATH`. When passed, it also creates
+`COVER_STATE_BACKUP_HOST_PATH` (the orchestrator defaults it to
+`/backups/state-db`). Repeated runs repair directory modes without changing
+existing ownership or stored files: cover root and `assets/` use `0755`;
+`.incoming/`, state and backup use `0700`. New directories belong to the caller;
+the Swarm orchestrator invokes initialization as root so it can prepare `/backups`.
+The current Integrator runs as container root; nginx will receive only `assets/`, read-only.
+
+All paths are absolute, disjoint and below a top-level directory.
+Symlinks in the paths and managed children are rejected. The deployment account
+must have passwordless sudo for host directory initialization. Direct invocation
+requires the caller to be able to create and change modes on each path. The
+orchestrator reads these values from its environment or selected dotenv file
+without sourcing that file.
+
+For an explicitly selected test environment, pass its actual storage paths:
+
+```bash
+COVERS_STORAGE_HOST_PATH=/tmp/kdv-cover-smoke/covers \
+COVER_STATE_HOST_PATH=/tmp/kdv-cover-smoke/state \
+COVER_STATE_BACKUP_HOST_PATH=/tmp/kdv-cover-smoke/backups/state-db \
+  bash scripts/init-volume.sh
+```
+
+Initialization affects only the node running the script. Initialize every eligible
+Swarm node or constrain future cover/state services to the prepared node. This
+script prepares storage; Compose mounts and the CDN are implemented separately.
 
 ## `scripts/render-versioned-env-secret.sh` (deploy-adjacent, reusable)
 
@@ -85,10 +118,10 @@ python3 scripts/validate_sops_encrypted.py env.dev.enc env.prod.enc
 echo $?
 ```
 
-## `scripts/entrypoint.sh` (out-of-scope, container entrypoint)
+## `scripts/entrypoint.sh` (container entrypoint)
 
 ### Бізнес-логіка
-- Стартовий wrapper контейнера: спочатку розгортає dotenv payload `/run/secrets/app_env_payload` у runtime ENV, потім зберігає сумісність зі старими one-secret-per-env файлами з `/run/secrets/*` і запускає основний процес (`exec "$@"`).
+- Стартовий wrapper контейнера: розгортає dotenv payload `/run/secrets/app_env_payload` у runtime ENV, зберігає сумісність зі старими one-secret-per-env файлами з `/run/secrets/*`, застосовує ідемпотентну схему cover state DB, тоді запускає основний процес (`exec "$@"`). Помилка міграції завершує старт до запуску API.
 
 ### Ручний запуск
 ```bash

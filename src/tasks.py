@@ -60,16 +60,20 @@ class TaskManager:
             # Ми передаємо task_id першим аргументом, щоб функція могла (опціонально) оновлювати прогрес
             result = func(task_id, *args, **kwargs)
 
-            # Успішне завершення
-            TASKS[task_id]["status"] = "success"
             TASKS[task_id]["result"] = result
-            TASKS[task_id]["progress"] = "Completed successfully"
-            logger.info(f"✅ [Task {task_id}] Finished successfully.")
+            if isinstance(result, dict) and result.get("status") == "deferred":
+                TASKS[task_id]["status"] = "deferred"
+                TASKS[task_id]["progress"] = result.get("message", "Очікує повторної спроби")
+                logger.info("[Task %s] Deferred: %s", task_id, TASKS[task_id]["progress"])
+            else:
+                TASKS[task_id]["status"] = "success"
+                TASKS[task_id]["progress"] = "Completed successfully"
+                logger.info(f"✅ [Task {task_id}] Finished successfully.")
 
         except Exception as e:
             # Критична помилка під час виконання
             logger.error(f"❌ [Task {task_id}] FAILED: {str(e)}")
-            TASKS[task_id]["status"] = "error"
+            TASKS[task_id]["status"] = "failed"
             TASKS[task_id]["error"] = str(e)
             TASKS[task_id]["progress"] = "Failed"
 

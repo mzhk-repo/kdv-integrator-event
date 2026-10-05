@@ -40,12 +40,19 @@ services:
       placement:
         constraints:
           - node.labels.app_zone == manager
+          - node.id == ${COVERS_SWARM_NODE_ID:?Use the orchestrator to select the storage node}
     volumes:
       - kdv-drive:/mnt/drive
       - kdv_optimize_data:/data/kdv_optimize
       - type: bind
         source: ${EXPORT_STATE_HOST_PATH:-/srv/kdv-integrator/export-state}
         target: /data/kdv_export_state
+      - type: bind
+        source: ${COVER_STATE_HOST_PATH:?COVER_STATE_HOST_PATH is required}
+        target: /data/kdv_cover_state
+      - type: bind
+        source: ${COVERS_STORAGE_HOST_PATH:?COVERS_STORAGE_HOST_PATH is required}
+        target: ${COVERS_STORAGE_PATH:?COVERS_STORAGE_PATH is required}
       - type: bind
         source: ${EXPORT_CONFIG_HOST_PATH:-./config}
         target: /app/config
@@ -74,6 +81,24 @@ services:
         reservations:
           cpus: "0.5"
           memory: 512M
+
+  covers-cdn:
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.kdv-covers.rule=Host(`${COVERS_CDN_HOST:?Use the orchestrator to derive COVERS_CDN_HOST}`)"
+        - "traefik.http.routers.kdv-covers.entrypoints=web"
+        - "traefik.http.services.kdv-covers.loadbalancer.server.port=8080"
+        - "traefik.swarm.network=${EXTERNAL_NETWORK}"
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 2m
+      placement:
+        constraints:
+          - node.id == ${COVERS_SWARM_NODE_ID:?Use the orchestrator to select the storage node}
 
 volumes:
   kdv-drive:

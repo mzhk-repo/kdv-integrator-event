@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import fcntl
 from flask import Flask, jsonify, request, abort
 
 try:
@@ -25,7 +26,8 @@ from .config import (
     INTEGRATOR_MOUNT_PATH,
     KOHA_OPAC_URL,
 )
-from .core import process_integration_logic, parse_marc_details
+from .core import process_integration_logic
+from .cover_state.retry_scheduler import start_retry_scheduler
 from .services.pdf import validate_optimizer_dpi
 from scripts import robot
 
@@ -40,6 +42,8 @@ app = Flask(__name__)
 
 # ponytail: process-local lock; use a shared lock only if the service gains replicas.
 _EXPORT_RUN_LOCK = threading.Lock()
+_RETRY_SCHEDULER_LOCK = threading.Lock()
+_RETRY_SCHEDULER = None
 
 
 def _normalize_cf_team_domain(raw: str) -> str:
@@ -143,6 +147,11 @@ def add_cors_headers(response):
 
 @app.before_request
 def check_security():
+    global _RETRY_SCHEDULER
+    if not app.testing and os.environ.get("COVER_STATE_DB_PATH") and _RETRY_SCHEDULER is None:
+        with _RETRY_SCHEDULER_LOCK:
+            if _RETRY_SCHEDULER is None:
+                _RETRY_SCHEDULER = start_retry_scheduler()
     if request.path in {"/kdv/api"} or request.path.endswith(("/health", "/ready", "/readiness")) or request.method == "OPTIONS":
         return
     if not _is_authorized():
@@ -408,6 +417,8 @@ def robot_batch_async():
     payload, error_response = _parse_robot_batch_payload()
     if error_response:
         return error_response
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "error", "message": "Bitstream refresh requires COVER_STATE_DB_PATH"}), 503
 
     task_id = task_manager.start_task(
         robot.run_batch_from_text,
@@ -416,6 +427,7 @@ def robot_batch_async():
         dpi=payload["dpi"],
         parallelism=payload["parallelism"],
         max_wait=payload["max_wait"],
+        force_file_refresh=True,
     )
     return (
         jsonify(
@@ -469,33 +481,109 @@ def get_task_status(task_id):
 
 @app.route("/kdv/api/integrate/<int:biblionumber>", methods=["PUT"])
 def update_record(biblionumber):
-    koha, dspace = _make_clients()
-    try:
-        raw_xml = koha._get_biblio_xml(biblionumber)
-        md = parse_marc_details(raw_xml)
-        md["koha.biblionumber"] = str(biblionumber)
-
-        meta = koha.get_biblio_metadata(biblionumber)
-        item_uuid = meta.get("dspace_uuid") if meta else None
-
-        if not item_uuid and md.get("handle"):
-            item_uuid = dspace.find_item_uuid_by_handle(md["handle"])
-
-        if not item_uuid:
-            existing = dspace.find_item_by_biblionumber(biblionumber)
-            if existing:
-                item_uuid = existing["uuid"]
-
-        if not item_uuid:
-            return jsonify({"status": "error", "message": "Item not found"}), 404
-
-        success = dspace.update_metadata(item_uuid, md)
+    if not os.environ.get("COVER_STATE_DB_PATH"):
         return (
-            jsonify({"status": "success"})
-            if success
-            else (jsonify({"status": "error"}), 500)
+            jsonify({"status": "error", "message": "Bitstream update requires COVER_STATE_DB_PATH"}),
+            503,
         )
+    try:
+        payload = _parse_integrate_payload()
+        koha, dspace = _make_clients()
+        task_id = task_manager.start_task(
+            process_integration_logic,
+            biblionumber,
+            koha_client=koha,
+            dspace_client=dspace,
+            force_file_refresh=True,
+            skip_optimization=payload["skip_optimization"],
+            dpi=payload["dpi"],
+        )
+        return jsonify({"status": "accepted", "task_id": task_id}), 202
 
     except Exception as e:
-        logger.error(f"UPDATE ERROR: {e}")
+        logger.error(
+            "Failed to queue DSpace metadata and bitstream update for #%s: %s",
+            biblionumber, e,
+        )
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/kdv/api/integrate/<int:biblionumber>/cover", methods=["DELETE"])
+def remove_cover(biblionumber):
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "unavailable", "message": "Cover state is not configured"}), 503
+    try:
+        from .cover_state.state_machine import StateMachine
+
+        state = StateMachine()
+        koha, _ = _make_clients()
+        lock_path = os.path.join(os.path.dirname(state.db_path), ".workflow.lock")
+        with open(lock_path, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            meta = koha.get_biblio_metadata(biblionumber)
+            if not meta or not meta.get("record_uid"):
+                return jsonify({"status": "not_found"}), 404
+            uid = meta["record_uid"]
+            row = state.get(uid)
+            if row and row["status"] != "ok":
+                return jsonify({"status": "conflict", "message": "Integration cycle is unfinished"}), 409
+            if not koha.remove_cover(biblionumber, record_uid=uid):
+                return jsonify({"status": "error", "message": "Koha cover removal was not confirmed"}), 502
+            if row and not state.remove_cover(uid):
+                return jsonify({"status": "conflict", "message": "Cover state changed during removal"}), 409
+        logger.info("Cover removed record_uid=%r biblionumber=%s asset_retained_for_gc=%s",
+                    uid, biblionumber, bool(row and row.get("cover_asset_sha256")))
+        return jsonify({"status": "cover_removed", "asset_deleted": False})
+    except Exception as exc:
+        logger.error("Cover removal failed for #%s type=%s", biblionumber, type(exc).__name__)
+        return jsonify({"status": "error", "message": "Cover removal failed"}), 500
+
+
+@app.route("/kdv/api/integrate/<int:biblionumber>/retry-state", methods=["GET"])
+def get_record_retry_state(biblionumber):
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "unavailable"}), 503
+    try:
+        koha, _ = _make_clients()
+        meta = koha.get_biblio_metadata(biblionumber)
+        uid = meta.get("record_uid") if meta else None
+        if not uid:
+            return jsonify({"status": "not_found"}), 404
+        from .cover_state.state_machine import StateMachine
+
+        detail = StateMachine().get_deferred(uid)
+        if detail and detail.get("biblionumber") not in (None, biblionumber):
+            return jsonify({"status": "not_found"}), 404
+        return jsonify(detail or {"status": "ok"})
+    except Exception as exc:
+        logger.error("Retry state lookup failed for biblionumber=%s type=%s", biblionumber, type(exc).__name__)
+        return jsonify({"status": "error", "message": "Retry state unavailable"}), 503
+
+
+@app.route("/kdv/api/integrate/<int:biblionumber>/retry", methods=["POST"])
+def retry_record_after_cutoff(biblionumber):
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "unavailable"}), 503
+    try:
+        koha, dspace = _make_clients()
+        meta = koha.get_biblio_metadata(biblionumber)
+        if not meta or not meta.get("record_uid"):
+            return jsonify({"status": "not_found"}), 404
+        from .cover_state.state_machine import StateMachine
+
+        state = StateMachine()
+        uid = meta["record_uid"]
+        detail = state.get_deferred(uid)
+        if detail and detail.get("biblionumber") not in (None, biblionumber):
+            return jsonify({"status": "conflict", "message": "Record routing ID does not match"}), 409
+        if not detail or detail["reason"] != "cutoff":
+            return jsonify({"status": "conflict", "message": "Record is not at retry cutoff"}), 409
+        state.reset_retry_count(uid)
+        task_id = task_manager.start_task(
+            process_integration_logic, biblionumber,
+            koha_client=koha, dspace_client=dspace,
+        )
+        return jsonify({"status": "accepted", "task_id": task_id}), 202
+    except Exception as exc:
+        logger.error("Cutoff retry failed for biblionumber=%s type=%s", biblionumber, type(exc).__name__)
+        return jsonify({"status": "error", "message": "Could not queue retry"}), 500
