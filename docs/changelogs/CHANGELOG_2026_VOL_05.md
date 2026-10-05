@@ -504,3 +504,11 @@
 - **Verification:** Added a regression test asserting the cover is written, DSpace is skipped, and the task still reports the invalid `956$u`. `py_compile` and `git diff --check` passed; pytest is unavailable in this environment.
 - **Risks:** The Robot task remains failed until `956$u` is corrected, even when cover processing succeeds.
 - **Rollback:** Revert the source-error isolation branch and its regression test.
+
+## 2026-10-05 — Keep Robot Batch out of forced PDF refresh mode
+
+- **Context:** Robot Batch always passed `force_file_refresh=True`, so records without a valid Drive PDF in `956$u` failed validation before independent cover processing.
+- **Change:** Robot Batch now uses the regular integration workflow. Explicit intranet PDF refresh through `PUT /kdv/api/integrate/{biblionumber}` remains forced.
+- **Verification:** Existing Robot Batch route test expects only user-selected batch options; implementation was inspected, tests were not run.
+- **Risks:** Robot Batch will no longer force a PDF refresh when its Drive file ID is unchanged; explicit UI refresh remains available through PUT.
+- **Rollback:** Restore forced refresh only if Robot Batch is intentionally redefined as a PDF replacement operation.
