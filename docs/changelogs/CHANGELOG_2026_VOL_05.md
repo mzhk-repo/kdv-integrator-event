@@ -6,7 +6,7 @@
 
 - **Context:** `backup_cover_assets.sh` required paths exported in the invoking shell, unlike the state DB backup command that loads the selected encrypted environment.
 - **Change:** The shell entrypoint now delegates to `backup_cover_assets.py`, which reuses the SOPS environment loader for `COVERS_STORAGE_HOST_PATH` and `COVER_ASSETS_BACKUP_HOST_PATH`. Manual runs accept `--age-key-file`; explicit path overrides remain available.
-- **Verification:** Python compilation, CLI help, Bash syntax, and `git diff --check` passed. No asset storage was copied.
+- **Verification:** Python compilation, CLI help, Bash syntax, and `git diff --check` passed. User-provided manual run on 2026-10-05 confirmed env loading and rsync: 10 files (487.27 KiB) copied to `/var/backups/kdi-integrator/cover-assets`, with zero deletions. Scheduled execution remains pending.
 - **Risks:** The selected environment and age key must be available to the invoking account; destination remains local and must have enough free space.
 - **Rollback:** Revert the assets helper and restore the previous requirement to export source and destination paths manually.
 

@@ -840,6 +840,12 @@ sudo scripts/backup_cover_assets.sh --age-key-file /path/to/age/keys.txt
 rsync -avn "${COVERS_STORAGE_HOST_PATH}/assets/" "${COVER_ASSETS_BACKUP_HOST_PATH}/" | tail -20  # dry-run diff
 ```
 
+2026-10-05 користувач виконав ручний backup через SOPS env loader:
+`/srv/kdv-integrator/koha-covers/assets` →
+`/var/backups/kdi-integrator/cover-assets`. rsync передав 10 файлів (487.27 KiB),
+видалень не було. Це підтверджує ручне копіювання; регулярний розклад із
+частотою нижчою за state DB ще не налаштовано/не перевірено.
+
 ---
 
 ## Фаза 11 — Міграція існуючих Koha covers
