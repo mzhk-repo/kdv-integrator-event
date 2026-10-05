@@ -715,10 +715,18 @@ def process_integration_logic(
         if force_file_refresh and (not meta or not meta.get('file_path')):
             raise ValueError('UI bitstream replacement requires a 956$u Drive PDF source')
         resolver = _source_resolver()
+        file_source_error = None
+        try:
+            file_ref = resolver.gdrive_parser.parse(meta.get('file_path'), '956$u') if meta else None
+        except ValueError as error:
+            file_ref = None
+            file_source_error = error
         refs = {
-            'file': resolver.gdrive_parser.parse(meta.get('file_path'), '956$u') if meta else None,
+            'file': file_ref,
             'cover': resolver.gdrive_parser.parse(meta.get('cover_path'), '956$p') if meta else None,
         }
+        if file_source_error and not refs['cover']:
+            raise file_source_error
         if force_file_refresh and refs['file'] is None:
             raise ValueError('UI bitstream replacement requires a 956$u Google Drive PDF')
         if not any(refs.values()):
@@ -779,6 +787,8 @@ def process_integration_logic(
             file_work = bool(meta.get('file_path')) and (
                 'file' not in checks or checks['file'].action not in ('noop', 'same_content')
             )
+            if file_source_error:
+                file_work = False
             # Additional/local sources are not covered by the Drive identity gate.
             file_work = file_work or bool(meta.get('additional_files'))
             cover_work = (
@@ -848,6 +858,8 @@ def process_integration_logic(
                     source_shas={source: value[1] for source, value in sources.items()}, **options,
                 )
             state.complete_cycle(uid, sources, result)
+            if file_source_error:
+                raise file_source_error
             return result
         except Exception as error:
             # Metadata failures already incremented/saturated their own retry state.

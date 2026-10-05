@@ -254,6 +254,24 @@ def test_changed_cover_skips_unchanged_pdf_and_dspace(workflow):
     assert state.get(UID)["status"] == "ok"
 
 
+def test_invalid_pdf_source_does_not_skip_independent_cover(workflow):
+    state, koha, meta, drive, _, dspace = workflow
+    meta['file_path'] = 'https://example.test/not-a-drive-file'
+    meta['cover_path'] = 'https://drive.google.com/file/d/cover/view'
+    drive.get_metadata.return_value = {
+        'mimeType': 'image/png', 'name': 'cover.png',
+        'sha256Checksum': COVER_SHA, 'size': str(len(COVER_CONTENT)),
+    }
+
+    with pytest.raises(ValueError, match=r'Unsupported URL in 956\$u'):
+        run(workflow)
+
+    koha.set_cover_url.assert_called_once()
+    assert state.get(UID)['cover_source_id'] == 'cover'
+    assert state.get(UID)['cover_asset_sha256']
+    dspace.assert_not_called()
+
+
 def test_shared_cover_dedup_and_source_change_is_record_local(workflow):
     state, koha, first_meta, drive, _, dspace = workflow
     second_uid = "019d4312-1234-7abc-8123-0123456789ac"

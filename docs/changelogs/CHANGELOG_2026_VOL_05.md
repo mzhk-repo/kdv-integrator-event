@@ -496,3 +496,11 @@
 - **Verification:** Focused mocked regression test asserts that the Poppler call enables `use_cropbox`; manual reproduction with the affected PDF and `pdftoppm -cropbox` matched the reader-visible page.
 - **Risks:** PDFs whose CropBox intentionally excludes content will now produce the cropped, reader-visible area; this is the required rendering contract.
 - **Rollback:** Remove `use_cropbox=True`, the focused regression test, and this changelog entry.
+
+## 2026-10-05 — Continue cover processing when the PDF source URL is invalid
+
+- **Context:** An unsupported URL in Koha `956$u` raised during source parsing and stopped the workflow before an independent `956$p` cover could be processed.
+- **Change:** Capture `956$u` parsing errors when a valid Drive cover source exists, run the cover-only workflow, then report the original PDF source error. The invalid PDF is not downloaded or sent to DSpace.
+- **Verification:** Added a regression test asserting the cover is written, DSpace is skipped, and the task still reports the invalid `956$u`. `py_compile` and `git diff --check` passed; pytest is unavailable in this environment.
+- **Risks:** The Robot task remains failed until `956$u` is corrected, even when cover processing succeeds.
+- **Rollback:** Revert the source-error isolation branch and its regression test.
