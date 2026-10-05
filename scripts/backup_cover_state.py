@@ -157,17 +157,32 @@ def resolve_backup_dir() -> Path:
     return path
 
 
+def configure_age_key_file(age_key_file: Path | None) -> None:
+    """Set an explicit local SOPS key file without exposing key contents."""
+    if age_key_file is None:
+        return
+    if os.environ.get("SOPS_AGE_KEY"):
+        raise ValueError("Use either SOPS_AGE_KEY or --age-key-file, not both")
+    key_path = age_key_file.expanduser().resolve()
+    if not key_path.is_file() or not os.access(key_path, os.R_OK):
+        raise ValueError("--age-key-file must point to a readable key file")
+    os.environ["SOPS_AGE_KEY_FILE"] = str(key_path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     backup_parser = subparsers.add_parser("backup", help="Create a state DB backup")
     backup_parser.add_argument("--db-path", type=Path, help="Override the host state DB path")
     backup_parser.add_argument("--backup-dir", type=Path, help="Override the environment backup directory")
+    backup_parser.add_argument("--age-key-file", type=Path, help="SOPS age key file for manual runs")
     backup_parser.add_argument("--retention-days", type=int, default=30)
     verify_parser = subparsers.add_parser("verify", help="Restore and check a backup")
     verify_parser.add_argument("backup", type=Path, nargs="?", help="Override the latest backup path")
+    verify_parser.add_argument("--age-key-file", type=Path, help="SOPS age key file for manual runs")
     args = parser.parse_args()
     try:
+        configure_age_key_file(args.age_key_file)
         if args.command == "backup":
             if args.retention_days < 1:
                 parser.error("--retention-days must be at least 1")

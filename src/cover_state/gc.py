@@ -39,12 +39,23 @@ def load_gc_environment() -> None:
         if not env_path.is_file() or not shutil.which("sops"):
             raise ValueError(f"encrypted environment file or sops unavailable for {normalized}")
         command = ["sops", "--decrypt", "--input-type", "dotenv", "--output-type", "dotenv"]
-        age_key = os.environ.get("SOPS_AGE_KEY_FILE", str(Path.home() / ".config/age/keys.txt"))
-        if Path(age_key).is_file():
-            command.extend(("--age-key-file", age_key))
+        # SOPS_AGE_KEY is injected by CI. For local keys, SOPS reads
+        # SOPS_AGE_KEY_FILE from its environment (there is no key-file CLI flag).
+        sops_env = os.environ.copy()
+        if sops_env.get("SOPS_AGE_KEY"):
+            sops_env.pop("SOPS_AGE_KEY_FILE", None)
+        else:
+            age_key = sops_env.get("SOPS_AGE_KEY_FILE")
+            if age_key:
+                if not Path(age_key).is_file() or not os.access(age_key, os.R_OK):
+                    raise ValueError("SOPS_AGE_KEY_FILE is not a readable file")
+            else:
+                age_key = str(Path.home() / ".config/age/keys.txt")
+                if Path(age_key).is_file():
+                    sops_env["SOPS_AGE_KEY_FILE"] = age_key
         command.append(str(env_path))
         try:
-            raw = subprocess.run(command, check=True, capture_output=True, text=True).stdout
+            raw = subprocess.run(command, check=True, capture_output=True, text=True, env=sops_env).stdout
         except (OSError, subprocess.CalledProcessError) as error:
             raise ValueError("could not decrypt selected environment") from error
     for key, value in dotenv_values(stream=StringIO(raw)).items():

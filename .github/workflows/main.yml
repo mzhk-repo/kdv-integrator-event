@@ -71,7 +71,7 @@ jobs:
       SERVER_SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
       SSH_HOST_KEY_PUB: ${{ secrets.SSH_HOST_KEY_PUB }}
       DEPLOY_PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
-      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY || vars.SOPS_AGE_KEY }}
 
   deploy-prod:
     needs: deploy-change-check
@@ -97,4 +97,4 @@ jobs:
       SERVER_SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
       SSH_HOST_KEY_PUB: ${{ secrets.SSH_HOST_KEY_PUB }}
       DEPLOY_PROJECT_DIR: ${{ secrets.DEPLOY_PROJECT_DIR }}
-      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY || vars.SOPS_AGE_KEY }}

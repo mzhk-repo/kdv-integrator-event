@@ -821,10 +821,11 @@ sqlite3 state.db "SELECT cover_source_id, cover_asset_sha256 FROM records WHERE 
 ls -la "${COVER_STATE_BACKUP_HOST_PATH:-/backups/state-db}/"
 ```
 
-Локальна ізольована перевірка скрипта пройшла 2026-10-05. У робочому
-середовищі state DB за `/data/kdv_cover_state/state.db` відсутня; live restore,
-щоденний запуск і перевірка journal залишаються після налаштування timer
-оператором.
+2026-10-05 користувач виконав backup на цьому середовищі: створено
+`/var/backups/kdi-integrator/state-db/state-20261005T083657061936Z-688712.sqlite3`,
+скрипт повідомив `records=6`. Restore-перевірка цього snapshot успішно
+завершилася з `6 records`. Щоденний запуск через systemd timer і перевірка
+journal залишаються після налаштування timer оператором.
 
 ### Задача 10.2 — Backup assets (нижчий пріоритет, incremental)
 

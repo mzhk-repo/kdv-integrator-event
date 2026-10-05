@@ -437,8 +437,17 @@ the existing SOPS loader to read `COVER_STATE_HOST_PATH`:
 sudo .venv/bin/python scripts/backup_cover_state.py backup
 ```
 
-Use `--db-path` only for an explicit path override. `SOPS_AGE_KEY_FILE` may be
-set in the service environment when the age key is outside the default location.
+GitHub Actions passes `SOPS_AGE_KEY` from the repository/environment secret,
+falling back to the same-named Actions variable. For a manual run, pass the
+private key file path explicitly; its contents are never printed:
+
+```bash
+sudo .venv/bin/python scripts/backup_cover_state.py backup \
+  --age-key-file /path/to/age/keys.txt
+```
+
+Use `--db-path` or `--backup-dir` only for explicit path overrides. The age key
+file must be readable by the user running the command (root in the example).
 
 The command uses SQLite's online backup API, so an active WAL database can be
 copied consistently. It creates a timestamped snapshot, validates it, updates

@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Pass manual age key through SOPS environment
+
+- **Context:** The manual backup option supplied an age key path, but the installed SOPS rejected the unsupported `--age-key-file` CLI flag.
+- **Change:** The selected key file is now passed as `SOPS_AGE_KEY_FILE` in the SOPS subprocess environment. `SOPS_AGE_KEY` remains preferred for GitHub Actions and is passed without logging its value.
+- **Verification:** The encrypted dev env decrypted successfully with plaintext redirected to `/dev/null`; Python syntax and `git diff --check` passed.
+- **Risks:** The manual key file must be readable by the backup process. No plaintext environment values or key contents were emitted.
+- **Rollback:** Revert the subprocess environment handling in `src/cover_state/gc.py`; manual `--age-key-file` will no longer work.
+
+## 2026-10-05 — Support CI and manual SOPS age key sources for backup
+
+- **Context:** Root-run manual backup failed to decrypt the selected encrypted environment; support for an explicit manual key source was needed.
+- **Change:** The backup CLI accepts `--age-key-file PATH` for manual runs. SOPS inherits `SOPS_AGE_KEY` from GitHub Actions; the workflow maps the repository/environment secret first and same-named Actions variable as fallback. The shared cover env loader prefers `SOPS_AGE_KEY` over a local key-file default.
+- **Verification:** Python syntax and `git diff --check` passed. No key contents or encrypted env values were read or logged.
+- **Risks:** A manually supplied key file must be readable by the command's effective user. CI should store the private age key as a GitHub secret; a variable fallback is supported when explicitly configured.
+- **Rollback:** Remove the CLI option and workflow fallback and restore key-file-only SOPS selection.
+
 ## 2026-10-05 — Prepare the state backup directory with init-volume
 
 - **Context:** The backup command's default `/backups/state-db` did not exist, and the unprivileged caller could not create its top-level parent.
@@ -14,7 +30,7 @@
 
 - **Context:** Phase 10.1 needs a daily backup of the critical cover state DB and a restore check on the same environment; the operator will install the systemd timer.
 - **Change:** Added `scripts/backup_cover_state.py` with SQLite online snapshots, environment selection from process `SERVER_ENV` or `/etc/environment`, automatic state/backup host-path resolution from the selected encrypted env through the existing SOPS loader, timestamped mode-0600 backups, atomic `latest.sqlite3`, 30-day retention, and temporary-database restore verification. Documented host invocation and timer permissions; no timer was installed.
-- **Verification:** AST parsing, CLI help, isolated backup/restore smoke with a temporary SQLite DB (including direct invocation outside the repository root), source DB unchanged check, permissions checks, and `git diff --check` passed. The host state DB is not present at `/data/kdv_cover_state/state.db`, so live restore acceptance and timer logging remain pending.
+- **Verification:** AST parsing, CLI help, isolated backup/restore smoke with a temporary SQLite DB (including direct invocation outside the repository root), source DB unchanged check, permissions checks, and `git diff --check` passed. User-provided same-host run on 2026-10-05 created `/var/backups/kdi-integrator/state-db/state-20261005T083657061936Z-688712.sqlite3` with 6 records; restore verification passed with 6 records. Daily timer execution and journal verification remain pending.
 - **Risks:** The timer must run on the node with the state DB bind and writable WAL directory access; backup and latest snapshots are stored under `/backups/state-db` by default.
 - **Rollback:** Stop the operator-installed timer and revert the script and documentation; existing backup files can be retained or removed manually.
 
