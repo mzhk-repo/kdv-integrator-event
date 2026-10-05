@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Select the invoking user's rclone config under sudo
+
+- **Context:** Running state backup with `sudo` made rclone look under `/root`, where the configured `kdv-drive` remote was absent. The Koha backup script runs rclone as its invoking user and uses that user's default config.
+- **Change:** State backup now searches readable rclone configs for the configured remote, including the `SUDO_USER` home config, before upload. `BACKUP_RCLONE_CONFIG` remains an explicit override.
+- **Verification:** Read-only `rclone listremotes` against `/home/pinokew/.config/rclone/rclone.conf` confirmed the configured `kdv-drive` remote; Python compilation and `git diff --check` passed. No remote write was made.
+- **Risks:** The invoking user's config must be readable by root when the backup command is run with `sudo`; config contents are not logged.
+- **Rollback:** Revert config discovery and provide a readable root rclone config with the configured remote.
+
 ## 2026-10-05 — Use the Docker rclone plugin config for state backups
 
 - **Context:** The backup ran under `sudo`, so rclone looked for `/root/.config/rclone/rclone.conf` and could not find the configured `kdv-drive` remote.

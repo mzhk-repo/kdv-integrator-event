@@ -33,7 +33,7 @@ no implicit fallback to an installation-specific domain or host.
 | `COVER_STATE_BACKUP_HOST_PATH` | Absolute host directory for SQLite state DB backups, separate from cover and live state paths. Prepared by `init-volume.sh`; the backup timer needs write access. | `/backups/state-db`; deployment config |
 | `BACKUP_RCLONE_REMOTE` | Existing remote name from the host's rclone config used for the second state DB backup. Configure together with `BACKUP_RCLONE_FOLDER`. | Optional; host backup process |
 | `BACKUP_RCLONE_FOLDER` | Relative folder on `BACKUP_RCLONE_REMOTE` for state DB snapshots. Configure together with the remote name. | Optional; host backup process |
-| `BACKUP_RCLONE_CONFIG` | Readable host rclone config used by the backup process; defaults to the config used by the Docker rclone volume plugin. | `/var/lib/docker-plugins/rclone/config/rclone.conf` |
+| `BACKUP_RCLONE_CONFIG` | Optional readable rclone config override. Without it, the script checks the invoking user's config (including `SUDO_USER`), `RCLONE_CONFIG`, and the Docker plugin config, selecting the first with the configured remote. | Unset; host backup process |
 | `COVER_STATE_LOCAL_RETENTION_DAYS` | Retention for timestamped local state DB snapshots. | `30` days |
 | `COVER_STATE_CLOUD_RETENTION_DAYS` | Independent retention for timestamped cloud snapshots. | `90` days |
 | `COVER_ASSETS_BACKUP_HOST_PATH` | Absolute local destination for incremental assets backup; never cloud-mounted. | Required when running assets backup |

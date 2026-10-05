@@ -88,10 +88,11 @@ backup command uses SQLite's online backup API to create a consistent snapshot
 including WAL state. It validates
 the snapshot, publishes a timestamped mode-0600 file atomically, updates
 `latest.sqlite3`, and retains `COVER_STATE_LOCAL_RETENTION_DAYS` (default 30).
-When both rclone settings are configured, rclone uses
-`BACKUP_RCLONE_CONFIG` (default the Docker volume plugin config) and `rclone copyto` uploads the snapshot
+When both rclone settings are configured, the backup selects a readable config
+containing the remote (`BACKUP_RCLONE_CONFIG` overrides discovery) and `rclone copyto` uploads the snapshot
 and reads it back for SQLite verification; old timestamped copies are removed
-according to `COVER_STATE_CLOUD_RETENTION_DAYS` (default 90). `verify` restores the selected snapshot
+according to `COVER_STATE_CLOUD_RETENTION_DAYS` (default 90). `verify` restores
+the selected snapshot
 into a temporary DB and runs `quick_check` plus the `records` table check; it
 does not modify the source DB. The operator schedules `backup` with a daily
 systemd timer and uses the journal for its output. `scripts/backup_cover_assets.sh`

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import pwd
 import re
 import sqlite3
 import subprocess
@@ -62,11 +63,38 @@ def prune_backups(backup_dir: Path, retention_days: int) -> None:
 
 def copy_cloud_backup(local_path: Path, remote_path: str, retention_days: int) -> None:
     """Copy and read-back verify the snapshot with the rclone CLI."""
-    config = Path(os.environ.get(
-        "BACKUP_RCLONE_CONFIG", "/var/lib/docker-plugins/rclone/config/rclone.conf"
+    remote = remote_path.split(":", 1)[0]
+    candidates = []
+    for key in ("BACKUP_RCLONE_CONFIG", "RCLONE_CONFIG"):
+        configured = os.environ.get(key, "").strip()
+        if configured:
+            candidates.append(Path(configured).expanduser())
+    sudo_user = os.environ.get("SUDO_USER", "").strip()
+    if sudo_user:
+        try:
+            candidates.append(Path(pwd.getpwnam(sudo_user).pw_dir) / ".config/rclone/rclone.conf")
+        except KeyError:
+            pass
+    candidates.extend((
+        Path("/var/lib/docker-plugins/rclone/config/rclone.conf"),
+        Path.home() / ".config/rclone/rclone.conf",
     ))
-    if not config.is_file() or not os.access(config, os.R_OK):
-        raise ValueError(f"rclone config is missing or unreadable: {config}")
+    config = None
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen or not candidate.is_file() or not os.access(candidate, os.R_OK):
+            continue
+        seen.add(candidate)
+        result = subprocess.run(
+            ["rclone", "--config", str(candidate), "listremotes"],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode == 0 and any(line.strip().removesuffix(":") == remote for line in result.stdout.splitlines()):
+            config = candidate
+            break
+    if config is None:
+        raise ValueError(f"No readable rclone config contains remote '{remote}'")
     rclone = ["rclone", "--config", str(config)]
     name = local_path.name
     snapshot_remote = f"{remote_path}/{name}"
