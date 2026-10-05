@@ -1135,10 +1135,15 @@ LIMIT 1;
 Для видалення використовується окрема функція Integrator:
 
 ```text
-Remove cover
+DELETE /kdv/api/integrate/{biblionumber}/cover
 ```
 
-або:
+Ця дія прибирає `956$p`, `957$c` та cover reference у SQLite state під workflow
+lock. Незавершений цикл відхиляється; PDF/DSpace references і WebP файл не
+видаляються. WebP стає кандидатом GC після retention period.
+
+Окреме видалення PDF/DSpace resource є незалежною дією і не виконується цим
+cover endpoint-ом.
 
 ```text
 Remove DSpace file

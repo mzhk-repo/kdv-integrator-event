@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import fcntl
 from flask import Flask, jsonify, request, abort
 
 try:
@@ -505,6 +506,37 @@ def update_record(biblionumber):
             biblionumber, e,
         )
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/kdv/api/integrate/<int:biblionumber>/cover", methods=["DELETE"])
+def remove_cover(biblionumber):
+    if not os.environ.get("COVER_STATE_DB_PATH"):
+        return jsonify({"status": "unavailable", "message": "Cover state is not configured"}), 503
+    try:
+        from .cover_state.state_machine import StateMachine
+
+        state = StateMachine()
+        koha, _ = _make_clients()
+        lock_path = os.path.join(os.path.dirname(state.db_path), ".workflow.lock")
+        with open(lock_path, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            meta = koha.get_biblio_metadata(biblionumber)
+            if not meta or not meta.get("record_uid"):
+                return jsonify({"status": "not_found"}), 404
+            uid = meta["record_uid"]
+            row = state.get(uid)
+            if row and row["status"] != "ok":
+                return jsonify({"status": "conflict", "message": "Integration cycle is unfinished"}), 409
+            if not koha.remove_cover(biblionumber, record_uid=uid):
+                return jsonify({"status": "error", "message": "Koha cover removal was not confirmed"}), 502
+            if row and not state.remove_cover(uid):
+                return jsonify({"status": "conflict", "message": "Cover state changed during removal"}), 409
+        logger.info("Cover removed record_uid=%r biblionumber=%s asset_retained_for_gc=%s",
+                    uid, biblionumber, bool(row and row.get("cover_asset_sha256")))
+        return jsonify({"status": "cover_removed", "asset_deleted": False})
+    except Exception as exc:
+        logger.error("Cover removal failed for #%s type=%s", biblionumber, type(exc).__name__)
+        return jsonify({"status": "error", "message": "Cover removal failed"}), 500
 
 
 @app.route("/kdv/api/integrate/<int:biblionumber>/retry-state", methods=["GET"])

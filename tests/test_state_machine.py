@@ -54,6 +54,24 @@ def test_cutoff_persistence_reset_and_success(tmp_path):
     assert state.get_retry_eligible() == []
 
 
+def test_remove_cover_clears_cover_references_but_preserves_pdf_state(tmp_path):
+    state = StateMachine(str(tmp_path / "state.db"), 3)
+    state.mark_pending("record")
+    state.complete_cycle(
+        "record", {"cover": ("cover-id", "cover-sha"), "file": ("pdf-id", "pdf-sha")},
+        {"cover_asset_sha256": "asset-sha", "uuid": "item", "bitstream_uuid": "bitstream"},
+    )
+
+    assert state.remove_cover("record") is True
+    row = state.get("record")
+    assert (row["cover_source_id"], row["cover_source_sha256"], row["cover_asset_sha256"]) == (
+        None, None, None
+    )
+    assert (row["file_source_id"], row["file_source_sha256"]) == ("pdf-id", "pdf-sha")
+    assert (row["dspace_item_uuid"], row["dspace_bitstream_uuid"]) == ("item", "bitstream")
+    assert row["status"] == "ok"
+
+
 def test_backoff_and_operator_reset(tmp_path):
     state = StateMachine(str(tmp_path / "state.db"), 5)
     state.mark_pending("retry")

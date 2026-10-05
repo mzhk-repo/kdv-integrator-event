@@ -395,6 +395,44 @@ class KohaClient:
     def set_cover_url(self, biblio_id, cover_url):
         return self._update_956(biblio_id, cover_url=cover_url)
 
+    def remove_cover(self, biblio_id, *, record_uid):
+        """Clear the cover source and link, preserving unrelated MARC data."""
+        xml_data = self._get_biblio_xml(biblio_id)
+        record = self._parse_marc(xml_data) if xml_data else None
+        uid_fields = record.get_fields("001") if record else []
+        if len(uid_fields) != 1 or (uid_fields[0].data or "").strip() != record_uid:
+            return False
+
+        for field in record.get_fields("956"):
+            field.delete_subfield("p")
+        for field in list(record.get_fields("957")):
+            field.delete_subfield("c")
+            if not field.subfields:
+                record.remove_field(field)
+
+        try:
+            response = self.session.put(
+                f"{self.base_url}/api/v1/biblios/{biblio_id}",
+                data=pymarc.record_to_xml(record),
+                headers={"Content-Type": "application/marcxml+xml"},
+                timeout=TIMEOUT,
+            )
+        except Exception as error:
+            logger.error("Cover removal write failed for #%s (%s)", biblio_id, type(error).__name__)
+            return False
+        if response.status_code != 200:
+            return False
+
+        readback_xml = self._get_biblio_xml(biblio_id)
+        readback = self._parse_marc(readback_xml) if readback_xml else None
+        readback_uids = readback.get_fields("001") if readback else []
+        return bool(
+            len(readback_uids) == 1
+            and (readback_uids[0].data or "").strip() == record_uid
+            and not any(field.get_subfields("p") for field in readback.get_fields("956"))
+            and not any(field.get_subfields("c") for field in readback.get_fields("957"))
+        )
+
     def restore_missing_957_metadata(
         self, biblio_id, *, record_uid, item_uuid=None, cover_asset_sha256=None
     ):

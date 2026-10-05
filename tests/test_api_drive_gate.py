@@ -666,6 +666,53 @@ def test_legacy_confirmed_drive_cover_is_migrated_to_webp(workflow):
     legacy.assert_not_called()
 
 
+def test_empty_cover_source_keeps_confirmed_asset_and_references(workflow):
+    state, koha, meta, drive, _, dspace = workflow
+    external_cover(workflow)
+    run(workflow)
+    row = state.get(UID)
+    asset = Path(os.environ['COVERS_STORAGE_PATH']) / 'assets' / f"{row['cover_asset_sha256']}.webp"
+    assert asset.is_file()
+
+    meta['cover_path'] = None
+    drive.get_metadata.reset_mock()
+    dspace.reset_mock()
+    result = run(workflow)
+
+    assert result['status'] == 'noop'
+    assert state.get(UID)['cover_asset_sha256'] == row['cover_asset_sha256']
+    assert state.get(UID)['cover_source_id'] == row['cover_source_id']
+    assert koha.set_success.call_count == 1
+    assert asset.is_file()
+    drive.get_metadata.assert_not_called()
+    dspace.assert_not_called()
+
+
+def test_empty_pdf_source_keeps_confirmed_dspace_file_references(workflow):
+    state, koha, meta, drive, _, dspace = workflow
+    external_cover(workflow)
+    run(workflow)
+    before = state.get(UID)
+    assert before['dspace_bitstream_uuid'] == 'bitstream'
+
+    meta['file_path'] = None
+    drive.get_metadata.reset_mock()
+    dspace.reset_mock()
+    result = run(workflow)
+
+    assert result['status'] == 'noop'
+    row = state.get(UID)
+    assert (row['file_source_id'], row['file_source_sha256']) == (
+        before['file_source_id'], before['file_source_sha256']
+    )
+    assert (row['dspace_item_uuid'], row['dspace_bitstream_uuid']) == (
+        before['dspace_item_uuid'], before['dspace_bitstream_uuid']
+    )
+    assert koha.set_success.call_count == 1
+    drive.get_metadata.assert_not_called()
+    dspace.assert_not_called()
+
+
 def test_external_cover_failed_dspace_retains_asset_and_never_writes_koha(workflow):
     state, koha, _, drive, _, dspace = workflow
     external_cover(workflow)

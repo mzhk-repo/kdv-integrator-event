@@ -394,6 +394,41 @@ def test_koha_restores_only_missing_957_values_and_reads_back(monkeypatch):
     assert restored.get_subfields('9') == ['preserve']
 
 
+def test_koha_remove_cover_clears_only_cover_fields_and_confirms_readback(monkeypatch):
+    client = KohaClient()
+    uid = "019f8414-3e71-70f1-9432-e235b989ef2c"
+    original = (
+        f'<record><controlfield tag="001">{uid}</controlfield>'
+        '<datafield tag="956" ind1=" " ind2=" "><subfield code="p">drive-cover</subfield>'
+        '<subfield code="u">drive-pdf</subfield></datafield>'
+        '<datafield tag="957" ind1=" " ind2=" "><subfield code="3">item</subfield>'
+        '<subfield code="c">' + 'a' * 64 + '</subfield><subfield code="9">keep</subfield></datafield>'
+        '<datafield tag="856" ind1="4" ind2="0"><subfield code="u">keep-link</subfield></datafield>'
+        '</record>'
+    )
+    captured = {}
+
+    def get_xml(_biblio_id):
+        return captured.get("data", original)
+
+    monkeypatch.setattr(client, "_get_biblio_xml", get_xml)
+
+    def fake_put(_url, data=None, headers=None, timeout=None):
+        captured["data"] = data.decode("utf-8")
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(client.session, "put", fake_put)
+
+    assert client.remove_cover(42, record_uid=uid) is True
+    updated = client._parse_marc(captured["data"])
+    assert updated.get_fields("956")[0].get_subfields("p") == []
+    assert updated.get_fields("956")[0].get_subfields("u") == ["drive-pdf"]
+    assert updated.get_fields("957")[0].get_subfields("c") == []
+    assert updated.get_fields("957")[0].get_subfields("3") == ["item"]
+    assert updated.get_fields("957")[0].get_subfields("9") == ["keep"]
+    assert updated.get_fields("856")[0].get_subfields("u") == ["keep-link"]
+
+
 def test_koha_dspace_link_repair_replaces_856_with_both_links(monkeypatch):
     client = KohaClient()
     captured = {}

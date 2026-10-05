@@ -117,6 +117,10 @@ access. An unchanged ID with confirmed `status=ok` returns `noop`; a new/changed
 ID returns `needs_sha_check`. An unchanged ID with unfinished status returns
 `resume`, preserving reconciliation rather than silently skipping partial work.
 An absent source returns `no_source` and never deletes stored resources.
+Explicit cover removal is a separate DELETE action using the existing API
+authentication. It clears only MARC `956$p`/`957$c` and the cover references in state under `.workflow.lock`;
+it refuses unfinished cycles and retains the immutable asset for GC. PDF/DSpace
+references are unaffected.
 Retry callers still enforce cutoff/backoff through state eligibility; `resume`
 does not authorize an exhausted attempt. Cover and PDF are checked separately;
 a source-level `noop` does not skip work required by another source. Task 3.2

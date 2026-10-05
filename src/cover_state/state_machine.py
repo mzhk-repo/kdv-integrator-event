@@ -246,6 +246,22 @@ class StateMachine:
             )
         return cursor.rowcount == 1
 
+    def remove_cover(self, record_uid: str) -> bool:
+        """Detach a confirmed cover while retaining its immutable asset for GC."""
+        self._validate_uid(record_uid)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE records SET cover_source_id=NULL, cover_source_sha256=NULL, "
+                "cover_asset_sha256=NULL, updated_at=CURRENT_TIMESTAMP "
+                "WHERE record_uid=? AND status='ok'",
+                (record_uid,),
+            )
+            if cursor.rowcount != 1:
+                return False
+            connection.execute("DELETE FROM pending_cover_work WHERE record_uid=?", (record_uid,))
+        return True
+
     def is_retry_eligible(self, record_uid: str) -> bool:
         record = self.get(record_uid)
         return bool(

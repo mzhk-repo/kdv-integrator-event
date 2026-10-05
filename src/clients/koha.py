@@ -50,6 +50,9 @@ class KohaClientWrapper:
     def set_cover_url(self, biblio_id, cover_url):
         return self._client.set_cover_url(biblio_id, cover_url)
 
+    def remove_cover(self, biblio_id, *, record_uid):
+        return self._client.remove_cover(biblio_id, record_uid=record_uid)
+
     def get_cover_image_url(self, biblionumber):
         return self._client.get_cover_image_url(biblionumber)
 

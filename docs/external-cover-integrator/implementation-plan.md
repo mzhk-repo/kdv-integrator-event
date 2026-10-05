@@ -775,15 +775,24 @@ ls /data/koha-covers/assets/<orphan_sha>.webp   # очікується: No such 
 
 **Опис:** Перевірити поведінку розділу 8 концепції — порожнє source-поле не видаляє наявний ресурс автоматично.
 
+Реалізовано: порожнє `956$p` лишається `no_source` і не змінює Koha `957$c`,
+cover state чи asset. Окрема автентифікована операторська дія
+`DELETE /kdv/api/integrate/<biblionumber>/cover` очищає MARC `956$p`/`957$c`
+і cover-поля state під спільним workflow lock; запит використовує наявну API
+автентифікацію. Вона відхиляє незавершений
+цикл; PDF source, Koha `856`/`957$3`, DSpace Item/bitstream та сам WebP не
+видаляються. Asset лишається без посилання для retention GC.
+
 **Acceptance criteria:**
 - Очищення source-поля в Google Таблиці не видаляє існуючу обкладинку/файл у Koha/DSpace.
-- Явне видалення ресурсу (окрема адмін-дія) коректно прибирає посилання, залишаючи asset для GC.
+- Явна операторська дія прибирає `956$p`, `957$c` і cover reference у state DB, залишаючи asset для GC.
+- PDF/DSpace references та не пов'язані MARC subfields залишаються незмінними.
 
 **Validation:**
 ```bash
-python -m integrator.run --record test-uid-4 --simulate-empty-source
-sqlite3 state.db "SELECT cover_source_id, cover_asset_sha256 FROM records WHERE record_uid='test-uid-4';"
-# cover_asset_sha256 має лишитись незмінним
+DELETE /kdv/api/integrate/<biblionumber>/cover
+sqlite3 state.db "SELECT cover_source_id, cover_asset_sha256 FROM records WHERE record_uid='<record_uid>';"
+# cover поля мають бути NULL; assets/<old_sha>.webp лишається до GC
 ```
 
 ---

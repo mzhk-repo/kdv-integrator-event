@@ -2,6 +2,22 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Use existing API authentication for explicit cover removal
+
+- **Context:** The user chose to protect the explicit cover removal action with the existing Integrator API authentication rather than provision a second token.
+- **Change:** Removed `KDV_ADMIN_API_TOKEN` and `X-KDV-ADMIN-TOKEN`; the DELETE action now uses the existing auth mode and `KDV_API_TOKEN` where applicable. No encrypted environment files need changes.
+- **Verification:** Targeted cover-removal and authorization tests, Python compilation and `git diff --check` passed.
+- **Risks:** Callers authorized by the existing API policy can invoke cover removal; that policy remains the access boundary.
+- **Rollback:** Reintroduce a separately managed operator token only if access needs to be narrower than the current API policy.
+
+## 2026-10-05 — Implement explicit cover removal policy
+
+- **Context:** Phase 9.2 requires empty source fields to preserve published resources and an explicit operator action to detach a cover for later GC.
+- **Change:** Added `DELETE /kdv/api/integrate/<biblionumber>/cover`. Under the shared workflow lock it verifies the Koha `001`, clears `956$p` and `957$c` with MARC read-back, then clears only the cover source/hash/asset fields in state. Unfinished cycles are rejected; DSpace/PDF links and the immutable WebP remain untouched.
+- **Verification:** Targeted API, Koha contract, source-gate and state tests plus Python compilation and `git diff --check` passed.
+- **Risks:** Koha and SQLite cannot share a transaction, so an interrupted state update may leave a retained state reference; retry the idempotent request after confirming Koha read-back.
+- **Rollback:** Revert the route/client/state changes and documentation. No physical assets are deleted by this action.
+
 ## 2026-10-03 — Add scheduled garbage collection for cover assets
 
 - **Context:** Phase 9.1 requires deleting old assets only after confirming that no cover-state record references them.
