@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Add SQLite cover state backup and restore check
+
+- **Context:** Phase 10.1 needs a daily backup of the critical cover state DB and a restore check on the same environment; the operator will install the systemd timer.
+- **Change:** Added `scripts/backup_cover_state.py` with SQLite online snapshots, timestamped mode-0600 backups, atomic `latest.sqlite3`, 30-day retention, and temporary-database restore verification. Documented host invocation and timer permissions; no timer was installed.
+- **Verification:** AST parsing, CLI help, isolated backup/restore smoke with a temporary SQLite DB, source DB unchanged check, permissions checks, and `git diff --check` passed. The host state DB is not present at `/data/kdv_cover_state/state.db`, so live restore acceptance and timer logging remain pending.
+- **Risks:** The timer must run on the node with the state DB bind and writable WAL directory access; backup and latest snapshots are stored under `/backups/state-db` by default.
+- **Rollback:** Stop the operator-installed timer and revert the script and documentation; existing backup files can be retained or removed manually.
+
 ## 2026-10-05 — Use existing API authentication for explicit cover removal
 
 - **Context:** The user chose to protect the explicit cover removal action with the existing Integrator API authentication rather than provision a second token.

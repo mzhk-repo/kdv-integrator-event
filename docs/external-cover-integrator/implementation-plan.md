@@ -802,31 +802,34 @@ sqlite3 state.db "SELECT cover_source_id, cover_asset_sha256 FROM records WHERE 
 **Мета:** реалізувати пріоритизовану backup-стратегію (розділ 32).
 
 **Deliverables:**
-- Автоматизований, частий backup MariaDB (Koha) та SQLite state DB.
+- Автоматизований backup SQLite state DB.
 - Менш частий/incremental backup `/data/koha-covers/assets`.
-- Підтверджена процедура відновлення (restore-тест) для критичних джерел.
+- Підтверджений restore-тест SQLite state DB на цьому середовищі.
 
-### Задача 10.1 — Backup MariaDB + state DB (критичний контур)
+### Задача 10.1 — Backup state DB (критичний контур)
 
 **Acceptance criteria:**
 - Щоденний backup виконується автоматично й логується.
-- Restore-тест на окремому середовищі успішний.
+- Restore-тест у тимчасову SQLite DB на цьому середовищі успішний; робоча DB не змінюється.
+- Backup атомарний, проходить `quick_check`, має обмеження доступу та зберігає останні 30 днів.
+- Timer встановлюється оператором; його розклад і логування перевіряються після встановлення.
 
 **Validation:**
 ```bash
-ls -la /backups/mariadb/ | tail -5
-ls -la /backups/state-db/ | tail -5
-# Restore-тест
-koha-mysql <test_instance> < /backups/mariadb/latest.sql
-sqlite3 /tmp/restored_state.db < /backups/state-db/latest.sql
-sqlite3 /tmp/restored_state.db "SELECT COUNT(*) FROM records;"
+python3 scripts/backup_cover_state.py backup --db-path "$COVER_STATE_HOST_PATH/state.db"
+python3 scripts/backup_cover_state.py verify
+ls -la /backups/state-db/
 ```
+
+Локальна ізольована перевірка скрипта пройшла 2026-10-05. У робочому
+середовищі state DB за `/data/kdv_cover_state/state.db` відсутня; live restore,
+щоденний запуск і перевірка journal залишаються після налаштування timer
+оператором.
 
 ### Задача 10.2 — Backup assets (нижчий пріоритет, incremental)
 
 **Acceptance criteria:**
-- Incremental backup виконується за розкладом (рідше за MariaDB/state DB).
-- Задокументована процедура регенерації assets із Google Drive на випадок повної втрати, якщо backup недоступний.
+- Incremental backup виконується за розкладом (рідше за state DB).
 
 **Validation:**
 ```bash

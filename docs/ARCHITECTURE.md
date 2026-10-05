@@ -77,6 +77,14 @@ Because the host path is node-local, API
 placement must use the node with that path or shared storage with the same durable
 data on each eligible node.
 
+`scripts/backup_cover_state.py backup` uses SQLite's online backup API to create
+a consistent snapshot from the configured DB, including WAL state. It validates
+the snapshot, publishes a timestamped mode-0600 file atomically, updates
+`latest.sqlite3`, and retains 30 days. `verify` restores the selected snapshot
+into a temporary DB and runs `quick_check` plus the `records` table check; it
+does not modify the source DB. The operator schedules `backup` with a daily
+systemd timer and uses the journal for its output.
+
 ### External cover state machine (Task 2.2)
 
 `src/cover_state/state_machine.py` provides `StateMachine` for the separate WAL DB.

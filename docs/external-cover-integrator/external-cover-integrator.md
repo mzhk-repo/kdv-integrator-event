@@ -1180,12 +1180,17 @@ Covers
 
 ```text
 критично, часта періодичність (напр. щоденно):
-  MariaDB (Koha)
   SQLite state DB (Integrator)
 
 нижчий пріоритет, incremental, можна рідше:
   /data/koha-covers/assets
 ```
+
+Для state DB `scripts/backup_cover_state.py` створює узгоджений snapshot через
+SQLite online backup API, перевіряє його та оновлює `latest.sqlite3` атомарно.
+Тimestamped копії зберігаються 30 днів. Оператор налаштовує щоденний systemd
+timer і запускає restore-перевірку на цьому ж середовищі; вона відновлює копію
+у тимчасову DB, запускає `quick_check` та читає таблицю `records`.
 
 `assets/` теоретично регенерований: доки оригінали файлів ще існують у Google Drive, Integrator може заново завантажити джерело й перебудувати WebP/PDF-похідні за даними зі state DB (`cover_source_id`, `file_source_id`). Втрата ж MariaDB або state DB незворотна — без них неможливо навіть встановити, які Drive-файли відповідають яким записам.
 

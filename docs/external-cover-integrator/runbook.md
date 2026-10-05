@@ -425,6 +425,35 @@ documents the standard `searchResults` envelope. The client also recognizes
 `searchResult` with the same validated structure. Existing accidental duplicates
 are left untouched; inspect them separately before any cleanup.
 
+## SQLite state backup and restore check
+
+The operator's daily systemd timer should run the backup command from the
+repository root on the node that owns the state DB bind mount:
+
+```bash
+python3 scripts/backup_cover_state.py backup \
+  --db-path "$COVER_STATE_HOST_PATH/state.db" \
+  --backup-dir /backups/state-db
+```
+
+The command uses SQLite's online backup API, so an active WAL database can be
+copied consistently. It creates a timestamped snapshot, validates it, updates
+`latest.sqlite3` atomically, and prunes snapshots older than 30 days. Files are
+mode `0600`; the backup directory is created mode `0700`. Standard output and
+errors are available in the systemd journal. Give the timer write access to the
+backup directory and the state DB directory so SQLite can coordinate WAL shared
+memory files; the backup operation does not update state records.
+
+Run the restore check on this same host without replacing the working DB:
+
+```bash
+python3 scripts/backup_cover_state.py verify /backups/state-db/latest.sqlite3
+```
+
+This restores to a temporary DB, runs `PRAGMA quick_check`, and confirms the
+cover-state `records` table can be read. It prints the restored row count and
+removes the temporary DB on exit. The script does not install or enable a timer.
+
 ## Rollback
 
 Revert the CDN service/config and corresponding orchestrator changes, then use
