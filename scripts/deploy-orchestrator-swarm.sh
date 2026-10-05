@@ -159,12 +159,21 @@ run_python_config_validation() {
 }
 
 run_deploy_adjacent_scripts() {
-  local covers_path state_path
+  local covers_path state_path backup_path
   covers_path="${COVERS_STORAGE_HOST_PATH:-$(read_env_value COVERS_STORAGE_HOST_PATH)}"
   state_path="${COVER_STATE_HOST_PATH:-$(read_env_value COVER_STATE_HOST_PATH)}"
+  backup_path="${COVER_STATE_BACKUP_HOST_PATH:-$(read_env_value COVER_STATE_BACKUP_HOST_PATH)}"
+  backup_path="${backup_path:-/backups/state-db}"
 
-  log "Initializing cover storage and state directories on the deployment host"
-  COVERS_STORAGE_HOST_PATH="${covers_path}" COVER_STATE_HOST_PATH="${state_path}" \
+  log "Initializing cover, state, and state backup directories on the deployment host"
+  if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true; then
+    log "ERROR: passwordless sudo is required to initialize host storage directories"
+    return 1
+  fi
+  sudo -n env \
+    "COVERS_STORAGE_HOST_PATH=${covers_path}" \
+    "COVER_STATE_HOST_PATH=${state_path}" \
+    "COVER_STATE_BACKUP_HOST_PATH=${backup_path}" \
     bash "${SCRIPT_DIR}/init-volume.sh"
 }
 

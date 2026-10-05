@@ -77,8 +77,14 @@ Because the host path is node-local, API
 placement must use the node with that path or shared storage with the same durable
 data on each eligible node.
 
-`scripts/backup_cover_state.py backup` uses SQLite's online backup API to create
-a consistent snapshot from the configured DB, including WAL state. It validates
+`scripts/backup_cover_state.py backup` selects the environment from process
+`SERVER_ENV`, falling back to the same key in `/etc/environment`, and resolves
+`COVER_STATE_HOST_PATH` and `COVER_STATE_BACKUP_HOST_PATH` from its encrypted env
+file through the existing SOPS loader. The deploy orchestrator passes the
+configured backup path (default `/backups/state-db`) to `scripts/init-volume.sh`,
+which prepares it separately from the live state and cover directories. The
+backup command uses SQLite's online backup API to create a consistent snapshot
+including WAL state. It validates
 the snapshot, publishes a timestamped mode-0600 file atomically, updates
 `latest.sqlite3`, and retains 30 days. `verify` restores the selected snapshot
 into a temporary DB and runs `quick_check` plus the `records` table check; it

@@ -428,26 +428,32 @@ are left untouched; inspect them separately before any cleanup.
 ## SQLite state backup and restore check
 
 The operator's daily systemd timer should run the backup command from the
-repository root on the node that owns the state DB bind mount:
+repository root on the node that owns the state DB bind mount. The script uses
+`SERVER_ENV` from its process environment, or reads only that key from
+`/etc/environment` when unset. It selects the matching encrypted file and uses
+the existing SOPS loader to read `COVER_STATE_HOST_PATH`:
 
 ```bash
-python3 scripts/backup_cover_state.py backup \
-  --db-path "$COVER_STATE_HOST_PATH/state.db" \
-  --backup-dir /backups/state-db
+sudo .venv/bin/python scripts/backup_cover_state.py backup
 ```
+
+Use `--db-path` only for an explicit path override. `SOPS_AGE_KEY_FILE` may be
+set in the service environment when the age key is outside the default location.
 
 The command uses SQLite's online backup API, so an active WAL database can be
 copied consistently. It creates a timestamped snapshot, validates it, updates
 `latest.sqlite3` atomically, and prunes snapshots older than 30 days. Files are
-mode `0600`; the backup directory is created mode `0700`. Standard output and
-errors are available in the systemd journal. Give the timer write access to the
+mode `0600`; `init-volume.sh` prepares the configured host backup directory at
+mode `0700`. The orchestrator creates the default directory as root, so run the
+timer as root unless you configure a different owner and permissions. Standard
+output and errors are available in the systemd journal. Give the timer write access to the
 backup directory and the state DB directory so SQLite can coordinate WAL shared
 memory files; the backup operation does not update state records.
 
 Run the restore check on this same host without replacing the working DB:
 
 ```bash
-python3 scripts/backup_cover_state.py verify /backups/state-db/latest.sqlite3
+sudo .venv/bin/python scripts/backup_cover_state.py verify
 ```
 
 This restores to a temporary DB, runs `PRAGMA quick_check`, and confirms the

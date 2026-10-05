@@ -1186,7 +1186,13 @@ Covers
   /data/koha-covers/assets
 ```
 
-Для state DB `scripts/backup_cover_state.py` створює узгоджений snapshot через
+Для state DB `scripts/backup_cover_state.py` бере `SERVER_ENV` із процесу або,
+якщо змінну не передано, із `/etc/environment`. Так обирається зашифрований
+env-файл для наявного SOPS loader, з якого читається `COVER_STATE_HOST_PATH`.
+З нього також читається `COVER_STATE_BACKUP_HOST_PATH` (default
+`/backups/state-db`), окремий від live state та cover storage;
+`scripts/init-volume.sh` створює цей каталог із mode `0700`.
+Скрипт створює узгоджений snapshot через
 SQLite online backup API, перевіряє його та оновлює `latest.sqlite3` атомарно.
 Тimestamped копії зберігаються 30 днів. Оператор налаштовує щоденний systemd
 timer і запускає restore-перевірку на цьому ж середовищі; вона відновлює копію

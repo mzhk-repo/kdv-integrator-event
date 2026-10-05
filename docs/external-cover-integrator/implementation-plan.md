@@ -816,9 +816,9 @@ sqlite3 state.db "SELECT cover_source_id, cover_asset_sha256 FROM records WHERE 
 
 **Validation:**
 ```bash
-python3 scripts/backup_cover_state.py backup --db-path "$COVER_STATE_HOST_PATH/state.db"
-python3 scripts/backup_cover_state.py verify
-ls -la /backups/state-db/
+.venv/bin/python scripts/backup_cover_state.py backup
+.venv/bin/python scripts/backup_cover_state.py verify
+ls -la "${COVER_STATE_BACKUP_HOST_PATH:-/backups/state-db}/"
 ```
 
 Локальна ізольована перевірка скрипта пройшла 2026-10-05. У робочому

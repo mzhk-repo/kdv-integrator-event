@@ -27,8 +27,21 @@ validate_path() {
 
 covers_path="$(validate_path "${COVERS_STORAGE_HOST_PATH}")"
 state_path="$(validate_path "${COVER_STATE_HOST_PATH}")"
-[[ "${covers_path}" != "${state_path}" && "${covers_path}" != "${state_path}/"* && "${state_path}" != "${covers_path}/"* ]] \
-  || fail "Cover storage and state directories must not overlap"
+backup_path=""
+if [[ -n "${COVER_STATE_BACKUP_HOST_PATH:-}" ]]; then
+  backup_path="$(validate_path "${COVER_STATE_BACKUP_HOST_PATH}")"
+fi
+
+paths=("${covers_path}" "${state_path}")
+if [[ -n "${backup_path}" ]]; then
+  paths+=("${backup_path}")
+fi
+for ((i = 0; i < ${#paths[@]}; i++)); do
+  for ((j = i + 1; j < ${#paths[@]}; j++)); do
+    [[ "${paths[i]}" != "${paths[j]}" && "${paths[i]}" != "${paths[j]}/"* && "${paths[j]}" != "${paths[i]}/"* ]] \
+      || fail "Cover storage, state, and backup directories must not overlap"
+  done
+done
 
 # Validate every managed directory before making any filesystem changes.
 validate_path "${covers_path}/assets" >/dev/null
@@ -42,5 +55,12 @@ fi
 if ! install -d -m 0700 -- "${covers_path}/.incoming" "${state_path}"; then
   fail "Cannot initialize private directories; run with an account allowed to create and chmod these paths"
 fi
+if [[ -n "${backup_path}" ]] && ! install -d -m 0700 -- "${backup_path}"; then
+  fail "Cannot initialize state backup directory; run with an account allowed to create and chmod this path"
+fi
 
-log "Ready: ${covers_path} and assets (0755); .incoming and ${state_path} (0700)"
+if [[ -n "${backup_path}" ]]; then
+  log "Ready: ${covers_path} and assets (0755); .incoming, ${state_path}, and ${backup_path} (0700)"
+else
+  log "Ready: ${covers_path} and assets (0755); .incoming and ${state_path} (0700)"
+fi

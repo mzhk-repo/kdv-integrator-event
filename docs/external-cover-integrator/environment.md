@@ -6,7 +6,7 @@ are placeholders. Deployment values belong in `env.dev.enc` or `env.prod.enc`.
 
 ## Variables
 
-The cover host paths are consumed by the pre-deploy `scripts/init-volume.sh`.
+The cover, state and backup host paths are consumed by the pre-deploy `scripts/init-volume.sh`.
 The CDN URL/image and assets host path are used by the orchestrator and
 Compose/Swarm CDN service. Task 2.1 adds an explicit state-schema migration and
 bind mount for the API using `COVER_STATE_DB_PATH` and `COVER_STATE_HOST_PATH`;
@@ -30,6 +30,7 @@ no implicit fallback to an installation-specific domain or host.
 | `COVERS_STORAGE_HOST_PATH` | Absolute host bind source for the cover storage root. Prepared by `init-volume.sh`. | Required by Swarm pre-deploy; deployment config |
 | `COVERS_STORAGE_PATH` | Absolute Integrator container storage root, mounted read-write from `COVERS_STORAGE_HOST_PATH` in both API Compose definitions; contains prepared `assets/` and `.incoming/` on the same filesystem for atomic publication. nginx receives only `assets/`, read-only. Must match in runtime payload and deployment config. | Required in cover deployment and Task 4.2 publisher; runtime payload and deployment config |
 | `COVER_STATE_HOST_PATH` | Absolute host bind source mounted read-write in API at `/data/kdv_cover_state`; separate from Koha Export state. Prepared by `init-volume.sh`. Must be available on every node eligible to run API, or API placement must be constrained to the prepared node. | Required by Swarm pre-deploy; deployment config |
+| `COVER_STATE_BACKUP_HOST_PATH` | Absolute host directory for SQLite state DB backups, separate from cover and live state paths. Prepared by `init-volume.sh`; the backup timer needs write access. | `/backups/state-db`; deployment config |
 | `COVER_STATE_DB_PATH` | Absolute file path for the separate cover state SQLite DB, normally `/data/kdv_cover_state/state.db`; never reuse `EXPORT_DB_PATH`. The directory must support DB, WAL and SHM files. | Required by Task 2.1 migration CLI; runtime payload |
 | `MAX_RETRY_COUNT` | Positive integer limiting failed record cycles. Independent of the export module's `MAX_RETRIES`. | Required by Task 2.2 `StateMachine`; template example `5`, not an implicit runtime default |
 | `INTEGRATOR_MOUNT_PATH` | Existing root for supported relative local sources; absolute source paths and traversal remain forbidden. | `/mnt/drive`; runtime payload / existing Swarm mount |

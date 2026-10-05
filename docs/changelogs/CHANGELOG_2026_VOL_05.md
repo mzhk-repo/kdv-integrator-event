@@ -2,11 +2,19 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-05 — Prepare the state backup directory with init-volume
+
+- **Context:** The backup command's default `/backups/state-db` did not exist, and the unprivileged caller could not create its top-level parent.
+- **Change:** Added `COVER_STATE_BACKUP_HOST_PATH` (default `/backups/state-db`) and made `scripts/init-volume.sh` validate and create it separately from cover/state paths with mode `0700`. The Swarm orchestrator now runs host directory initialization through its existing passwordless sudo prerequisite. The backup CLI reads the configured path from the selected env; its timer should run as root for the default root-owned directory.
+- **Verification:** Bash syntax and `git diff --check` passed. No host directories or deployments were changed by this repository edit.
+- **Risks:** The deployment account needs the existing passwordless sudo access; the selected backup filesystem and mount must be provisioned correctly by the operator.
+- **Rollback:** Remove the backup host-path handling from init-volume, deploy orchestration and backup CLI, then remove the env setting. Existing backup files are retained.
+
 ## 2026-10-05 — Add SQLite cover state backup and restore check
 
 - **Context:** Phase 10.1 needs a daily backup of the critical cover state DB and a restore check on the same environment; the operator will install the systemd timer.
-- **Change:** Added `scripts/backup_cover_state.py` with SQLite online snapshots, timestamped mode-0600 backups, atomic `latest.sqlite3`, 30-day retention, and temporary-database restore verification. Documented host invocation and timer permissions; no timer was installed.
-- **Verification:** AST parsing, CLI help, isolated backup/restore smoke with a temporary SQLite DB, source DB unchanged check, permissions checks, and `git diff --check` passed. The host state DB is not present at `/data/kdv_cover_state/state.db`, so live restore acceptance and timer logging remain pending.
+- **Change:** Added `scripts/backup_cover_state.py` with SQLite online snapshots, environment selection from process `SERVER_ENV` or `/etc/environment`, automatic state/backup host-path resolution from the selected encrypted env through the existing SOPS loader, timestamped mode-0600 backups, atomic `latest.sqlite3`, 30-day retention, and temporary-database restore verification. Documented host invocation and timer permissions; no timer was installed.
+- **Verification:** AST parsing, CLI help, isolated backup/restore smoke with a temporary SQLite DB (including direct invocation outside the repository root), source DB unchanged check, permissions checks, and `git diff --check` passed. The host state DB is not present at `/data/kdv_cover_state/state.db`, so live restore acceptance and timer logging remain pending.
 - **Risks:** The timer must run on the node with the state DB bind and writable WAL directory access; backup and latest snapshots are stored under `/backups/state-db` by default.
 - **Rollback:** Stop the operator-installed timer and revert the script and documentation; existing backup files can be retained or removed manually.
 

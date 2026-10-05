@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 from contextlib import closing
 from datetime import datetime, timezone
@@ -105,24 +106,80 @@ def create_backup(db_path: Path, backup_dir: Path, retention_days: int) -> Path:
         temp_path.unlink(missing_ok=True)
 
 
+def load_server_env_from_host(environment_file: Path = Path("/etc/environment")) -> None:
+    """Read only SERVER_ENV from the host file if the process did not set it."""
+    if os.environ.get("SERVER_ENV", "").strip() or os.environ.get("ORCHESTRATOR_ENV_FILE"):
+        return
+    if not environment_file.is_file():
+        return
+    for line in environment_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if key != "SERVER_ENV":
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        if value:
+            os.environ["SERVER_ENV"] = value
+        return
+
+
+def load_cover_state_environment() -> None:
+    """Load the selected dotenv values needed by the backup command."""
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from src.cover_state.gc import load_gc_environment
+
+    load_server_env_from_host()
+    load_gc_environment()
+
+
+def resolve_state_db_path() -> Path:
+    """Resolve the state DB from the selected environment's host bind path."""
+    host_path = os.environ.get("COVER_STATE_HOST_PATH", "").strip()
+    if not host_path:
+        raise ValueError("COVER_STATE_HOST_PATH is missing from the selected environment")
+    root = Path(host_path)
+    if not root.is_absolute() or root == Path("/"):
+        raise ValueError("COVER_STATE_HOST_PATH must be an absolute non-root path")
+    return root / "state.db"
+
+
+def resolve_backup_dir() -> Path:
+    """Resolve the backup directory from environment or its documented default."""
+    raw = os.environ.get("COVER_STATE_BACKUP_HOST_PATH", "/backups/state-db").strip()
+    path = Path(raw)
+    if not path.is_absolute() or path == Path("/"):
+        raise ValueError("COVER_STATE_BACKUP_HOST_PATH must be an absolute non-root path")
+    return path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     backup_parser = subparsers.add_parser("backup", help="Create a state DB backup")
-    backup_parser.add_argument("--db-path", type=Path, default=os.environ.get("COVER_STATE_DB_PATH"))
-    backup_parser.add_argument("--backup-dir", type=Path, default=Path("/backups/state-db"))
+    backup_parser.add_argument("--db-path", type=Path, help="Override the host state DB path")
+    backup_parser.add_argument("--backup-dir", type=Path, help="Override the environment backup directory")
     backup_parser.add_argument("--retention-days", type=int, default=30)
     verify_parser = subparsers.add_parser("verify", help="Restore and check a backup")
-    verify_parser.add_argument("backup", type=Path, nargs="?", default=Path("/backups/state-db/latest.sqlite3"))
+    verify_parser.add_argument("backup", type=Path, nargs="?", help="Override the latest backup path")
     args = parser.parse_args()
     try:
         if args.command == "backup":
-            if args.db_path is None:
-                parser.error("set COVER_STATE_DB_PATH or pass --db-path")
             if args.retention_days < 1:
                 parser.error("--retention-days must be at least 1")
-            create_backup(args.db_path, args.backup_dir, args.retention_days)
+            if args.db_path is None or args.backup_dir is None:
+                load_cover_state_environment()
+            db_path = args.db_path or resolve_state_db_path()
+            backup_dir = args.backup_dir or resolve_backup_dir()
+            create_backup(db_path, backup_dir, args.retention_days)
         else:
+            if args.backup is None:
+                load_cover_state_environment()
+                args.backup = resolve_backup_dir() / "latest.sqlite3"
             verify_backup(args.backup)
     except (OSError, sqlite3.Error, ValueError) as error:
         logger.error("Operation failed: %s", error)
