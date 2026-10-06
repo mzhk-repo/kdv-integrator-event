@@ -504,3 +504,27 @@
 - **Verification:** Focused mocked regression test asserts that the Poppler call enables `use_cropbox`; manual reproduction with the affected PDF and `pdftoppm -cropbox` matched the reader-visible page.
 - **Risks:** PDFs whose CropBox intentionally excludes content will now produce the cropped, reader-visible area; this is the required rendering contract.
 - **Rollback:** Remove `use_cropbox=True`, the focused regression test, and this changelog entry.
+
+## 2026-10-05 — Process independent covers when the PDF source URL is invalid
+
+- **Context:** An unsupported URL in Koha `956$u` raised during source parsing and stopped the workflow before an independent `956$p` cover could be processed.
+- **Change:** Skip the unusable PDF source and complete the cover-only workflow. The invalid PDF is not downloaded or sent to DSpace.
+- **Verification:** Regression coverage asserts successful cover write-back, `ok` state with no retries, and no DSpace call. `py_compile` and `git diff --check` passed; pytest is unavailable in this environment.
+- **Risks:** The PDF source remains unusable until `956$u` is corrected; cover processing can still succeed independently.
+- **Rollback:** Revert the source-isolation branch and its regression test.
+
+## 2026-10-05 — Keep Robot Batch out of forced PDF refresh mode
+
+- **Context:** Robot Batch always passed `force_file_refresh=True`, so records without a valid Drive PDF in `956$u` failed validation before independent cover processing.
+- **Change:** Robot Batch now uses the regular integration workflow. Explicit intranet PDF refresh through `PUT /kdv/api/integrate/{biblionumber}` remains forced.
+- **Verification:** Existing Robot Batch route test expects only user-selected batch options; implementation was inspected, tests were not run.
+- **Risks:** Robot Batch will no longer force a PDF refresh when its Drive file ID is unchanged; explicit UI refresh remains available through PUT.
+- **Rollback:** Restore forced refresh only if Robot Batch is intentionally redefined as a PDF replacement operation.
+
+## 2026-10-05 — Avoid cutoff and PDF cleanup work after independent cover success
+
+- **Context:** The first source-isolation change wrote the cover but then raised the saved `956$u` error, changing the shared state to cutoff and reporting Robot failure. That cutoff also prevented the next cover retry.
+- **Change:** Keep the record successful after cover-only completion, allow recovery from a prior `SourceResolutionError` cutoff, and omit the DSpace cleanup log for cover-only cycles. Forced PDF refresh also proceeds with a valid cover when no Drive PDF source is available.
+- **Verification:** Added regression coverage for success after a prior invalid-PDF cutoff. Tests were not run because pytest is unavailable in this environment.
+- **Risks:** Invalid `956$u` is skipped when independent cover work is available; PDF processing requires correcting that field.
+- **Rollback:** Revert the retry exception and cover-only success behavior if invalid PDF sources must block all work.

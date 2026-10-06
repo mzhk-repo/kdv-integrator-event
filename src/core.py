@@ -712,14 +712,24 @@ def process_integration_logic(
         options['koha_client'] = koha
         _ensure_koha_record_uid(koha, biblionumber)
         meta = koha.get_biblio_metadata(biblionumber)
-        if force_file_refresh and (not meta or not meta.get('file_path')):
+        if force_file_refresh and (not meta or (
+            not meta.get('file_path') and not meta.get('cover_path')
+        )):
             raise ValueError('UI bitstream replacement requires a 956$u Drive PDF source')
         resolver = _source_resolver()
+        file_source_error = None
+        try:
+            file_ref = resolver.gdrive_parser.parse(meta.get('file_path'), '956$u') if meta else None
+        except ValueError as error:
+            file_ref = None
+            file_source_error = error
         refs = {
-            'file': resolver.gdrive_parser.parse(meta.get('file_path'), '956$u') if meta else None,
+            'file': file_ref,
             'cover': resolver.gdrive_parser.parse(meta.get('cover_path'), '956$p') if meta else None,
         }
-        if force_file_refresh and refs['file'] is None:
+        if file_source_error and not refs['cover']:
+            raise file_source_error
+        if force_file_refresh and refs['file'] is None and not refs['cover']:
             raise ValueError('UI bitstream replacement requires a 956$u Google Drive PDF')
         if not any(refs.values()):
             return _run_integration_logic(task_id, biblionumber, meta=meta, resolver=resolver, **options)
@@ -745,8 +755,25 @@ def process_integration_logic(
                     previous_dspace_item_uuid=existing['dspace_item_uuid'],
                     previous_dspace_bitstream_uuid=existing['dspace_bitstream_uuid'],
                 )
-            if existing is not None and existing['status'] != 'ok' and not state.is_retry_eligible(uid):
+            retry_for_invalid_pdf = (
+                file_source_error and refs['cover'] and existing
+                and existing.get('retry_reason') == 'SourceResolutionError'
+            )
+            if (existing is not None and existing['status'] != 'ok'
+                    and not state.is_retry_eligible(uid) and not retry_for_invalid_pdf):
                 return _deferred_result(state, uid)
+            if (retry_for_invalid_pdf and existing['cover_source_id'] == refs['cover'].file_id
+                    and existing['cover_source_sha256'] and existing['cover_asset_sha256']):
+                asset = Path(os.environ.get('COVERS_STORAGE_PATH', '')) / 'assets' / (
+                    f"{existing['cover_asset_sha256']}.webp"
+                )
+                if asset.is_file():
+                    publish_cover(asset, expected_sha256=existing['cover_asset_sha256'])
+                    state.complete_cycle(uid, {
+                        'cover': (existing['cover_source_id'], existing['cover_source_sha256'])
+                    }, {'cover_asset_sha256': existing['cover_asset_sha256']})
+                    return {'status': 'cover_updated',
+                            'cover_asset_sha256': existing['cover_asset_sha256']}
             inputs_sha = hashlib.sha256(json.dumps({
                 'file': refs['file'].file_id if refs['file'] else meta.get('file_path'),
                 'cover': refs['cover'].file_id if refs['cover'] else meta.get('cover_path'),
@@ -779,6 +806,10 @@ def process_integration_logic(
             file_work = bool(meta.get('file_path')) and (
                 'file' not in checks or checks['file'].action not in ('noop', 'same_content')
             )
+            if file_source_error:
+                file_work = False
+            if force_file_refresh and refs['file'] is None:
+                file_work = False
             # Additional/local sources are not covered by the Drive identity gate.
             file_work = file_work or bool(meta.get('additional_files'))
             cover_work = (
@@ -948,12 +979,13 @@ def _run_external_cover_cycle(task_id, biblionumber, state, uid, inputs_sha,
         result.get('old_bitstream_uuids') or
         ([result['old_bitstream_uuid']] if result.get('old_bitstream_uuid') else [])
     ) if file_work and result else []
-    logger.info(
-        'DSpace replacement cleanup item_uuid=%s old_bitstream_uuids=%s new_bitstream_uuid=%s',
-        result.get('uuid') if file_work and result else None,
-        old_bitstream_uuids,
-        result.get('bitstream_uuid') if file_work and result else None,
-    )
+    if file_work:
+        logger.info(
+            'DSpace replacement cleanup item_uuid=%s old_bitstream_uuids=%s new_bitstream_uuid=%s',
+            result.get('uuid') if result else None,
+            old_bitstream_uuids,
+            result.get('bitstream_uuid') if result else None,
+        )
     for old_bitstream_uuid in old_bitstream_uuids:
         if old_bitstream_uuid == result.get('bitstream_uuid'):
             raise RuntimeError('DSpace replacement returned the existing bitstream UUID')
