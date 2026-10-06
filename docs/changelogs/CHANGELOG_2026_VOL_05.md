@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-06 — Run dev CI and deployment for main-to-dev pull requests
+
+- **Context:** Pull requests from `main` to `dev` did not run the development reusable workflow, and development deployment was enabled only for pushes to `dev`.
+- **Change:** The `deploy-dev` job now selects only `main`-to-`dev` pull requests and enables its deploy input for them when `deploy-change-check` allows deployment. Push-to-`dev` behavior is unchanged.
+- **Verification:** Workflow YAML parsed with PyYAML and `git diff --check` passed. `actionlint` was unavailable; no GitHub Actions run or deployment was performed.
+- **Risks:** A qualifying PR can deploy to the configured development environment after its CI workflow succeeds; mapping-file changes remain deployment-blocked by the existing precheck.
+- **Rollback:** Revert the `deploy-dev` PR conditions in `.github/workflows/main.yml`.
+
 ## 2026-10-05 — Load the selected SOPS env for assets backup
 
 - **Context:** `backup_cover_assets.sh` required paths exported in the invoking shell, unlike the state DB backup command that loads the selected encrypted environment.

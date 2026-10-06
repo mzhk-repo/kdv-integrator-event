@@ -51,12 +51,12 @@ jobs:
   deploy-dev:
     needs: deploy-change-check
     if: |
-      (github.event_name == 'pull_request' && github.base_ref == 'dev') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'main') ||
       (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
     with:
       environment_name: development
-      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.deploy-change-check.outputs.deploy_allowed == 'true' }}
+      deploy: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'main')) && needs.deploy-change-check.outputs.deploy_allowed == 'true' }}
       use_ansible: true
       build_and_push_docker: false
       docker_image_name: kdv-integrator-event
