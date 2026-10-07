@@ -47,7 +47,7 @@ def _decrypt_sops_env(enc_path: Path) -> str:
     if not shutil.which("sops"):
         return ""
 
-    age_key_file = os.getenv("SOPS_AGE_KEY_FILE", str(Path.home() / ".config/age/keys.txt"))
+    age_key_file = os.getenv("SOPS_AGE_KEY_FILE", str(Path.home() / ".config/sops/age/keys.txt"))
     if not Path(age_key_file).is_file():
         return ""
 

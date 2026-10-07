@@ -42,7 +42,13 @@ jobs:
             changed_files=$(git diff-tree --no-commit-id --name-only -r HEAD)
           fi
 
-          if printf '%s\n' "$changed_files" | grep -Fxq -e 'config/export_dictionaries.yaml' -e 'config/marc_mapping.yaml'; then
+          if printf '%s\n' "$changed_files" | grep -Fxq \
+            -e 'config/export_dictionaries.yaml' \
+            -e 'config/marc_mapping.yaml' \
+            -e 'scripts/backup_cover_state.py' \
+            -e 'scripts/backup_cover_assets.py' \
+            -e 'scripts/backup_cover_assets.sh' \
+            -e 'scripts/test_backup_cover_state.sh'; then
             echo 'deploy_allowed=false' >> "$GITHUB_OUTPUT"
           else
             echo 'deploy_allowed=true' >> "$GITHUB_OUTPUT"
@@ -51,12 +57,12 @@ jobs:
   deploy-dev:
     needs: deploy-change-check
     if: |
-      (github.event_name == 'pull_request' && github.base_ref == 'dev') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'main') ||
       (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     uses: mzhk-repo/shared-workflows/.github/workflows/shared-ci-cd.yml@main
     with:
       environment_name: development
-      deploy: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.deploy-change-check.outputs.deploy_allowed == 'true' }}
+      deploy: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'main')) && needs.deploy-change-check.outputs.deploy_allowed == 'true' }}
       use_ansible: true
       build_and_push_docker: false
       docker_image_name: kdv-integrator-event

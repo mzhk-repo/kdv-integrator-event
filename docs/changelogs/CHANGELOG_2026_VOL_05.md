@@ -2,6 +2,38 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-07 — Resolve the default SOPS key for sudo backup runs
+
+- **Context:** Running cover backups with `sudo` selected `/root/.config/sops/age/keys.txt` even when the invoking operator's key was under `/home/<user>`.
+- **Change:** Backup env loading now resolves its default age key under `SUDO_USER` when running as root. Explicit `--age-key-file` and `SOPS_AGE_KEY_FILE` continue to override the default.
+- **Verification:** An isolated mocked-root/SUDO_USER check confirmed the loader passes `/home/pinokew/.config/sops/age/keys.txt` to fake SOPS. Python compilation, Bash syntax, and `git diff --check` passed; no sudo command, key content, or live decryption was used.
+- **Risks:** The invoking user's key must be readable to the root backup process.
+- **Rollback:** Revert the sudo-user key-home selection and runbook/changelog updates.
+
+## 2026-10-07 — Use the SOPS age key under the sops config directory
+
+- **Context:** Backup and related environment loaders defaulted to `~/.config/age/keys.txt`, while the host key is stored under the SOPS configuration directory.
+- **Change:** SOPS age key defaults now use `~/.config/sops/age/keys.txt` across backup, GC, application/export bootstrap, healthcheck, and Robot wrapper paths. An explicit `SOPS_AGE_KEY_FILE` remains supported. The host runbook documents the default.
+- **Verification:** Fake-SOPS checks confirmed the default path, explicit `SOPS_AGE_KEY_FILE` override, and `SOPS_AGE_KEY` precedence. Python compilation, Bash syntax, search for stale runtime defaults, and `git diff --check` passed; no key contents were read and no real decryption was attempted.
+- **Risks:** The default key must exist and be readable by the invoking account; `SOPS_AGE_KEY_FILE` can select a different file.
+- **Rollback:** Revert the default path updates and the runbook/changelog changes.
+
+## 2026-10-07 — Run cover backups without a virtual environment
+
+- **Context:** Host backup commands used `.venv` and imported the project dotenv dependency, while operators need to run them directly from the host Python installation.
+- **Change:** Backup scripts now use only the Python standard library for selected env loading, and the assets wrapper invokes `python3`. Added an isolated state restore-check wrapper that writes atomic Prometheus textfile run/success/status metrics. Backup and restore-check script changes now suppress deployment while leaving CI workflow execution enabled; host commands are documented in `docs/scripts_runbook.md`.
+- **Verification:** System-Python compilation, Bash syntax/CLI help, stdlib env parsing, isolated SQLite restore-check (2 records), success/failure textfile metrics, workflow path classification, YAML parsing, and `git diff --check` passed. `actionlint` was unavailable; no SOPS secrets, cloud remote, monitoring mount, or deployment were accessed.
+- **Risks:** The operator must provide host `python3`, SOPS for encrypted env loading, `rsync`/`findmnt` for assets copies, optional `rclone` for cloud copies, and a writable textfile collector directory.
+- **Rollback:** Revert the backup loader/wrapper and restore-check changes, deployment path exclusions, runbook section, and this entry.
+
+## 2026-10-06 — Run dev CI and deployment for main-to-dev pull requests
+
+- **Context:** Pull requests from `main` to `dev` did not run the development reusable workflow, and development deployment was enabled only for pushes to `dev`.
+- **Change:** The `deploy-dev` job now selects only `main`-to-`dev` pull requests and enables its deploy input for them when `deploy-change-check` allows deployment. Push-to-`dev` behavior is unchanged.
+- **Verification:** Workflow YAML parsed with PyYAML and `git diff --check` passed. `actionlint` was unavailable; no GitHub Actions run or deployment was performed.
+- **Risks:** A qualifying PR can deploy to the configured development environment after its CI workflow succeeds; mapping-file changes remain deployment-blocked by the existing precheck.
+- **Rollback:** Revert the `deploy-dev` PR conditions in `.github/workflows/main.yml`.
+
 ## 2026-10-05 — Load the selected SOPS env for assets backup
 
 - **Context:** `backup_cover_assets.sh` required paths exported in the invoking shell, unlike the state DB backup command that loads the selected encrypted environment.

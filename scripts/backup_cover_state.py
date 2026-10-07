@@ -8,9 +8,10 @@ import logging
 import os
 import pwd
 import re
+import shlex
+import shutil
 import sqlite3
 import subprocess
-import sys
 import tempfile
 from contextlib import closing
 from datetime import datetime, timezone
@@ -18,6 +19,12 @@ from pathlib import Path
 
 logger = logging.getLogger("KDV-CoverStateBackup")
 BACKUP_NAME = re.compile(r"^state-(\d{8}T\d{12}Z)-([0-9]+)\.sqlite3$")
+ENV_KEYS = {
+    "COVER_STATE_HOST_PATH", "COVER_STATE_BACKUP_HOST_PATH",
+    "COVER_STATE_LOCAL_RETENTION_DAYS", "COVER_STATE_CLOUD_RETENTION_DAYS",
+    "BACKUP_RCLONE_REMOTE", "BACKUP_RCLONE_FOLDER", "BACKUP_RCLONE_CONFIG",
+    "RCLONE_CONFIG", "COVERS_STORAGE_HOST_PATH", "COVER_ASSETS_BACKUP_HOST_PATH",
+}
 
 
 def _database(path: Path, *, readonly: bool = True) -> sqlite3.Connection:
@@ -183,14 +190,63 @@ def load_server_env_from_host(environment_file: Path = Path("/etc/environment"))
 
 
 def load_cover_state_environment() -> None:
-    """Load the selected dotenv values needed by the backup command."""
-    repo_root = Path(__file__).resolve().parents[1]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    from src.cover_state.gc import load_gc_environment
-
+    """Load selected backup settings from the host's selected dotenv file."""
     load_server_env_from_host()
-    load_gc_environment()
+    selected = os.environ.get("ORCHESTRATOR_ENV_FILE", "").strip()
+    if selected:
+        env_path = Path(selected)
+        if not env_path.is_file():
+            raise ValueError("ORCHESTRATOR_ENV_FILE does not exist")
+        raw = env_path.read_text(encoding="utf-8")
+    else:
+        environment = os.environ.get("SERVER_ENV", "").strip().lower()
+        normalized = {
+            "dev": "dev", "development": "dev", "prod": "prod", "production": "prod",
+        }.get(environment)
+        if not normalized:
+            raise ValueError("SERVER_ENV must identify dev or prod")
+        env_path = Path(__file__).resolve().parents[1] / f"env.{normalized}.enc"
+        if not env_path.is_file() or not shutil.which("sops"):
+            raise ValueError(f"encrypted environment file or sops unavailable for {normalized}")
+        sops_env = os.environ.copy()
+        if sops_env.get("SOPS_AGE_KEY"):
+            sops_env.pop("SOPS_AGE_KEY_FILE", None)
+        else:
+            age_key = sops_env.get("SOPS_AGE_KEY_FILE")
+            if age_key and (not Path(age_key).is_file() or not os.access(age_key, os.R_OK)):
+                raise ValueError("SOPS_AGE_KEY_FILE is not a readable file")
+            if not age_key:
+                key_home = Path.home()
+                sudo_user = os.environ.get("SUDO_USER", "").strip()
+                if os.geteuid() == 0 and sudo_user:
+                    try:
+                        key_home = Path(pwd.getpwnam(sudo_user).pw_dir)
+                    except KeyError:
+                        pass
+                age_key = str(key_home / ".config/sops/age/keys.txt")
+            sops_env["SOPS_AGE_KEY_FILE"] = age_key
+        try:
+            raw = subprocess.run(
+                [
+                    "sops", "--decrypt", "--input-type", "dotenv", "--output-type", "dotenv",
+                    str(env_path),
+                ],
+                check=True, capture_output=True, text=True, env=sops_env,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise ValueError("could not decrypt selected environment") from error
+
+    for line in raw.splitlines():
+        match = re.match(
+            r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line,
+        )
+        if not match or match.group(1) not in ENV_KEYS:
+            continue
+        lexer = shlex.shlex(match.group(2), posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        value = " ".join(lexer)
+        os.environ.setdefault(match.group(1), value)
 
 
 def resolve_state_db_path() -> Path:

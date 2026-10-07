@@ -441,6 +441,9 @@ GitHub Actions passes `SOPS_AGE_KEY` from the repository/environment secret,
 falling back to the same-named Actions variable. For a manual run, pass the
 private key file path explicitly; its contents are never printed:
 
+Without an explicit `SOPS_AGE_KEY_FILE` or `--age-key-file`, host scripts use
+`~/.config/sops/age/keys.txt`.
+
 ```bash
 sudo .venv/bin/python scripts/backup_cover_state.py backup \
   --age-key-file /path/to/age/keys.txt
