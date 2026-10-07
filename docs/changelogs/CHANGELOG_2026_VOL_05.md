@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-07 — Resolve the default SOPS key for sudo backup runs
+
+- **Context:** Running cover backups with `sudo` selected `/root/.config/sops/age/keys.txt` even when the invoking operator's key was under `/home/<user>`.
+- **Change:** Backup env loading now resolves its default age key under `SUDO_USER` when running as root. Explicit `--age-key-file` and `SOPS_AGE_KEY_FILE` continue to override the default.
+- **Verification:** An isolated mocked-root/SUDO_USER check confirmed the loader passes `/home/pinokew/.config/sops/age/keys.txt` to fake SOPS. Python compilation, Bash syntax, and `git diff --check` passed; no sudo command, key content, or live decryption was used.
+- **Risks:** The invoking user's key must be readable to the root backup process.
+- **Rollback:** Revert the sudo-user key-home selection and runbook/changelog updates.
+
 ## 2026-10-07 — Use the SOPS age key under the sops config directory
 
 - **Context:** Backup and related environment loaders defaulted to `~/.config/age/keys.txt`, while the host key is stored under the SOPS configuration directory.

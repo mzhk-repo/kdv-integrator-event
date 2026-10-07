@@ -216,7 +216,14 @@ def load_cover_state_environment() -> None:
             if age_key and (not Path(age_key).is_file() or not os.access(age_key, os.R_OK)):
                 raise ValueError("SOPS_AGE_KEY_FILE is not a readable file")
             if not age_key:
-                age_key = str(Path.home() / ".config/sops/age/keys.txt")
+                key_home = Path.home()
+                sudo_user = os.environ.get("SUDO_USER", "").strip()
+                if os.geteuid() == 0 and sudo_user:
+                    try:
+                        key_home = Path(pwd.getpwnam(sudo_user).pw_dir)
+                    except KeyError:
+                        pass
+                age_key = str(key_home / ".config/sops/age/keys.txt")
             sops_env["SOPS_AGE_KEY_FILE"] = age_key
         try:
             raw = subprocess.run(
