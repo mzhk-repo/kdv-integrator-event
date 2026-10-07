@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-07 — Run cover backups without a virtual environment
+
+- **Context:** Host backup commands used `.venv` and imported the project dotenv dependency, while operators need to run them directly from the host Python installation.
+- **Change:** Backup scripts now use only the Python standard library for selected env loading, and the assets wrapper invokes `python3`. Added an isolated state restore-check wrapper that writes atomic Prometheus textfile run/success/status metrics. Backup and restore-check script changes now suppress deployment while leaving CI workflow execution enabled; host commands are documented in `docs/scripts_runbook.md`.
+- **Verification:** System-Python compilation, Bash syntax/CLI help, stdlib env parsing, isolated SQLite restore-check (2 records), success/failure textfile metrics, workflow path classification, YAML parsing, and `git diff --check` passed. `actionlint` was unavailable; no SOPS secrets, cloud remote, monitoring mount, or deployment were accessed.
+- **Risks:** The operator must provide host `python3`, SOPS for encrypted env loading, `rsync`/`findmnt` for assets copies, optional `rclone` for cloud copies, and a writable textfile collector directory.
+- **Rollback:** Revert the backup loader/wrapper and restore-check changes, deployment path exclusions, runbook section, and this entry.
+
 ## 2026-10-06 — Run dev CI and deployment for main-to-dev pull requests
 
 - **Context:** Pull requests from `main` to `dev` did not run the development reusable workflow, and development deployment was enabled only for pushes to `dev`.

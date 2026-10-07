@@ -42,7 +42,13 @@ jobs:
             changed_files=$(git diff-tree --no-commit-id --name-only -r HEAD)
           fi
 
-          if printf '%s\n' "$changed_files" | grep -Fxq -e 'config/export_dictionaries.yaml' -e 'config/marc_mapping.yaml'; then
+          if printf '%s\n' "$changed_files" | grep -Fxq \
+            -e 'config/export_dictionaries.yaml' \
+            -e 'config/marc_mapping.yaml' \
+            -e 'scripts/backup_cover_state.py' \
+            -e 'scripts/backup_cover_assets.py' \
+            -e 'scripts/backup_cover_assets.sh' \
+            -e 'scripts/test_backup_cover_state.sh'; then
             echo 'deploy_allowed=false' >> "$GITHUB_OUTPUT"
           else
             echo 'deploy_allowed=true' >> "$GITHUB_OUTPUT"

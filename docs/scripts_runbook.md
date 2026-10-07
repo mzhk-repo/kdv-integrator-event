@@ -155,3 +155,53 @@ docker compose exec kdv-api python3 -m src.nightwalker 5000 5100
 ```bash
 SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 1
 ```
+
+## Cover state and assets backup (host scripts)
+
+These scripts use the host `python3` and its standard library; `.venv` is not
+required. Set `SERVER_ENV=dev|prod` or provide `ORCHESTRATOR_ENV_FILE`. When the
+script decrypts `env.dev.enc`/`env.prod.enc`, SOPS must be installed and have
+`SOPS_AGE_KEY` or a readable `SOPS_AGE_KEY_FILE` configured. Do not print or
+source decrypted env contents in the shell.
+
+Create a state DB snapshot (run on the node with the state DB bind):
+
+```bash
+sudo SERVER_ENV=prod python3 scripts/backup_cover_state.py backup
+sudo SERVER_ENV=prod python3 scripts/backup_cover_state.py backup \
+  --age-key-file /path/to/age/keys.txt
+```
+
+Run an isolated restore check. It restores into a temporary SQLite DB and never
+replaces the working state DB. The wrapper also writes Prometheus textfile
+metrics atomically; defaults are `NODE_EXPORTER_TEXTFILE_DIR=/data/node-exporter-textfile`
+and `cover_state_restore_check.prom`.
+
+```bash
+sudo SERVER_ENV=prod scripts/test_backup_cover_state.sh
+sudo SERVER_ENV=prod scripts/test_backup_cover_state.sh \
+  --age-key-file /path/to/age/keys.txt
+sudo scripts/test_backup_cover_state.sh \
+  /backups/state-db/state-20261005T083657061936Z-688712.sqlite3
+```
+
+The wrapper accepts the same optional backup path and `--age-key-file` as the
+underlying `verify` command. Set `COVER_STATE_RESTORE_METRICS_FILE`,
+`COVER_STATE_RESTORE_ENV_LABEL`, or `COVER_STATE_RESTORE_SERVICE_LABEL` to
+override the textfile name or labels. The metrics directory must be writable
+by the invoking account and mounted for the monitoring stack's textfile
+collector to read it.
+
+Incrementally copy immutable cover assets to the local backup directory:
+
+```bash
+sudo SERVER_ENV=prod scripts/backup_cover_assets.sh
+sudo SERVER_ENV=prod scripts/backup_cover_assets.sh \
+  --age-key-file /path/to/age/keys.txt
+```
+
+The assets command requires host `rsync` and `findmnt`; it rejects rclone
+mounts and does not delete, prune, or upload files. State backup requires the
+SQLite modules in host Python. `rclone` is required only when both
+`BACKUP_RCLONE_REMOTE` and `BACKUP_RCLONE_FOLDER` enable the optional cloud
+copy.
