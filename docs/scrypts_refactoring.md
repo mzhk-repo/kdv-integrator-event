@@ -88,7 +88,7 @@ ENVIRONMENT="$(resolve_environment "${1:-}")"
 ```bash
 _decrypt_env() {
   local enc_file="$1"
-  local age_key_file="${SOPS_AGE_KEY_FILE:-${HOME}/.config/age/keys.txt}"
+  local age_key_file="${SOPS_AGE_KEY_FILE:-${HOME}/.config/sops/age/keys.txt}"
 
   if [[ ! -f "${enc_file}" ]]; then
     echo "ERROR: encrypted env file not found: ${enc_file}" >&2
@@ -395,7 +395,7 @@ _cleanup_env_tmp() {
 
 _decrypt_env() {
   local enc_file="$1"
-  local age_key_file="${SOPS_AGE_KEY_FILE:-${HOME}/.config/age/keys.txt}"
+  local age_key_file="${SOPS_AGE_KEY_FILE:-${HOME}/.config/sops/age/keys.txt}"
   [[ -f "${enc_file}" ]]    || die "encrypted env file not found: ${enc_file}"
   [[ -f "${age_key_file}" ]] || die "AGE key file not found: ${age_key_file}"
 

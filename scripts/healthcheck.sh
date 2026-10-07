@@ -34,6 +34,7 @@ normalize_env_name() {
 
 decrypt_sops_env() {
   local enc_path sops_args=()
+  local age_key_file="${SOPS_AGE_KEY_FILE:-${HOME}/.config/sops/age/keys.txt}"
   enc_path="$1"
 
   if ! command -v sops >/dev/null 2>&1; then
@@ -44,8 +45,8 @@ decrypt_sops_env() {
   chmod 600 "${ENV_TMP_FILE}"
 
   sops_args=(--decrypt --input-type dotenv --output-type dotenv)
-  if [[ -n "${SOPS_AGE_KEY_FILE:-}" && -f "${SOPS_AGE_KEY_FILE}" ]]; then
-    sops_args+=(--age-key-file "${SOPS_AGE_KEY_FILE}")
+  if [[ -z "${SOPS_AGE_KEY:-}" ]]; then
+    sops_args+=(--age-key-file "${age_key_file}")
   fi
   sops_args+=("${enc_path}")
 

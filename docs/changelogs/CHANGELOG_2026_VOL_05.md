@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-07 — Use the SOPS age key under the sops config directory
+
+- **Context:** Backup and related environment loaders defaulted to `~/.config/age/keys.txt`, while the host key is stored under the SOPS configuration directory.
+- **Change:** SOPS age key defaults now use `~/.config/sops/age/keys.txt` across backup, GC, application/export bootstrap, healthcheck, and Robot wrapper paths. An explicit `SOPS_AGE_KEY_FILE` remains supported. The host runbook documents the default.
+- **Verification:** Fake-SOPS checks confirmed the default path, explicit `SOPS_AGE_KEY_FILE` override, and `SOPS_AGE_KEY` precedence. Python compilation, Bash syntax, search for stale runtime defaults, and `git diff --check` passed; no key contents were read and no real decryption was attempted.
+- **Risks:** The default key must exist and be readable by the invoking account; `SOPS_AGE_KEY_FILE` can select a different file.
+- **Rollback:** Revert the default path updates and the runbook/changelog changes.
+
 ## 2026-10-07 — Run cover backups without a virtual environment
 
 - **Context:** Host backup commands used `.venv` and imported the project dotenv dependency, while operators need to run them directly from the host Python installation.

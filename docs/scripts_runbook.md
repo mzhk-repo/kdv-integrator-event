@@ -161,7 +161,8 @@ SERVER_ENV=dev scripts/run-robot-swarm.sh candidates.txt --parallelism 1
 These scripts use the host `python3` and its standard library; `.venv` is not
 required. Set `SERVER_ENV=dev|prod` or provide `ORCHESTRATOR_ENV_FILE`. When the
 script decrypts `env.dev.enc`/`env.prod.enc`, SOPS must be installed and have
-`SOPS_AGE_KEY` or a readable `SOPS_AGE_KEY_FILE` configured. Do not print or
+`SOPS_AGE_KEY` or a readable `SOPS_AGE_KEY_FILE` configured. Unless overridden,
+the age key file defaults to `~/.config/sops/age/keys.txt`. Do not print or
 source decrypted env contents in the shell.
 
 Create a state DB snapshot (run on the node with the state DB bind):

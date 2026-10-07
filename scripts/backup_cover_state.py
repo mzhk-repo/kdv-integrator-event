@@ -216,9 +216,8 @@ def load_cover_state_environment() -> None:
             if age_key and (not Path(age_key).is_file() or not os.access(age_key, os.R_OK)):
                 raise ValueError("SOPS_AGE_KEY_FILE is not a readable file")
             if not age_key:
-                age_key = str(Path.home() / ".config/age/keys.txt")
-                if Path(age_key).is_file():
-                    sops_env["SOPS_AGE_KEY_FILE"] = age_key
+                age_key = str(Path.home() / ".config/sops/age/keys.txt")
+            sops_env["SOPS_AGE_KEY_FILE"] = age_key
         try:
             raw = subprocess.run(
                 [
