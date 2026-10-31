@@ -1,4 +1,5 @@
 version: 1
+cover_url_template: "https://covers.pinokew.buzz/{hash}.webp"
 authorized_values:
   itemtypes:
     PATRIOT: "Патріотичне виховання"

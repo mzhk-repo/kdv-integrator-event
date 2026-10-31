@@ -60,6 +60,7 @@ columns:
     sources:
       - field: "957"
         subfields: ["c"]
+        transform: "cover_url"
 
   - name: "isbn"
     sources:

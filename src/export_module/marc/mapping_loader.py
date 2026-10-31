@@ -54,6 +54,7 @@ class AuthorizedValueDictionary:
 class ExportDictionaries:
     authorized_values: dict[str, AuthorizedValueDictionary]
     unknown_policy: dict[str, str]
+    cover_url_template: str = ""
 
     def apply_authorized_value(
         self, dictionary_id: str, raw_code: str | None
@@ -159,9 +160,14 @@ class MappingLoader:
                 "keep_code, empty, fail"
             )
 
+        cover_url_template = payload.get("cover_url_template", "")
+        if not isinstance(cover_url_template, str):
+            raise MappingValidationError("cover_url_template must be a string")
+
         return ExportDictionaries(
             authorized_values=authorized_values,
             unknown_policy=normalized_policy,
+            cover_url_template=cover_url_template,
         )
 
 
@@ -306,6 +312,9 @@ def _validate_mapping(mapping: MARCMapping) -> None:
                     raise MappingValidationError(
                         f"Unknown authorized value dictionary: {source.dictionary}"
                     )
+            elif source.transform == "cover_url":
+                if "{hash}" not in mapping.dictionaries.cover_url_template:
+                    raise MappingValidationError("cover_url_template must contain {hash}")
             elif source.transform and source.transform != "extract_year_regex":
                 raise MappingValidationError(
                     f"Unsupported source transform: {source.transform}"

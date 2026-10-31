@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-31 — Format export cover URLs and translate multiple authorized values
+
+- **Context:** Koha stores a cover hash in `957$c`, and multiple authorized value codes can occur in one exported field.
+- **Change:** The cover source uses `cover_url_template` from the export dictionaries. Authorized values are translated individually across comma or configured join separators, retaining the existing unknown-code policy.
+- **Verification:** Code and configuration changes were reviewed; automated tests and live export were not run.
+- **Risks:** Deployments using a separately managed export config must add the template and update the cover mapping alongside the application code.
+- **Rollback:** Revert the parser, loader, export configuration, and documentation changes.
+
 ## 2026-10-07 — Resolve the default SOPS key for sudo backup runs
 
 - **Context:** Running cover backups with `sudo` selected `/root/.config/sops/age/keys.txt` even when the invoking operator's key was under `/home/<user>`.
