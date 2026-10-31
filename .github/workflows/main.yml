@@ -35,23 +35,27 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$EVENT_NAME" = "push" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
             changed_files=$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            changed_files=$(git diff --name-only "$BASE_SHA" "$GITHUB_SHA")
           else
-            changed_files=$(git diff-tree --no-commit-id --name-only -r HEAD)
+            changed_files=$(git diff-tree --first-parent -m --root --no-commit-id --name-only -r HEAD)
           fi
 
-          if printf '%s\n' "$changed_files" | grep -Fxq \
+          deploy_changes=$(printf '%s\n' "$changed_files" | grep -vE '(^$|\.md$|^\.env\.example$|^\.gitignore$)' | grep -Fxv \
             -e 'config/export_dictionaries.yaml' \
             -e 'config/marc_mapping.yaml' \
             -e 'scripts/backup_cover_state.py' \
             -e 'scripts/backup_cover_assets.py' \
             -e 'scripts/backup_cover_assets.sh' \
-            -e 'scripts/test_backup_cover_state.sh'; then
-            echo 'deploy_allowed=false' >> "$GITHUB_OUTPUT"
-          else
+            -e 'scripts/test_backup_cover_state.sh' || true)
+          if [ -n "$deploy_changes" ]; then
             echo 'deploy_allowed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy_allowed=false' >> "$GITHUB_OUTPUT"
           fi
 
   deploy-dev:

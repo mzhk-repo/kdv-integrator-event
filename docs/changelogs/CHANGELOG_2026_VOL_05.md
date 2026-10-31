@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-10-31 — Allow deployment for application changes mixed with excluded files
+
+- **Context:** The deploy precheck blocked a commit containing changes to both export configuration and application source code because any excluded path disabled deployment.
+- **Change:** The precheck now excludes configuration, backup-only and ignored documentation paths before deciding whether remaining changes require deployment. Pull requests compare their base commit to the checked-out merge commit; other fallback checks include first-parent merge changes.
+- **Verification:** Reviewed the workflow change and checked the Git diff; GitHub Actions execution was not verified.
+- **Risks:** Release checks still consider the release commit's first-parent changes, not all changes since the preceding release.
+- **Rollback:** Revert the deploy precheck changes in `.github/workflows/main.yml`.
+
 ## 2026-10-31 — Format export cover URLs and translate multiple authorized values
 
 - **Context:** Koha stores a cover hash in `957$c`, and multiple authorized value codes can occur in one exported field.
