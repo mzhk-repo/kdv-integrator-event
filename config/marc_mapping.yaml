@@ -15,9 +15,9 @@ columns:
   - name: "publisher"
     sources:
       - field: "264"
-        subfields: ["a", "b",]
-        join: ": "
-        strip_chars: " /:"
+        subfields: ["a", "b"]
+        join: " "
+        strip_chars: " /:,"
 
   - name: "author"
     sources:
@@ -41,8 +41,12 @@ columns:
 
   - name: "language"
     sources:
-      - field: "041"  
+      - field: "041"
         subfields: ["a"]
+        join: ", "
+        strip_chars: " /:,"
+        transform: "authorized_value"
+        dictionary: "languages"
 
   - name: "url"
     sources:
@@ -81,9 +85,9 @@ static_columns:
   - name: "Статус імпорту"
     value: "Нові"
     reason: "Фіксоване значення для downstream import"
-  - name: "ok"
-    value: ""
-    reason: "ok"
+  - name: "institution"
+    value: "ldubgd"
+    reason: "institution"
   - name: "average_rating"
     value: ""
     reason: ""

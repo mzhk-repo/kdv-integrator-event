@@ -20,6 +20,12 @@ authorized_values:
     DISSERT: "Дисертація"
     RND: "НДР"
     OTHER: "Інше"
+  
+  languages:
+    ukr: "Українська"
+    eng: "Англійська"
+    pol: "Польська"
+    art: "Інша"
 
 unknown_policy:
   authorized_value: "keep_code"
