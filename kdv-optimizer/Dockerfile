@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ghostscript=10.0.0~dfsg-11+deb12u8 \
+        ghostscript \
         poppler-utils=22.12.0-2+deb12u3 \
         util-linux=2.38.1-5+deb12u3 \
         curl=7.88.1-10+deb12u15 \

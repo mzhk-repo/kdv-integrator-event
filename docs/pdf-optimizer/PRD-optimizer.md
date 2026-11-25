@@ -128,7 +128,7 @@ future = _optimizer_pool.submit(
 
 | Рушій | Тип | Найкращий сценарій | Примітка |
 |---|---|---|---|
-| **Ghostscript** (CLI) | Растр + перекодування | Важкі скани ScanSnap | Фаворит. CVE-ризик — потребує pinned версії |
+| **Ghostscript** (CLI) | Растр + перекодування | Важкі скани ScanSnap | Основний рушій; оновлення пакета потребують перевірки сумісності та CVE |
 | **PyMuPDF** (fitz) | Stream compression | Змішані PDF | Дослідити в PoC, але не робити default на старті |
 | **pikepdf** (libqpdf) | Stream compression | Текстові PDF | Дослідити в PoC, але практична цінність нижча через scan-heavy корпус |
 | **qpdf** (CLI) | Лінеаризація | Будь-який PDF | Додатково після GS: "fast web view", -5..15% без деградації |
@@ -471,7 +471,7 @@ Ghostscript має задокументовану CVE-активність (пр
 ```dockerfile
 # Pinned версія — оновлювати лише після перевірки CVE у trivy
 RUN apt-get update && apt-get install -y \
-    ghostscript=10.02.1~dfsg-1 \
+    ghostscript \
     poppler-utils=22.12.0-2+b1 \
     qpdf=11.3.0-1 \
     && rm -rf /var/lib/apt/lists/*

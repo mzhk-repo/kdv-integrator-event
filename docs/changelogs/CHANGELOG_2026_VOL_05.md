@@ -2,6 +2,14 @@
 
 Цей том продовжує `CHANGELOG_2026_VOL_04.md`, який досяг soft limit ротації.
 
+## 2026-11-25 — Install the current Bookworm Ghostscript package
+
+- **Context:** The optimizer image build failed because the pinned Ghostscript `deb12u8` requires the matching `libgs10`, while APT selected `deb12u9`.
+- **Change:** Install Ghostscript without an exact package version from Debian Bookworm, allowing APT to select matching dependencies.
+- **Verification:** The user reproduced the dependency conflict and successfully built with `deb12u9`. An isolated container from that image generated a one-page PDF in both ebook and 150 DPI modes, verified with pdfinfo. The final unpinned Dockerfile build and live integration remain unverified.
+- **Risks:** Future image builds can select a different Ghostscript release, changing behavior or output; the other exact package pins can also become unavailable.
+- **Rollback:** Restore an available, tested Ghostscript version pin in `kdv-optimizer/Dockerfile`.
+
 ## 2026-10-31 — Allow deployment for application changes mixed with excluded files
 
 - **Context:** The deploy precheck blocked a commit containing changes to both export configuration and application source code because any excluded path disabled deployment.
