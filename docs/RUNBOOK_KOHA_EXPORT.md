@@ -391,6 +391,13 @@ PUSHGATEWAY_URL=http://pushgateway:9091
 
 Цей файл визначає **перекодування Koha Authorized values** у зрозумілі людині рядки для XLSX. Python-код не знає про конкретні значення; всі коди → мітки описані тут.
 
+`cover_url_template` defines the exported cover URL; `{hash}` is replaced with
+the value of MARC `957$c`. Change the template in this file when the cover
+storage URL changes. An empty `957$c` produces an empty XLSX cell.
+For `authorized_value`, comma-separated codes and values joined with the
+source's configured `join` are translated individually; unknown codes follow
+`unknown_policy.authorized_value` individually.
+
 **Поточний стан:**
 
 ```yaml
@@ -551,6 +558,7 @@ static_columns:
 | Transform | Опис |
 |-----------|------|
 | `authorized_value` | Перекодувати через словник з `export_dictionaries.yaml` |
+| `cover_url` | Build a URL using `cover_url_template` and the source value |
 | `extract_year_regex` | Витягти 4-значний рік регулярним виразом |
 | (без transform) | Взяти значення субполя як є |
 

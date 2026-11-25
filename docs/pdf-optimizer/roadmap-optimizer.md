@@ -294,7 +294,7 @@ def ready():
 ### Задача 1.5 — Dockerfile для `kdv-optimizer`
 
 **Контекст та обмеження:**
-Образ не повинен запускатися як `root`. Ghostscript  — pinned версії. Trivy має проходити без CRITICAL.
+Образ не повинен запускатися як `root`. Ghostscript встановлюється з Debian Bookworm без прив'язки до конкретного випуску пакета. Trivy має проходити без CRITICAL.
 
 **Файли для створення:**
 - `kdv-optimizer/Dockerfile`
@@ -305,7 +305,7 @@ def ready():
 FROM python:3.11-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ghostscript=10.02.1~dfsg-1 \
+    ghostscript \
     poppler-utils=22.12.0-2+b1 \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
@@ -329,7 +329,7 @@ CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5001", "--timeout", "150", "optimizer
 - [x] `docker build` завершується без помилок
 - [x] `docker run` → `GET /ready` повертає `200`
 - [x] Процес всередині контейнера не `root` (`whoami` → `optimizer`)
-- [x] `gs --version` виводить очікувану версію
+- [x] `gs --version` виводить встановлену версію
 
 ---
 

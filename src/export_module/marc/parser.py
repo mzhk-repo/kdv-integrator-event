@@ -82,7 +82,22 @@ class MARCParser:
                 raise MappingValidationError(
                     "authorized_value source must define dictionary"
                 )
-            return self.apply_authorized_value(source.dictionary, value)
+            dictionary = self.mapping.dictionaries.authorized_values[source.dictionary]
+            if value in dictionary.values:
+                return self.apply_authorized_value(source.dictionary, value)
+            separator = (
+                rf"\s*{re.escape(source.join.strip())}\s*"
+                if source.join.strip() else r"\s+"
+            )
+            parts = re.split(rf"(\s*,\s*|{separator})", value)
+            return "".join(
+                self.apply_authorized_value(source.dictionary, part) or ""
+                if index % 2 == 0 and part else part
+                for index, part in enumerate(parts)
+            )
+
+        if source.transform == "cover_url":
+            return self.mapping.dictionaries.cover_url_template.replace("{hash}", value)
 
         if source.transform == "extract_year_regex":
             return _extract_year_regex(value)
